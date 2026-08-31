@@ -227,8 +227,13 @@ def test_schema_is_generated_from_the_model_so_it_cannot_drift(client):
     # Present because the user sends them.
     for field in ("name", "image", "args", "env", "secrets", "gpu", "expected_hours"):
         assert field in properties
-    # Absent because the server fills them from the token.
-    for field in ("namespace", "serviceAccountName", "resultPath", "placement", "parallelism"):
+    # parallelism is the USER's: it is how many independent worker pods run, and
+    # with gpu.count it is how a job fills a multi-GPU machine. It was briefly in
+    # the list below, pinned at 1 by the server, which silently took that away.
+    assert "parallelism" in properties
+
+    # Absent because the server fills them from the token or from its own judgement.
+    for field in ("namespace", "serviceAccountName", "resultPath", "placement"):
         assert field not in properties
     assert document["required"] == ["name", "image"]
 

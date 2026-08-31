@@ -142,6 +142,7 @@ A submit request plus the facts needed to judge it.
 | `image` | yes | Container image to run. |
 | `memory` |  | Memory request, e.g. "16Gi". |
 | `name` | yes | A name for your own benefit. It appears in the result path and in the job listing. It does not have to be unique. |
+| `parallelism` |  | How many pods run at once. They are INDEPENDENT workers that never talk to each other, so this is for a batch you can split, not for distributed training. The placement decides the machines: several pods may land on one multi-GPU box or on one box each. Combine with gpu.count, which is GPUs PER POD. |
 | `script` |  | The text of your run.sh. Optional, and four checks are skipped without it. It is read and thrown away, never stored. |
 | `secrets` |  | Names of secrets to inject. The value never travels through this API; the server resolves the name to a Kubernetes Secret. |
 | `training` |  |  |

@@ -90,7 +90,15 @@ def job_arguments() -> argparse.ArgumentParser:
     )
     shared.add_argument("--gpu-vram", type=int, metavar="GB", help="minimum GPU memory, e.g. 48")
     shared.add_argument("--gpu-name", metavar="MODEL", help="exact GPU model, e.g. L40S")
-    shared.add_argument("--gpu-count", type=int, metavar="N", help="how many GPUs (default 1)")
+    shared.add_argument(
+        "--gpu-count", type=int, metavar="N", help="how many GPUs PER POD (default 1)"
+    )
+    shared.add_argument(
+        "--parallelism", type=int, metavar="N",
+        help="how many pods run at once (default 1). They are independent workers that never "
+        "talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: "
+        "--parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes.",
+    )
     shared.add_argument("--cpus", help='CPU request, e.g. "4"')
     shared.add_argument("--memory", help='memory request, e.g. "16Gi"')
     shared.add_argument(
@@ -303,6 +311,8 @@ def build_submit_body(args: argparse.Namespace) -> dict[str, Any]:
         body["memory"] = args.memory
     if args.expected_hours is not None:
         body["expected_hours"] = args.expected_hours
+    if getattr(args, "parallelism", None) is not None:
+        body["parallelism"] = args.parallelism
 
     # A GPU is asked for in exactly one of two styles, by memory or by model.
     # TWO CASES THAT LOOK ALIKE AND ARE NOT:

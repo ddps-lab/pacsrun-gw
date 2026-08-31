@@ -416,3 +416,19 @@ def test_an_empty_window_prints_the_note_that_explains_it(fake, capsys):
     }
     assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
     assert "no GPU readings" in capsys.readouterr().out
+
+
+def test_parallelism_and_gpu_count_are_different_things():
+    # --parallelism is pods, --gpu-count is GPUs per pod. Confusing them is how a
+    # request for 8 workers becomes a request for one 8-GPU pod.
+    body = cli.build_submit_body(
+        args_for(["submit", "--name", "x", "--image", "i",
+                  "--parallelism", "8", "--gpu-vram", "48", "--gpu-count", "2"])
+    )
+    assert body["parallelism"] == 8
+    assert body["gpu"] == {"vram_gb": 48, "count": 2}
+
+
+def test_no_parallelism_flag_leaves_the_field_out():
+    body = cli.build_submit_body(args_for(["submit", "--name", "x", "--image", "i"]))
+    assert "parallelism" not in body

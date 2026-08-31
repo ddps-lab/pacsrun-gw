@@ -209,3 +209,25 @@ def test_the_name_falls_back_to_the_label_then_to_the_object_name():
     assert JobView.from_pacsjob(only_label).name == "bank-exp2"
     neither = {"metadata": {"name": "hand-written-job"}}
     assert JobView.from_pacsjob(neither).name == "hand-written-job"
+
+
+def test_parallelism_is_the_users_and_not_pinned_at_one():
+    # It WAS pinned at 1, which silently removed the way a job fills a multi-GPU
+    # machine: parallelism is independent worker pods, gpus.count is GPUs per
+    # pod. A user asking for 8 workers got 1.
+    obj = to_pacsjob(minimal(parallelism=8, gpu={"vram_gb": 48, "count": 2}), ALICE, SETTINGS, JOB_ID)
+    assert obj["spec"]["parallelism"] == 8
+    assert obj["spec"]["resources"]["gpus"] == {"count": 2, "vramGB": 48}
+
+
+def test_parallelism_defaults_to_one():
+    assert to_pacsjob(minimal(), ALICE, SETTINGS, JOB_ID)["spec"]["parallelism"] == 1
+
+
+def test_parallelism_is_capped_at_what_the_crd_can_record():
+    # status.completedSlots has maxItems 256, so a job with more slots than that
+    # cannot record which of them finished.
+    with pytest.raises(ValidationError):
+        minimal(parallelism=257)
+    with pytest.raises(ValidationError):
+        minimal(parallelism=0)

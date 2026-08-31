@@ -110,6 +110,15 @@ class SubmitRequest(BaseModel):
     )
     cpus: str | None = Field(default=None, description='CPU request, e.g. "4".')
     memory: str | None = Field(default=None, description='Memory request, e.g. "16Gi".')
+    parallelism: int = Field(
+        default=1,
+        ge=1,
+        le=256,
+        description="How many pods run at once. They are INDEPENDENT workers that never talk "
+        "to each other, so this is for a batch you can split, not for distributed training. "
+        "The placement decides the machines: several pods may land on one multi-GPU box or on "
+        "one box each. Combine with gpu.count, which is GPUs PER POD.",
+    )
     expected_hours: float | None = Field(
         default=None,
         gt=0,
@@ -274,7 +283,6 @@ def to_pacsjob(
       namespace           from the token
       serviceAccountName  from cluster settings
       resultPath          from the token's namespace plus the job id
-      parallelism         1, fixed for now
 
     Since stage 3 there is a fifth: `placement.capacityType`.
 
@@ -339,7 +347,14 @@ def to_pacsjob(
 
     spec: dict[str, Any] = {
         "image": request.image,
-        "parallelism": 1,
+        # THIS WAS HARDCODED TO 1 AND THAT WAS WRONG. PacsJob's parallelism is the number of
+        # independent worker PODS, and gpus.count is the number of GPUs each pod gets; the two
+        # together are how a job fills a multi-GPU machine. Pinning it at 1 quietly removed
+        # that, so a user asking for eight workers on two 4-GPU boxes got one worker. The
+        # ceiling of 256 is PacsJob's own: status.completedSlots is capped at 256 entries
+        # (config/crd/pacsrun.io_pacsjobs.yaml), and a job with more slots than that cannot
+        # record which of them finished.
+        "parallelism": request.parallelism,
         "serviceAccountName": settings.service_account,
         "resultPath": result_path_for(settings, principal, job_id, request.name),
     }

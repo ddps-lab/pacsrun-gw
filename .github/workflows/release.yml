@@ -50,6 +50,14 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.ECR_REGION }}
 
+      # REQUIRED BY cache-to BELOW, and easy to leave out. A runner's default buildx
+      # driver is `docker`, which cannot export a cache; the build then fails with
+      # "Cache export is not supported for the docker driver" AFTER the ECR login has
+      # already succeeded, which reads like a registry problem and is not. This action
+      # switches to the `docker-container` driver, which can.
+      - name: set up buildx with a driver that can export a cache
+        uses: docker/setup-buildx-action@v3
+
       - name: docker login to the private ECR registry
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2

@@ -51,7 +51,8 @@ Nothing is submitted. An answer of `unknown` is a real answer: the last time we 
 | `--secret NAME` |  | the NAME of a stored secret to inject. Never the value. Repeatable. |
 | `--gpu-vram GB` |  | minimum GPU memory, e.g. 48 |
 | `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
-| `--gpu-count N` |  | how many GPUs (default 1) |
+| `--gpu-count N` |  | how many GPUs PER POD (default 1) |
+| `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |
 | `--expected-hours EXPECTED_HOURS` |  | your own guess at the runtime, in hours |
@@ -79,7 +80,8 @@ Nothing is submitted. Pass --script to unlock four more checks.
 | `--secret NAME` |  | the NAME of a stored secret to inject. Never the value. Repeatable. |
 | `--gpu-vram GB` |  | minimum GPU memory, e.g. 48 |
 | `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
-| `--gpu-count N` |  | how many GPUs (default 1) |
+| `--gpu-count N` |  | how many GPUs PER POD (default 1) |
+| `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |
 | `--expected-hours EXPECTED_HOURS` |  | your own guess at the runtime, in hours |
@@ -107,7 +109,8 @@ Give a YAML or JSON file, or build the request from flags, or both. Flags win ov
 | `--secret NAME` |  | the NAME of a stored secret to inject. Never the value. Repeatable. |
 | `--gpu-vram GB` |  | minimum GPU memory, e.g. 48 |
 | `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
-| `--gpu-count N` |  | how many GPUs (default 1) |
+| `--gpu-count N` |  | how many GPUs PER POD (default 1) |
+| `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |
 | `--expected-hours EXPECTED_HOURS` |  | your own guess at the runtime, in hours |
