@@ -1,0 +1,44 @@
+# CI — 지금은 검사할 코드가 없다. 대신 이 저장소에서 가장 먼저 지켜야 할 것을 검사한다.
+#
+# 이 저장소는 나중에 public 으로 연다. 그때 손볼 것이 없도록 계정 식별자를 처음부터
+# 자리표시자로 쓴다. 사람이 지키기로 하면 언젠가 새므로 여기서 막는다.
+#
+# 코드가 생기면 lint 와 test job 을 아래에 더한다. 그때도 이 job 은 남긴다.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  no-identifiers:
+    name: 계정 식별자가 섞이지 않았는지
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 검사
+        run: |
+          set -uo pipefail
+          fail=0
+          # AWS 계정번호 12자리. 자리표시자 <ACCOUNT_ID> 를 쓴다.
+          check() {
+            local name="$1" pat="$2"
+            local hits
+            hits=$(grep -rInE "$pat" --exclude-dir=.git --exclude-dir=node_modules . || true)
+            if [ -n "$hits" ]; then
+              echo "::error::$name 이(가) 섞여 있습니다. 자리표시자로 바꾸십시오."
+              echo "$hits"
+              fail=1
+            fi
+          }
+          check "AWS 계정번호"      '\b[0-9]{12}\b'
+          check "AWS access key id" 'AKIA[0-9A-Z]{16}'
+          check "AWS secret 형태"   'aws_secret_access_key[[:space:]]*=[[:space:]]*[A-Za-z0-9/+=]{40}'
+          check "GitHub 토큰"       'gh[pousr]_[A-Za-z0-9]{36}'
+          check "RunPod 키"         'rpa_[A-Za-z0-9]{40}'
+          check "개인키"            '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----'
+          if [ "$fail" -ne 0 ]; then
+            echo "자리표시자 예: <ACCOUNT_ID>, <RESULT_BUCKET>, role/<REMOTE_ROLE>, <IAM_USER>"
+            exit 1
+          fi
+          echo "통과: 계정 식별자 없음"
