@@ -74,7 +74,7 @@ CI 가 매 push 마다 생성본이 코드와 어긋나지 않았는지 검사�
 | 10 | **shell 접근** | VM 경우에 한해 나중에. 보안 설계가 필요 |
 | 11 | **Lightning Thunder** | 아직 안 씀. 쓰면 측정표에 컴파일러 열 추가 |
 | 12 | **서버 앞에 무엇을 두는가** | TLS 를 끝내고 8080 으로 넘길 것. Ingress 인지 ALB 인지 tunnel 인지. 그전까지는 `kubectl port-forward` |
-| 13 | **image 를 어느 registry 로** | CI 가 빌드만 하고 push 를 안 한다. PACSrun 은 ECR 두 곳에 올린다 |
+| ~~13~~ | ~~image 를 어느 registry 로~~ | **정함: us-west-2 의 `ddpsrun/gateway` 하나.** cluster 가 us-west-2 이고 이미지를 당기는 것은 서버 pod 하나뿐이라 두 번째 사본은 값만 든다. `terraform/registry/` 가 ECR 과 전용 IAM role 을 만들고 `release.yml` 이 push 한다. 2026-08-31 apply 함 |
 | 14 | **로그 `follow` 가 몇 시간을 버티는가** | 앞단의 idle timeout 이 끊으면 CLI 가 재연결해야 한다. driver 가 RunPod 상대로 이미 겪은 문제다 |
 
 ---

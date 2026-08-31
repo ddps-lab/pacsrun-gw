@@ -1,0 +1,78 @@
+# RELEASE — build the gateway image and push it to a private Amazon ECR repository.
+#
+# END-TO-END FLOW of one release:
+#
+#   1. A push to main, a v* tag, or a manual run starts this workflow.
+#   2. `permissions: id-token: write` lets the job ask GitHub for an OIDC token whose `sub`
+#      claim names this repository.
+#   3. configure-aws-credentials trades that token for temporary credentials by calling
+#      sts:AssumeRoleWithWebIdentity against the IAM role terraform/registry created. The
+#      role's trust policy checks `sub`, which is what stops any other repository using it.
+#   4. amazon-ecr-login calls ecr:GetAuthorizationToken and does a `docker login`.
+#   5. buildx builds server/ and pushes two tags: the git SHA and `latest`.
+#
+# THE SHA TAG IS THE POINT. An image built anywhere else carries a tag that matches no commit,
+# and then nobody can reproduce what the cluster is running. This workflow is the only builder;
+# never `docker build` this image on a laptop.
+#
+# WHY NO ACCESS KEYS. A long-lived IAM user key in GitHub secrets is a standing credential that
+# leaks by sitting there. OIDC mints one that lives for the length of the job.
+#
+# REQUIRED repository configuration (Settings -> Secrets and variables -> Actions -> Variables),
+# all three printed by `terraform output github_repository_variables`:
+#
+#   ECR_REGION       us-west-2          the CLUSTER's region. The server pod is the only puller
+#   AWS_ROLE_ARN     arn:aws:iam::<ACCOUNT_ID>:role/ddpsrun-gw-github-actions
+#   ECR_REPOSITORY   ddpsrun/gateway
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  # Required to mint the OIDC token. Nothing else is granted.
+  id-token: write
+  contents: read
+
+jobs:
+  image:
+    name: build and push to ECR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: assume the ECR push role over OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.ECR_REGION }}
+
+      - name: docker login to the private ECR registry
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          push: true
+          # Two tags on one build. The SHA is what a deployment pins to; `latest` is a
+          # convenience for a human reading `docker pull` instructions and is never what the
+          # cluster runs.
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest
+          # GitHub's own layer cache. Without it every release rebuilds the dependency layer,
+          # which is the slow one.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: say what to deploy
+        run: |
+          echo "::notice::image ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
+          echo "deploy it with:"
+          echo "  kubectl -n ddpsrun-system set image deploy/ddpsrun-gw \\"
+          echo "    server=${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
