@@ -9,6 +9,7 @@ PACSrun 앞단이다. 사용자가 보는 이름은 `ddpsrun` 이다.
 | 설계 | `docs/00-overview.md` 부터 아홉 편 |
 | 서버 1단계 | 있다. `server/`, `docs/09-server.md` |
 | CLI 2단계 | 있다. `cli/`, `docs/10-cli.md` |
+| 판단 3단계 | 있다. `estimate`, `validate`, `docs/11-judgement.md` |
 | UI | 없다 (6단계) |
 
 ```bash

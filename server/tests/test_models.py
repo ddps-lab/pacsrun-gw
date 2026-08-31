@@ -112,11 +112,18 @@ def test_asking_both_ways_or_neither_is_refused():
         minimal(gpu={"count": 1})
 
 
-def test_stage_one_makes_no_placement_decision():
-    # docs/08-plan.md stage 1: "판단은 아직 없다." Leaving placement off entirely
-    # is what makes PACSrun apply its own defaults.
+def test_no_capacity_type_writes_no_placement_at_all():
+    # The stage-1 shape, still reachable: with no capacity_type the object
+    # carries no placement and PACSrun applies its own defaults.
     obj = to_pacsjob(minimal(gpu={"vram_gb": 48}), ALICE, SETTINGS, JOB_ID)
     assert "placement" not in obj["spec"]
+
+
+def test_a_capacity_type_is_written_into_placement():
+    # Why this matters: an empty capacityType means spot, and RunPod's decider
+    # declines anything that is not on-demand before it reads the catalogue.
+    obj = to_pacsjob(minimal(gpu={"vram_gb": 48}), ALICE, SETTINGS, JOB_ID, "on-demand")
+    assert obj["spec"]["placement"] == {"capacityType": "on-demand"}
 
 
 def test_a_cpu_only_job_asks_for_no_gpu():

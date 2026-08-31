@@ -32,6 +32,14 @@ class FakeClient:
         }
         self.status_result = {"job_id": "job-a8acdef80a07", "name": "bank-exp2", "phase": "Running"}
         self.log_lines = ["line one", "line two"]
+        self.estimate_result = {}
+        self.validate_result = {"ok": True, "findings": [], "not_checked": []}
+
+    def estimate(self, body):
+        return self.estimate_result
+
+    def validate(self, body):
+        return self.validate_result
 
     def submit(self, body):
         self.submitted = body
@@ -236,3 +244,114 @@ def test_ctrl_c_while_following_is_not_a_failure(fake, capsys, monkeypatch):
 def test_no_command_prints_help_and_exits_2(capsys):
     assert run([]) == cli.EXIT_USAGE
     assert "ddpsrun" in capsys.readouterr().out
+
+
+# --------------------------------------------------- stage 3: estimate, validate
+
+
+def test_the_training_facts_go_under_training_not_at_the_top_level():
+    body = cli.build_submit_body(
+        args_for(["estimate", "--name", "x", "--image", "i",
+                  "--pairs", "1110", "--epochs", "4", "--row-tokens", "4100",
+                  "--cap", "12288", "--resumable"])
+    )
+    assert body["training"] == {
+        "pairs": 1110, "epochs": 4, "row_tokens": 4100, "cap": 12288, "resumable": True,
+    }
+    assert "pairs" not in body
+
+
+def test_training_facts_in_a_file_are_kept_and_a_flag_overrides_one(tmp_path):
+    path = tmp_path / "job.yaml"
+    path.write_text("name: x\nimage: i\ntraining:\n  pairs: 1110\n  epochs: 4\n  cap: 12288\n")
+    body = cli.build_submit_body(args_for(["estimate", "-f", str(path), "--epochs", "8"]))
+    assert body["training"] == {"pairs": 1110, "epochs": 8, "cap": 12288}
+
+
+def test_the_script_flag_sends_the_text_not_the_path(tmp_path):
+    # The server cannot read a file on the user's laptop.
+    path = tmp_path / "run.sh"
+    path.write_text("set -euo pipefail\npython train.py\n")
+    body = cli.build_submit_body(
+        args_for(["validate", "--name", "x", "--image", "i", "--script", str(path)])
+    )
+    assert body["script"] == "set -euo pipefail\npython train.py\n"
+    assert str(path) not in str(body)
+
+
+def test_a_missing_script_file_is_one_line_not_a_traceback():
+    with pytest.raises(SystemExit, match="cannot read"):
+        cli.build_submit_body(
+            args_for(["validate", "--name", "x", "--image", "i", "--script", "/no/such.sh"])
+        )
+
+
+def test_estimate_prints_the_range_the_basis_and_the_gpu_reason(fake, capsys):
+    fake.estimate_result = {
+        "steps": 556,
+        "hours": {"low": 6.52, "high": 6.87, "confidence": "measured"},
+        "cost_usd": {"low": 6.45, "high": 6.8},
+        "basis": "5 run(s) on L40S within 15% of 4,100 tokens per response",
+        "gpu": {"recommended": "L40S", "recommended_vram_gb": 48,
+                "peak_logits_gib": 6.96, "reason": "the logits buffer reaches 6.96 GiB"},
+        "capacity_type": "on-demand",
+        "capacity_reason": "RunPod does not sell spot",
+        "warnings": ["Vendor prices move."],
+    }
+    assert run(["estimate", "--name", "x", "--image", "i"]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    assert "556" in printed
+    assert "6.52 ~ 6.87" in printed
+    assert "$6.45 ~ $6.8" in printed
+    assert "5 run(s) on L40S" in printed
+    assert "on-demand" in printed
+
+
+def test_an_unknown_estimate_says_so_instead_of_printing_a_blank(fake, capsys):
+    # Printing nothing where a number belongs is how a reader assumes zero.
+    fake.estimate_result = {
+        "steps": 556,
+        "hours": {"low": None, "high": None, "confidence": "unknown"},
+        "cost_usd": {"low": None, "high": None},
+        "basis": "outside what we have measured",
+        "gpu": {"recommended": None, "recommended_vram_gb": None,
+                "peak_logits_gib": 0.0, "reason": "we cannot say without --max-len"},
+        "capacity_type": "on-demand", "capacity_reason": "x", "warnings": [],
+    }
+    run(["estimate", "--name", "x", "--image", "i"])
+    printed = capsys.readouterr().out
+    assert "모름" in printed
+    assert "unknown" in printed
+
+
+def test_validate_exits_1_when_something_would_actually_stop_the_job(fake, capsys):
+    # So a script can gate a submit on it.
+    fake.validate_result = {
+        "ok": False,
+        "findings": [{"level": "error", "code": "gpu-too-small",
+                      "message": "this asks for 48 GB", "fix": "ask for 80 GB"}],
+        "not_checked": ["your repository's real layout"],
+    }
+    assert run(["validate", "--name", "x", "--image", "i"]) == cli.EXIT_SERVER
+    printed = capsys.readouterr().out
+    assert "gpu-too-small" in printed
+    assert "ask for 80 GB" in printed
+    assert "못 봄" in printed
+
+
+def test_validate_exits_0_when_nothing_is_an_error(fake):
+    fake.validate_result = {"ok": True, "findings": [], "not_checked": []}
+    assert run(["validate", "--name", "x", "--image", "i"]) == cli.EXIT_OK
+
+
+def test_estimate_validate_and_submit_take_the_same_flags():
+    # A user must be able to check a job and then submit THAT job with nothing
+    # rewritten. Three separately-written argument lists would drift.
+    parser = cli.build_parser()
+    shared = ["--name", "x", "--image", "i", "--gpu-vram", "48", "--env", "A=1",
+              "--secret", "GITHUB_PAT", "--pairs", "10", "--cap", "12288"]
+    bodies = [
+        cli.build_submit_body(parser.parse_args([command] + shared))
+        for command in ("estimate", "validate", "submit")
+    ]
+    assert bodies[0] == bodies[1] == bodies[2]

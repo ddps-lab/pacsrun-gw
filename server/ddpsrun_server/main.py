@@ -48,8 +48,25 @@ from . import naming
 from .auth import AuthError, Principal, TokenStore, bearer_token
 from .config import Settings
 from .k8s import Cluster, ClusterError, NotFound
+from . import estimate as estimator
+from . import validate as validator
 from .explain import EXPLAIN_TEXT
-from .models import JobView, SubmitRequest, SubmitResponse, to_pacsjob
+from .models import (
+    CostRange,
+    EstimateResponse,
+    FindingView,
+    GpuAdviceView,
+    HoursRange,
+    JobView,
+    JudgementRequest,
+    SubmitRequest,
+    SubmitResponse,
+    ValidateResponse,
+    cap_from,
+    gpu_name_for,
+    to_pacsjob,
+    vram_gb_for,
+)
 
 logger = logging.getLogger("ddpsrun")
 
@@ -131,19 +148,106 @@ def explain() -> str:
 
 @app.get("/v1/schema")
 def schema() -> dict[str, Any]:
-    """Return the JSON Schema of a submit request.
+    """Return the JSON Schema of a request.
 
-    Generated from `SubmitRequest` itself, so it cannot drift from what the
-    server actually accepts. Every field's `description` is the one written on
-    the model, which is why those descriptions are written for a stranger.
+    Generated from `JudgementRequest`, which is what /v1/estimate, /v1/validate
+    and /v1/jobs all accept. It has to be that model and not `SubmitRequest`:
+    when stage 3 widened the routes and this still described the narrower shape,
+    an agent reading it could not learn that `training` and `script` existed —
+    and a generated schema that does not match the routes has lost the only
+    property that made generating it worthwhile.
+
+    Every field's `description` is the one written on the model, which is why
+    those descriptions are written for a stranger.
 
     Like `/v1/explain`, no token required.
     """
-    return SubmitRequest.model_json_schema()
+    return JudgementRequest.model_json_schema()
+
+
+def _estimate_for(body: JudgementRequest) -> estimator.Estimate:
+    """Run the estimator over a request. Shared by /v1/estimate, /v1/validate
+    and /v1/jobs, so all three reach the same conclusion about the same job."""
+    return estimator.estimate(
+        gpu_name=gpu_name_for(body),
+        cap=cap_from(body),
+        pairs=body.training.pairs,
+        epochs=body.training.epochs,
+        row_tokens=body.training.row_tokens,
+        batch_size=body.training.batch_size,
+        grad_accum=body.training.grad_accum,
+        mitigations_on=all(validator.mitigations_from(body.env, body.script)),
+        resumable=body.training.resumable,
+        vocab=body.training.vocab,
+    )
+
+
+@app.post("/v1/estimate", response_model=EstimateResponse)
+def estimate_route(body: JudgementRequest, principal: PrincipalDep) -> EstimateResponse:
+    """How long, how much, and on which GPU. Submits nothing.
+
+    Args:
+        body: the same body you would submit, plus `training` facts the server
+            cannot read out of a container image.
+
+    Returns:
+        An `EstimateResponse`. `hours.confidence` says how much to believe it,
+        and `unknown` is a real answer: the last time we estimated a combination
+        we had never measured, we were 96% out.
+    """
+    result = _estimate_for(body)
+    return EstimateResponse(
+        steps=result.steps,
+        hours=HoursRange(
+            low=result.duration.low_hours,
+            high=result.duration.high_hours,
+            confidence=result.duration.confidence,
+        ),
+        cost_usd=CostRange(low=result.cost_low_usd, high=result.cost_high_usd),
+        basis=result.duration.basis,
+        gpu=GpuAdviceView(
+            recommended=result.gpu.recommended,
+            recommended_vram_gb=result.gpu.recommended_vram_gb,
+            peak_logits_gib=result.gpu.peak_logits_gib,
+            reason=result.gpu.reason,
+        ),
+        capacity_type=result.capacity_type,
+        capacity_reason=result.capacity_reason,
+        warnings=result.warnings,
+    )
+
+
+@app.post("/v1/validate", response_model=ValidateResponse)
+def validate_route(body: JudgementRequest, principal: PrincipalDep) -> ValidateResponse:
+    """Check a job without running it.
+
+    Args:
+        body: the same body you would submit. Attach the text of your run.sh as
+            `script` and four more checks become available.
+
+    Returns:
+        A `ValidateResponse`. `not_checked` lists what no check could look at,
+        so a clean result is not mistaken for a complete one.
+    """
+    result = validator.validate(
+        env=body.env,
+        script=body.script,
+        cap=cap_from(body),
+        vram_gb=vram_gb_for(body),
+        job_estimate=_estimate_for(body),
+    )
+    return ValidateResponse(
+        ok=result.ok,
+        findings=[
+            FindingView(level=f.level, code=f.code, message=f.message, fix=f.fix)
+            for f in result.findings
+        ],
+        not_checked=result.not_checked,
+    )
 
 
 @app.post("/v1/jobs", response_model=SubmitResponse, status_code=201)
-def submit(request: Request, body: SubmitRequest, principal: PrincipalDep) -> SubmitResponse:
+def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) -> SubmitResponse:
     """Submit a job.
 
     Args:
@@ -162,8 +266,11 @@ def submit(request: Request, body: SubmitRequest, principal: PrincipalDep) -> Su
     cluster: Cluster = request.app.state.cluster
 
     job_id = naming.new_job_id()
+    # The one judgement stage 1 could not make and stage 3 can. See to_pacsjob:
+    # leaving capacityType empty means spot, and spot means no RunPod.
+    capacity_type = _estimate_for(body).capacity_type
     try:
-        obj = to_pacsjob(body, principal, settings, job_id)
+        obj = to_pacsjob(body, principal, settings, job_id, capacity_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -31,8 +31,11 @@ config/deploy/
 | GET | `/v1/jobs/{job_id}/logs?follow=true` | 로그 |
 | GET | `/v1/explain` | 이 서비스가 무엇인지. token 불필요 (2단계에서 추가) |
 | GET | `/v1/schema` | 제출 본문의 JSON Schema. token 불필요 (2단계에서 추가) |
+| POST | `/v1/estimate` | 시간, 비용, 권장 GPU. 제출하지 않는다 (3단계에서 추가) |
+| POST | `/v1/validate` | 검사만 한다. 제출하지 않는다 (3단계에서 추가) |
 
-`03-api.md` 의 나머지 여섯 개는 아직 없다. `/validate` 와 `/estimate` 는 3단계이고,
+`03-api.md` 의 나머지 넷은 아직 없다. `/v1/uploads`, `/v1/jobs` 목록, `/v1/jobs/{id}/artifacts`,
+`/v1/gpus` 다. `/validate` 와 `/estimate` 는 3단계이고,
 `/uploads` 와 `/artifacts` 는 그 다음이다.
 
 ## 제출 한 번이 지나가는 길
@@ -66,7 +69,10 @@ POST /v1/jobs   Authorization: Bearer <token>
 job 이 전부 admission 에서 거부되므로 `DDPSRUN_RESULT_PREFIX` 와
 `PACSRUN_RESULT_PREFIX_TEMPLATE` 는 같은 것을 가리켜야 한다.
 
-## 판단을 하나도 안 넣은 자리
+## 판단을 하나도 안 넣은 자리 (3단계에서 절반 바뀜)
+
+**아래는 1단계의 이야기다. 3단계에서 `spec.placement.capacityType` 은 서버가 쓰기 시작했다
+(`11-judgement.md`). region 과 vendor 는 여전히 안 쓴다.**
 
 `spec.placement` 를 **아예 안 쓴다.** region, capacityType, vendor 를 서버가 정하지 않으므로
 PACSrun 이 자기 기본값을 그대로 적용한다. `expected_hours` 는 받아서

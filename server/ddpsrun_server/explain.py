@@ -33,10 +33,15 @@ WHAT IT DOES NOT DO
   or fetched by the command itself.
 
 THE CALLS, IN ORDER
-  GET  /v1/schema                     the exact shape of a submit request
+  GET  /v1/schema                     the exact shape of a request
+  POST /v1/estimate                   how long, how much, which GPU. Runs nothing
+  POST /v1/validate                   what is wrong with this job. Runs nothing
   POST /v1/jobs                       submit. returns {job_id, name, result_path}
   GET  /v1/jobs/{job_id}              phase, message, which GPU, restart count
   GET  /v1/jobs/{job_id}/logs         output. add ?follow=true to keep streaming
+
+  All four POST routes take the SAME body, so you check a job and then submit
+  that exact job with nothing rewritten in between.
 
   Everything except /v1/explain and /v1/schema needs a header:
       Authorization: Bearer <your token>
@@ -91,8 +96,21 @@ RESULTS
   writes there is yours to collect. Write it there yourself; nothing is copied
   for you.
 
+BEFORE YOU SUBMIT
+  Call /v1/estimate and /v1/validate. They run nothing and cost nothing.
+
+  /v1/estimate needs facts we cannot read out of an image, under "training":
+  how many pairs your dataset holds, how many epochs, the average length of one
+  response in tokens, and your --max-len. Without the cap there is no memory
+  answer; without the length there is no runtime answer, and it will say so
+  rather than invent one. "confidence": "unknown" is a real answer. The last
+  time this guessed at a combination nobody had measured, it was 96% out.
+
+  /v1/validate takes the same body plus, optionally, the text of your run.sh as
+  "script". Four of its checks need that text. Its "not_checked" list says what
+  no check could look at, so a clean result is not a complete one.
+
 WHAT IS NOT BUILT YET
-  No estimate of how long a job will take or what it will cost. No check of your
-  command before it runs. No listing of available GPUs and prices. No cancel. No
-  upload endpoint, so your command must fetch its own code and data.
+  No listing of available GPUs and prices. No cancel. No upload endpoint, so
+  your command must fetch its own code and data.
 """

@@ -230,3 +230,103 @@ def test_schema_is_generated_from_the_model_so_it_cannot_drift(client):
 def test_schema_carries_the_descriptions_a_stranger_reads(client):
     properties = client.get("/v1/schema").json()["properties"]
     assert "never travels through" in properties["secrets"]["description"]
+
+
+def test_a_submission_now_carries_a_capacity_type(client, cluster):
+    # Stage 3. Without it PACSrun defaults to spot and RunPod is never a
+    # candidate, which is silent: the job runs, just never on RunPod.
+    as_alice(client, "POST", "/v1/jobs", json=submit_body(gpu={"vram_gb": 48}))
+    _, body = cluster.created[0]
+    assert body["spec"]["placement"] == {"capacityType": "on-demand"}
+
+
+def test_a_submit_body_from_stage_one_still_works(client, cluster):
+    # JudgementRequest extends SubmitRequest, so a caller who never heard of
+    # `training` sends exactly what they sent before.
+    response = as_alice(client, "POST", "/v1/jobs", json=submit_body())
+    assert response.status_code == 201
+
+
+# ------------------------------------------------ stage 3: estimate and validate
+
+
+def judgement_body(**overrides):
+    body = {
+        "name": "bank-exp2v2",
+        "image": "runpod/pytorch:1.1.0",
+        "gpu": {"vram_gb": 48},
+        "training": {"pairs": 1110, "epochs": 4, "row_tokens": 4100, "cap": 12288},
+    }
+    body.update(overrides)
+    return body
+
+
+def test_estimate_reproduces_a_job_we_actually_ran(client, cluster):
+    # bank 실험2': 556 steps, 6.54 hours, $6.47.
+    result = as_alice(client, "POST", "/v1/estimate", json=judgement_body()).json()
+    assert result["steps"] == 556
+    assert result["hours"]["confidence"] == "measured"
+    assert result["hours"]["low"] < 6.54 < result["hours"]["high"]
+    assert result["cost_usd"]["low"] < 6.47 < result["cost_usd"]["high"]
+    # And it submitted nothing.
+    assert cluster.created == []
+
+
+def test_estimate_needs_a_token(client):
+    assert client.post("/v1/estimate", json=judgement_body()).status_code == 401
+
+
+def test_estimate_says_unknown_rather_than_guessing(client):
+    body = judgement_body()
+    body["training"]["row_tokens"] = 30000
+    result = as_alice(client, "POST", "/v1/estimate", json=body).json()
+    assert result["hours"]["confidence"] == "unknown"
+    assert result["hours"]["low"] is None
+    assert "96%" in result["basis"]
+
+
+def test_validate_finds_the_two_mitigations_missing(client, cluster):
+    result = as_alice(client, "POST", "/v1/validate", json=judgement_body()).json()
+    codes = {finding["code"] for finding in result["findings"]}
+    assert {"alloc-conf-missing", "trl-patch-missing", "gpu-too-small"} <= codes
+    assert result["ok"] is False
+    assert cluster.created == []
+
+
+def test_validate_reads_the_cap_out_of_a_script_when_it_is_not_given(client):
+    body = judgement_body(script="python train.py --max-len 18432 --max-prompt-len 17408")
+    body["training"].pop("cap")
+    result = as_alice(client, "POST", "/v1/validate", json=body).json()
+    message = next(f["message"] for f in result["findings"] if f["code"] == "gpu-too-small")
+    assert "18,432" in message
+
+
+def test_validate_always_says_what_it_could_not_look_at(client):
+    result = as_alice(client, "POST", "/v1/validate", json=judgement_body()).json()
+    assert result["not_checked"]
+
+
+def test_the_three_routes_take_the_same_body(client):
+    # A caller must be able to check a job and then submit THAT job, unchanged.
+    body = judgement_body()
+    assert as_alice(client, "POST", "/v1/estimate", json=body).status_code == 200
+    assert as_alice(client, "POST", "/v1/validate", json=body).status_code == 200
+    assert as_alice(client, "POST", "/v1/jobs", json=body).status_code == 201
+
+
+def test_the_schema_describes_what_the_routes_actually_accept(client):
+    # It described SubmitRequest while the routes took JudgementRequest, so an
+    # agent reading it could not discover `training` or `script`. A generated
+    # schema that does not match the routes is worse than none: it is
+    # confidently incomplete. Found 2026-08-31.
+    document = client.get("/v1/schema").json()
+    assert "training" in document["properties"]
+    assert "script" in document["properties"]
+    # Still only two required fields, so a stage-1 caller is unaffected.
+    assert document["required"] == ["name", "image"]
+
+
+def test_the_schema_explains_the_training_facts_it_asks_for(client):
+    facts = client.get("/v1/schema").json()["$defs"]["TrainingFacts"]["properties"]
+    assert "no step count" in facts["pairs"]["description"]
+    assert "no runtime" in facts["row_tokens"]["description"]

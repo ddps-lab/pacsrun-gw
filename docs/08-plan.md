@@ -26,10 +26,13 @@ cluster 에 아직 안 올렸다. 확인 못 한 것 셋은 `09-server.md` 끝�
 서버에 `/v1/explain` 과 `/v1/schema` 를 더했다. 판단은 하지 않는다 — 하나는 고정된 산문,
 하나는 요청 모델에서 생성한 JSON Schema 다.
 
-### 3단계 — `/validate` 와 `/estimate`
+### ~~3단계 — `/validate` 와 `/estimate`~~ **끝. 2026-08-31. `11-judgement.md` 참고**
 
-여기부터가 이 저장소의 값어치다. 우리가 손으로 메운 함정 여덟 개와 측정표가 들어간다.
-`04-estimate.md` 와 `03-api.md` 의 `/validate` 표를 코드로 옮긴다.
+측정표 8 줄, 검사 여덟 개, 그리고 `spec.placement.capacityType` 을 서버가 쓰기 시작했다.
+숫자(`measurements.py`)와 산술(`estimate.py`)을 파일로 갈랐다.
+
+`03-api.md` 의 검사 일곱 중 넷을 코드로 옮겼고, 나머지 셋은 저장소를 clone 해야 볼 수 있어
+`not_checked` 로 내보낸다.
 
 ### 4단계 — monitoring 뒷단
 
@@ -62,8 +65,8 @@ Claude plugin 은 그 위에 얹는다.
 | 4 | **CLI 로그인 흐름** | Cognito 를 쓰면 브라우저를 띄우고 돌아오는 흐름이 필요하다. `aws sso login` 이 하는 것과 같다 |
 | 5 | **namespace 이름 규칙** | `lab-<사용자>` 인지 팀 단위인지 |
 | 6 | **bucket 을 나눌 것인가 prefix 로 둘 것인가** | prefix 가 간단. bucket 을 나누면 요금과 lifecycle 을 따로 봄 |
-| 7 | **`/estimate` 가 어디까지 답하는가** | 재본 적 없는 조합에 무엇을 답할지. 지금 판단은 `unknown` |
-| 8 | **UI 기술** | Next.js 인지 더 가벼운 것인지 |
+| ~~7~~ | ~~`/estimate` 가 어디까지 답하는가~~ | **정함: `measured` / `interpolated` / `unknown` 셋.** 잰 범위 밖으로 20% 넘게 나가면 `unknown` 이고 이유를 붙인다 |
+| ~~8~~ | ~~UI 기술~~ | **정함: 서버가 Jinja2 로 HTML 을 그리고 HTMX 로 갱신한다.** 빌드 단계도 별도 배포 대상도 없고, 인증이 서버와 같아서 CORS 가 없다. 그래프는 서버가 SVG 로 그린다 |
 | 9 | **`--resume-from-checkpoint`** | 학습 script 소유자에게 요청해 둔 상태. 긴 학습의 복구가 여기 걸려 있다 |
 | 10 | **shell 접근** | VM 경우에 한해 나중에. 보안 설계가 필요 |
 | 11 | **Lightning Thunder** | 아직 안 씀. 쓰면 측정표에 컴파일러 열 추가 |

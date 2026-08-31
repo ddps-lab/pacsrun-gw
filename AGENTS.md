@@ -9,17 +9,27 @@
 
 ```bash
 ddpsrun explain          # 이 도구가 무엇이고 어떻게 쓰는지
-ddpsrun schema           # 제출 본문의 형식
+ddpsrun schema           # 요청 본문의 형식
+ddpsrun estimate ...     # 시간과 비용, 권장 GPU. 아무것도 제출하지 않는다
+ddpsrun validate ... --script run.sh   # 이 job 의 문제를 지적. 제출하지 않는다
 ddpsrun submit -f job.yaml
 ddpsrun status <job_id>
 ddpsrun logs <job_id> --follow
 ```
 
-**아직 없는 명령이 셋이다.** `gpus`(빌릴 수 있는 GPU 와 단가), `validate`(script 의 문제
-지적), `estimate`(시간과 비용, 권장 GPU). 서버에 라우트가 없다. 3단계에서 생긴다.
+**GPU 크기, 구매 방식, 예상 시간을 스스로 판단하지 말고 `ddpsrun estimate` 를 불러라.**
+판단 로직은 서버에 한 벌만 두는 것이 이 설계의 전제이고, agent 가 임시로 채운 값은 그 한 벌과
+어긋난다.
 
-**그때까지도 GPU 크기와 예상 시간을 스스로 판단하지 말고, 모른다고 말하라.** 판단 로직은
-서버에 한 벌만 두는 것이 이 설계의 전제이고, agent 가 임시로 채운 값은 그 한 벌과 어긋난다.
+**`estimate` 가 `unknown` 을 답하면 그것을 그대로 사용자에게 전하라.** 그것은 실패가 아니라
+답이다. 재본 적 없는 조합에 숫자를 답했다가 96% 틀린 적이 있어서 그렇게 만든 것이고,
+agent 가 그 자리를 자기 추측으로 메우면 그 방어가 사라진다.
+
+**제출 전에 `ddpsrun validate` 를 부르고, exit 1 이면 멈춰라.** 답의 `not_checked` 는
+어떤 검사도 못 본 것들이다. 통과가 곧 완전함은 아니다.
+
+**아직 없는 명령이 하나다.** `gpus`(빌릴 수 있는 GPU 와 단가). 서버에 vendor API key 와
+catalog 캐시가 있어야 한다.
 
 ## 사용자 저장소를 읽어 학습 script 를 만들 때
 

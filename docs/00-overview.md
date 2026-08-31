@@ -93,3 +93,4 @@
 | `08-plan.md` | 만드는 순서와 미결 항목 |
 | `09-server.md` | 서버 1단계. 라우트, 인증, RBAC, 돌리는 법 |
 | `10-cli.md` | CLI 2단계. 명령, exit code, token 저장 |
+| `11-judgement.md` | 3단계. 시간, 비용, GPU 권고, 검사 여덟 개 |

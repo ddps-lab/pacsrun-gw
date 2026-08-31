@@ -265,6 +265,7 @@ def to_pacsjob(
     principal: Principal,
     settings: Settings,
     job_id: str,
+    capacity_type: str | None = None,
 ) -> dict[str, Any]:
     """Turn a submit request into the PacsJob object to create.
 
@@ -275,11 +276,24 @@ def to_pacsjob(
       resultPath          from the token's namespace plus the job id
       parallelism         1, fixed for now
 
+    Since stage 3 there is a fifth: `placement.capacityType`.
+
+    THAT ONE IS NOT A PREFERENCE, IT IS A CORRECTNESS FIX. An empty
+    capacityType means spot (`pkg/decider/decider.go:331`) and PACSrun defaults
+    a job to spot (`internal/controller/placement.go:202`), while RunPod's
+    decider declines any request that is not on-demand before it even reads the
+    catalogue (`pkg/decider/runpod/decider.go:242`). So a job that says nothing
+    quietly loses RunPod as a candidate. `estimate.capacity_type` decides what
+    to write and why.
+
     Args:
         request: the validated body.
         principal: the authenticated caller.
         settings: cluster-wide configuration.
         job_id: the id already minted for this submission.
+        capacity_type: "on-demand" or "spot". None writes no placement at all,
+            which is stage 1's behaviour and is what the tests for the identity
+            fields still exercise.
 
     Returns:
         A dict ready to POST to the Kubernetes API.
@@ -337,6 +351,8 @@ def to_pacsjob(
         spec["env"] = env_entries
     if resources:
         spec["resources"] = resources
+    if capacity_type:
+        spec["placement"] = {"capacityType": capacity_type}
 
     annotations: dict[str, str] = {naming.DISPLAY_NAME_ANNOTATION: request.name}
     if request.expected_hours is not None:
@@ -355,3 +371,209 @@ def to_pacsjob(
         "metadata": metadata,
         "spec": spec,
     }
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: /v1/estimate and /v1/validate.
+#
+# These take the SAME body as a submit, plus what the server cannot work out on
+# its own. The reason they share a shape is that a caller should be able to
+# check a request and then send that exact request, with nothing rewritten in
+# between — a validate that accepts a different shape from a submit eventually
+# passes something the submit refuses.
+#
+# Grep anchor: DDPSRUN-JUDGEMENT-MODELS
+# ---------------------------------------------------------------------------
+
+
+class TrainingFacts(BaseModel):
+    """What the server cannot read out of a container image.
+
+    Every field here is something only the user knows: how big their dataset is,
+    how long their sequences are, what their trainer's batch settings are. The
+    server asks for them rather than guessing, because guessing is what made the
+    market 실험2 estimate 96% wrong.
+    """
+
+    pairs: int | None = Field(
+        default=None, gt=0,
+        description="How many training pairs the dataset holds. Without it there "
+        "is no step count and therefore no runtime.",
+    )
+    epochs: int | None = Field(
+        default=None, gt=0, description="How many passes over the dataset."
+    )
+    row_tokens: int | None = Field(
+        default=None, gt=0,
+        description="Average length of ONE response, in tokens. Without it there "
+        "is no runtime. Read it off a previous run's log if you have one.",
+    )
+    cap: int | None = Field(
+        default=None, gt=0,
+        description="--max-len, the longest sequence the trainer accepts. This is "
+        "what decides peak memory, because the longest sample grows to meet it.",
+    )
+    batch_size: int = Field(
+        default=1, gt=0, description="per_device_train_batch_size. Our script uses 1."
+    )
+    grad_accum: int = Field(
+        default=8, gt=0, description="gradient_accumulation_steps. Our script uses 8."
+    )
+    vocab: int = Field(
+        default=151_936, gt=0,
+        description="The model's vocabulary size. 151,936 is Qwen3-4B. This term "
+        "dominates the memory calculation, so a different model needs its own.",
+    )
+    resumable: bool = Field(
+        default=False,
+        description="Whether the job can restart from a checkpoint. It changes "
+        "whether losing the machine costs the whole run.",
+    )
+
+
+class JudgementRequest(SubmitRequest):
+    """A submit request plus the facts needed to judge it.
+
+    Inherits every field of `SubmitRequest`, so the same body works for
+    /v1/estimate, /v1/validate and /v1/jobs.
+    """
+
+    training: TrainingFacts = Field(default_factory=TrainingFacts)
+    script: str | None = Field(
+        default=None,
+        description="The text of your run.sh. Optional, and four checks are "
+        "skipped without it. It is read and thrown away, never stored.",
+    )
+
+
+class HoursRange(BaseModel):
+    """A runtime answer. Both ends are None when we will not guess."""
+
+    low: float | None = None
+    high: float | None = None
+    confidence: str = Field(
+        description="measured = we have run something close. interpolated = we "
+        "can fit between two runs. unknown = we would be guessing, and the last "
+        "time we guessed we were 96% out."
+    )
+
+
+class CostRange(BaseModel):
+    """What that runtime costs, at the price we last paid."""
+
+    low: float | None = None
+    high: float | None = None
+
+
+class GpuAdviceView(BaseModel):
+    """Which GPU, and the working that led there."""
+
+    recommended: str | None = None
+    recommended_vram_gb: int | None = None
+    peak_logits_gib: float
+    reason: str
+
+
+class EstimateResponse(BaseModel):
+    """What /v1/estimate returns."""
+
+    steps: int | None = None
+    hours: HoursRange
+    cost_usd: CostRange
+    basis: str
+    gpu: GpuAdviceView
+    capacity_type: str
+    capacity_reason: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FindingView(BaseModel):
+    """One thing worth saying about a job before it runs."""
+
+    level: str = Field(description="error, warning or info")
+    code: str = Field(description="a short stable identifier a script can act on")
+    message: str
+    fix: str | None = None
+
+
+class ValidateResponse(BaseModel):
+    """What /v1/validate returns. Nothing was submitted."""
+
+    ok: bool = Field(description="False when any finding is an error")
+    findings: list[FindingView] = Field(default_factory=list)
+    not_checked: list[str] = Field(
+        default_factory=list,
+        description="What no check could look at. Listed rather than passed over "
+        "in silence, so a clean result is not mistaken for a complete one.",
+    )
+
+
+def cap_from(request: JudgementRequest) -> int | None:
+    """Find `--max-len` wherever the caller happened to put it.
+
+    We have written it three ways across eight jobs: as `training.cap`, as an
+    `ML` environment variable the script passes through, and inline in the
+    script's own command line. All three are legitimate, so all three are read.
+
+    Args:
+        request: the judgement request.
+
+    Returns:
+        The cap, or None when it appears nowhere.
+    """
+    if request.training.cap:
+        return request.training.cap
+    for key in ("ML", "MAX_LEN", "max_len"):
+        raw = request.env.get(key)
+        if raw and raw.strip().isdigit():
+            return int(raw.strip())
+    if request.script:
+        import re
+
+        match = re.search(r"--max-len[= ]+(\d+)", request.script)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def gpu_name_for(request: JudgementRequest) -> str:
+    """Which GPU to estimate against.
+
+    A request that names a model is estimated on that model. One that gives only
+    a memory floor is estimated on the cheapest card we have rented that clears
+    it, because that is what the placement would buy.
+
+    Args:
+        request: the judgement request.
+
+    Returns:
+        A GPU model name, or "" for a job that asked for no GPU.
+    """
+    from .measurements import gpu_by_vram
+
+    if request.gpu is None:
+        return ""
+    if request.gpu.name:
+        return request.gpu.name
+    gpu = gpu_by_vram(request.gpu.vram_gb or 0)
+    return gpu.name if gpu else ""
+
+
+def vram_gb_for(request: JudgementRequest) -> int | None:
+    """How much GPU memory the request effectively asks for.
+
+    Args:
+        request: the judgement request.
+
+    Returns:
+        The floor in GB, or None for a CPU-only job. A request by model name is
+        resolved to that model's memory.
+    """
+    from .measurements import gpu_by_name
+
+    if request.gpu is None:
+        return None
+    if request.gpu.vram_gb:
+        return request.gpu.vram_gb
+    gpu = gpu_by_name(request.gpu.name or "")
+    return gpu.vram_gb if gpu else None

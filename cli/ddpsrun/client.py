@@ -100,6 +100,14 @@ class Client:
         """Fetch the JSON Schema of a submit request. No token needed."""
         return self._call("GET", "/v1/schema", authenticated=False).json()
 
+    def estimate(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Ask how long a job will take and what it will cost. Submits nothing."""
+        return self._call("POST", "/v1/estimate", json_body=body).json()
+
+    def validate(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Ask what is wrong with a job. Submits nothing."""
+        return self._call("POST", "/v1/validate", json_body=body).json()
+
     def submit(self, body: dict[str, Any]) -> dict[str, Any]:
         """Submit a job.
 

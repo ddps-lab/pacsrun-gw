@@ -22,12 +22,16 @@ THE COMMANDS, AND WHY EACH EXISTS
                     printing something baked in here that can go stale. This is
                     what makes the tool usable by a coding agent that has read
                     no documentation (`docs/07-agent-skill.md`).
+  estimate          how long, how much, which GPU. Submits nothing.
+  validate          what is wrong with the job. Submits nothing. Exits 1 when
+                    something would actually stop it, so a script can gate a
+                    submit on it.
   submit            the point of the whole thing.
   status            phase, message, which GPU, how many restarts.
   logs              output, optionally followed.
 
-WHAT IS NOT HERE. No `gpus`, no `validate`, no `estimate` — the server has no
-route for them yet, and a CLI that answered them locally would be the second
+WHAT IS NOT HERE. No `gpus`. Answering it needs a vendor API key in the server
+and a catalogue cache, and a CLI that answered it locally would be the second
 source of truth this design exists to avoid.
 
 EXIT CODES, because a script will read them:
@@ -54,12 +58,73 @@ EXIT_SERVER = 1
 EXIT_USAGE = 2
 
 
+def job_arguments() -> argparse.ArgumentParser:
+    """The arguments that describe a job, shared by three subcommands.
+
+    WHY THIS IS A PARENT PARSER RATHER THAN THREE COPIES. `estimate`,
+    `validate` and `submit` must accept exactly the same job description, so
+    that a user checks a job and then submits THAT job with nothing rewritten
+    in between. Three copies would drift, and the drift would show up as a
+    validate that passes something the submit refuses.
+
+    Returns:
+        A parser with `add_help=False`, to be passed as a `parents=` entry.
+    """
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("-f", "--file", help="a YAML or JSON file describing the job")
+    shared.add_argument("--name", help="a name for your own benefit")
+    shared.add_argument("--image", help="container image to run")
+    shared.add_argument(
+        "--arg", action="append", default=[], dest="args_", metavar="ARG",
+        help="one argument to the container. Repeat it, in order.",
+    )
+    shared.add_argument(
+        "--env", action="append", default=[], metavar="KEY=VALUE",
+        help="a non-secret environment variable. Repeatable.",
+    )
+    shared.add_argument(
+        "--secret", action="append", default=[], metavar="NAME",
+        help="the NAME of a stored secret to inject. Never the value. Repeatable.",
+    )
+    shared.add_argument("--gpu-vram", type=int, metavar="GB", help="minimum GPU memory, e.g. 48")
+    shared.add_argument("--gpu-name", metavar="MODEL", help="exact GPU model, e.g. L40S")
+    shared.add_argument("--gpu-count", type=int, metavar="N", help="how many GPUs (default 1)")
+    shared.add_argument("--cpus", help='CPU request, e.g. "4"')
+    shared.add_argument("--memory", help='memory request, e.g. "16Gi"')
+    shared.add_argument(
+        "--expected-hours", type=float, help="your own guess at the runtime, in hours"
+    )
+    # The facts the server cannot read out of a container image. Only estimate
+    # and validate use them today, but submit accepts them too so that one file
+    # works for all three.
+    shared.add_argument("--pairs", type=int, help="how many training pairs your dataset holds")
+    shared.add_argument("--epochs", type=int, help="how many passes over the dataset")
+    shared.add_argument(
+        "--row-tokens", type=int, metavar="N",
+        help="average length of ONE response, in tokens. Without it there is no "
+        "runtime estimate.",
+    )
+    shared.add_argument("--cap", type=int, help="--max-len, which decides peak memory")
+    shared.add_argument("--batch-size", type=int, help="per_device_train_batch_size (default 1)")
+    shared.add_argument("--grad-accum", type=int, help="gradient_accumulation_steps (default 8)")
+    shared.add_argument(
+        "--resumable", action="store_true",
+        help="your job can restart from a checkpoint",
+    )
+    shared.add_argument(
+        "--script", metavar="PATH",
+        help="your run.sh. Four more validate checks become available with it. "
+        "It is read and sent, never stored.",
+    )
+    return shared
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Assemble the command line.
 
     Returns:
         A parser whose every `help` string is written for someone who has not
-        read anything else — this is the only documentation most users will see.
+        read anything else. This is the only documentation most users will see.
     """
     parser = argparse.ArgumentParser(
         prog="ddpsrun",
@@ -76,8 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
         types, and a subparser redefining it would silently reset it to False.
         """
         target.add_argument(
-            "--json",
-            action="store_true",
+            "--json", action="store_true",
             help="print raw JSON instead of a human summary. Use this from a script.",
         )
 
@@ -93,44 +157,27 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("explain", help="what this tool is and how to use it (asks the server)")
     sub.add_parser("schema", help="the exact shape of a submit request (asks the server)")
 
+    job = job_arguments()
+
+    estimate = sub.add_parser(
+        "estimate", parents=[job],
+        help="how long it will take, what it will cost, which GPU. Submits nothing",
+        description="Nothing is submitted. An answer of `unknown` is a real answer: "
+        "the last time we estimated a combination we had never measured, we were 96% out.",
+    )
+    add_json_flag(estimate)
+
+    validate = sub.add_parser(
+        "validate", parents=[job],
+        help="what is wrong with this job. Submits nothing",
+        description="Nothing is submitted. Pass --script to unlock four more checks.",
+    )
+    add_json_flag(validate)
+
     submit = sub.add_parser(
-        "submit",
-        help="submit a job",
-        description="Give a YAML or JSON file, or build the request from flags, or both — "
-        "flags win over the file.",
-    )
-    submit.add_argument("-f", "--file", help="a YAML or JSON file describing the job")
-    submit.add_argument("--name", help="a name for your own benefit")
-    submit.add_argument("--image", help="container image to run")
-    submit.add_argument(
-        "--arg",
-        action="append",
-        default=[],
-        dest="args_",
-        metavar="ARG",
-        help="one argument to the container. Repeat it, in order.",
-    )
-    submit.add_argument(
-        "--env",
-        action="append",
-        default=[],
-        metavar="KEY=VALUE",
-        help="a non-secret environment variable. Repeatable.",
-    )
-    submit.add_argument(
-        "--secret",
-        action="append",
-        default=[],
-        metavar="NAME",
-        help="the NAME of a stored secret to inject. Never the value. Repeatable.",
-    )
-    submit.add_argument("--gpu-vram", type=int, metavar="GB", help="minimum GPU memory, e.g. 48")
-    submit.add_argument("--gpu-name", metavar="MODEL", help="exact GPU model, e.g. L40S")
-    submit.add_argument("--gpu-count", type=int, metavar="N", help="how many GPUs (default 1)")
-    submit.add_argument("--cpus", help='CPU request, e.g. "4"')
-    submit.add_argument("--memory", help='memory request, e.g. "16Gi"')
-    submit.add_argument(
-        "--expected-hours", type=float, help="your own guess at the runtime, in hours"
+        "submit", parents=[job], help="submit a job",
+        description="Give a YAML or JSON file, or build the request from flags, or both. "
+        "Flags win over the file.",
     )
     add_json_flag(submit)
 
@@ -270,6 +317,32 @@ def build_submit_body(args: argparse.Namespace) -> dict[str, Any]:
             gpu["count"] = args.gpu_count
         body["gpu"] = gpu
 
+    # The facts the server cannot read out of a container image. They live under
+    # `training` in the request, and a flag overrides the file the same way
+    # everything else does.
+    training = dict(body.get("training") or {})
+    for flag, field in (
+        ("pairs", "pairs"), ("epochs", "epochs"), ("row_tokens", "row_tokens"),
+        ("cap", "cap"), ("batch_size", "batch_size"), ("grad_accum", "grad_accum"),
+    ):
+        value = getattr(args, flag, None)
+        if value is not None:
+            training[field] = value
+    if getattr(args, "resumable", False):
+        training["resumable"] = True
+    if training:
+        body["training"] = training
+
+    # `--script run.sh` sends the file's TEXT, not its path. The server has no
+    # way to read a file on the user's laptop.
+    script_path = getattr(args, "script", None)
+    if script_path:
+        try:
+            with open(script_path, "r", encoding="utf-8") as handle:
+                body["script"] = handle.read()
+        except OSError as exc:
+            raise SystemExit(f"cannot read {script_path}: {exc}") from exc
+
     if not body.get("name") or not body.get("image"):
         raise SystemExit(
             "a job needs at least a name and an image. Give them with --name and "
@@ -351,6 +424,63 @@ def cmd_submit(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_estimate(args: argparse.Namespace) -> int:
+    """Print how long a job will take, what it will cost, and which GPU it wants."""
+    body = build_submit_body(args)
+    result = client_from_config().estimate(body)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return EXIT_OK
+
+    hours, cost, gpu = result["hours"], result["cost_usd"], result["gpu"]
+    if result.get("steps"):
+        print(f"  스텝        {result['steps']:,}")
+    if hours.get("low") is not None:
+        print(f"  시간        {hours['low']} ~ {hours['high']} 시간  [{hours['confidence']}]")
+    else:
+        # `unknown` is a real answer, and printing a blank instead of saying so
+        # is how a user ends up assuming zero.
+        print(f"  시간        모름  [{hours['confidence']}]")
+    if cost.get("low") is not None:
+        print(f"  비용        ${cost['low']} ~ ${cost['high']}")
+    print(f"  근거        {result['basis']}")
+    print(f"  GPU         {gpu.get('recommended') or '없음'}"
+          f" ({gpu.get('recommended_vram_gb')} GB), 최대 logits {gpu['peak_logits_gib']} GiB")
+    print(f"              {gpu['reason']}")
+    print(f"  구매 방식   {result['capacity_type']}")
+    print(f"              {result['capacity_reason']}")
+    for warning in result.get("warnings", []):
+        print(f"  참고        {warning}")
+    return EXIT_OK
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Print what is wrong with a job, without submitting it.
+
+    Returns:
+        0 when nothing is an error, 1 when something is. A script can gate a
+        submit on this.
+    """
+    body = build_submit_body(args)
+    result = client_from_config().validate(body)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return EXIT_OK if result["ok"] else EXIT_SERVER
+
+    marker = {"error": "[막힘]", "warning": "[경고]", "info": "[참고]"}
+    for finding in result.get("findings", []):
+        print(f"{marker.get(finding['level'], '[    ]')} {finding['code']}")
+        print(f"  {finding['message']}")
+        if finding.get("fix"):
+            print(f"  고치려면: {finding['fix']}")
+        print()
+    for line in result.get("not_checked", []):
+        print(f"[못 봄] {line}")
+    print()
+    print("통과했습니다." if result["ok"] else "막히는 문제가 있습니다.")
+    return EXIT_OK if result["ok"] else EXIT_SERVER
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     """Print one job's state."""
     view = client_from_config().status(args.job_id)
@@ -387,6 +517,8 @@ COMMANDS = {
     "logout": cmd_logout,
     "explain": cmd_explain,
     "schema": cmd_schema,
+    "estimate": cmd_estimate,
+    "validate": cmd_validate,
     "submit": cmd_submit,
     "status": cmd_status,
     "logs": cmd_logs,
