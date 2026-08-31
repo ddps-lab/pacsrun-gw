@@ -3,258 +3,147 @@
 
 # CLI reference
 
-Generated from `ddpsrun --help`.
-
-## ddpsrun
+Generated from `ddpsrun`'s own argument parser.
 
 ```
-usage: ddpsrun [-h] <command> ...
-
-Submit a batch job to a GPU we rent for you, and get the results back.
-
-positional arguments:
-  <command>
-    login     store the server address and your token
-    logout    delete the stored token
-    explain   what this tool is and how to use it (asks the server)
-    schema    the exact shape of a submit request (asks the server)
-    estimate  how long it will take, what it will cost, which GPU. Submits
-              nothing
-    validate  what is wrong with this job. Submits nothing
-    submit    submit a job
-    status    how a job is doing
-    watch     GPU usage and training progress
-    logs      a job's output
-
-options:
-  -h, --help  show this help message and exit
-
-Run `ddpsrun explain` for the full description, straight from the server.
+ddpsrun <command> [options]
 ```
+
+## Commands
+
+| command | what it does |
+|---|---|
+| `ddpsrun login` | store the server address and your token |
+| `ddpsrun logout` | delete the stored token |
+| `ddpsrun explain` | what this tool is and how to use it (asks the server) |
+| `ddpsrun schema` | the exact shape of a submit request (asks the server) |
+| `ddpsrun estimate` | how long it will take, what it will cost, which GPU. Submits nothing |
+| `ddpsrun validate` | what is wrong with this job. Submits nothing |
+| `ddpsrun submit` | submit a job |
+| `ddpsrun status` | how a job is doing |
+| `ddpsrun watch` | GPU usage and training progress |
+| `ddpsrun logs` | a job's output |
 
 ## ddpsrun login
 
-```
-usage: ddpsrun login [-h] --server SERVER [--token TOKEN]
-
-options:
-  -h, --help       show this help message and exit
-  --server SERVER  the gateway URL, e.g. https://run.example
-  --token TOKEN    your token. Omit it and you will be prompted, which keeps
-                   it out of your shell history.
-```
+| argument | required | what it does |
+|---|---|---|
+| `--server SERVER` | yes | the gateway URL, e.g. https://run.example |
+| `--token TOKEN` |  | your token. Omit it and you will be prompted, which keeps it out of your shell history. |
 
 ## ddpsrun logout
 
-```
-usage: ddpsrun logout [-h]
-
-options:
-  -h, --help  show this help message and exit
-```
-
 ## ddpsrun explain
-
-```
-usage: ddpsrun explain [-h]
-
-options:
-  -h, --help  show this help message and exit
-```
 
 ## ddpsrun schema
 
-```
-usage: ddpsrun schema [-h]
-
-options:
-  -h, --help  show this help message and exit
-```
-
 ## ddpsrun estimate
 
-```
-usage: ddpsrun estimate [-h] [-f FILE] [--name NAME] [--image IMAGE]
-                        [--arg ARG] [--env KEY=VALUE] [--secret NAME]
-                        [--gpu-vram GB] [--gpu-name MODEL] [--gpu-count N]
-                        [--cpus CPUS] [--memory MEMORY]
-                        [--expected-hours EXPECTED_HOURS] [--pairs PAIRS]
-                        [--epochs EPOCHS] [--row-tokens N] [--cap CAP]
-                        [--batch-size BATCH_SIZE] [--grad-accum GRAD_ACCUM]
-                        [--resumable] [--script PATH] [--json]
+Nothing is submitted. An answer of `unknown` is a real answer: the last time we estimated a combination we had never measured, we were 96% out.
 
-Nothing is submitted. An answer of `unknown` is a real answer: the last time
-we estimated a combination we had never measured, we were 96% out.
-
-options:
-  -h, --help            show this help message and exit
-  -f, --file FILE       a YAML or JSON file describing the job
-  --name NAME           a name for your own benefit
-  --image IMAGE         container image to run
-  --arg ARG             one argument to the container. Repeat it, in order.
-  --env KEY=VALUE       a non-secret environment variable. Repeatable.
-  --secret NAME         the NAME of a stored secret to inject. Never the
-                        value. Repeatable.
-  --gpu-vram GB         minimum GPU memory, e.g. 48
-  --gpu-name MODEL      exact GPU model, e.g. L40S
-  --gpu-count N         how many GPUs (default 1)
-  --cpus CPUS           CPU request, e.g. "4"
-  --memory MEMORY       memory request, e.g. "16Gi"
-  --expected-hours EXPECTED_HOURS
-                        your own guess at the runtime, in hours
-  --pairs PAIRS         how many training pairs your dataset holds
-  --epochs EPOCHS       how many passes over the dataset
-  --row-tokens N        average length of ONE response, in tokens. Without it
-                        there is no runtime estimate.
-  --cap CAP             --max-len, which decides peak memory
-  --batch-size BATCH_SIZE
-                        per_device_train_batch_size (default 1)
-  --grad-accum GRAD_ACCUM
-                        gradient_accumulation_steps (default 8)
-  --resumable           your job can restart from a checkpoint
-  --script PATH         your run.sh. Four more validate checks become
-                        available with it. It is read and sent, never stored.
-  --json                print raw JSON instead of a human summary. Use this
-                        from a script.
-```
+| argument | required | what it does |
+|---|---|---|
+| `-f FILE`, `--file FILE` |  | a YAML or JSON file describing the job |
+| `--name NAME` |  | a name for your own benefit |
+| `--image IMAGE` |  | container image to run |
+| `--arg ARG` |  | one argument to the container. Repeat it, in order. |
+| `--env KEY=VALUE` |  | a non-secret environment variable. Repeatable. |
+| `--secret NAME` |  | the NAME of a stored secret to inject. Never the value. Repeatable. |
+| `--gpu-vram GB` |  | minimum GPU memory, e.g. 48 |
+| `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
+| `--gpu-count N` |  | how many GPUs (default 1) |
+| `--cpus CPUS` |  | CPU request, e.g. "4" |
+| `--memory MEMORY` |  | memory request, e.g. "16Gi" |
+| `--expected-hours EXPECTED_HOURS` |  | your own guess at the runtime, in hours |
+| `--pairs PAIRS` |  | how many training pairs your dataset holds |
+| `--epochs EPOCHS` |  | how many passes over the dataset |
+| `--row-tokens N` |  | average length of ONE response, in tokens. Without it there is no runtime estimate. |
+| `--cap CAP` |  | --max-len, which decides peak memory |
+| `--batch-size BATCH_SIZE` |  | per_device_train_batch_size (default 1) |
+| `--grad-accum GRAD_ACCUM` |  | gradient_accumulation_steps (default 8) |
+| `--resumable` |  | your job can restart from a checkpoint |
+| `--script PATH` |  | your run.sh. Four more validate checks become available with it. It is read and sent, never stored. |
+| `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
 
 ## ddpsrun validate
 
-```
-usage: ddpsrun validate [-h] [-f FILE] [--name NAME] [--image IMAGE]
-                        [--arg ARG] [--env KEY=VALUE] [--secret NAME]
-                        [--gpu-vram GB] [--gpu-name MODEL] [--gpu-count N]
-                        [--cpus CPUS] [--memory MEMORY]
-                        [--expected-hours EXPECTED_HOURS] [--pairs PAIRS]
-                        [--epochs EPOCHS] [--row-tokens N] [--cap CAP]
-                        [--batch-size BATCH_SIZE] [--grad-accum GRAD_ACCUM]
-                        [--resumable] [--script PATH] [--json]
-
 Nothing is submitted. Pass --script to unlock four more checks.
 
-options:
-  -h, --help            show this help message and exit
-  -f, --file FILE       a YAML or JSON file describing the job
-  --name NAME           a name for your own benefit
-  --image IMAGE         container image to run
-  --arg ARG             one argument to the container. Repeat it, in order.
-  --env KEY=VALUE       a non-secret environment variable. Repeatable.
-  --secret NAME         the NAME of a stored secret to inject. Never the
-                        value. Repeatable.
-  --gpu-vram GB         minimum GPU memory, e.g. 48
-  --gpu-name MODEL      exact GPU model, e.g. L40S
-  --gpu-count N         how many GPUs (default 1)
-  --cpus CPUS           CPU request, e.g. "4"
-  --memory MEMORY       memory request, e.g. "16Gi"
-  --expected-hours EXPECTED_HOURS
-                        your own guess at the runtime, in hours
-  --pairs PAIRS         how many training pairs your dataset holds
-  --epochs EPOCHS       how many passes over the dataset
-  --row-tokens N        average length of ONE response, in tokens. Without it
-                        there is no runtime estimate.
-  --cap CAP             --max-len, which decides peak memory
-  --batch-size BATCH_SIZE
-                        per_device_train_batch_size (default 1)
-  --grad-accum GRAD_ACCUM
-                        gradient_accumulation_steps (default 8)
-  --resumable           your job can restart from a checkpoint
-  --script PATH         your run.sh. Four more validate checks become
-                        available with it. It is read and sent, never stored.
-  --json                print raw JSON instead of a human summary. Use this
-                        from a script.
-```
+| argument | required | what it does |
+|---|---|---|
+| `-f FILE`, `--file FILE` |  | a YAML or JSON file describing the job |
+| `--name NAME` |  | a name for your own benefit |
+| `--image IMAGE` |  | container image to run |
+| `--arg ARG` |  | one argument to the container. Repeat it, in order. |
+| `--env KEY=VALUE` |  | a non-secret environment variable. Repeatable. |
+| `--secret NAME` |  | the NAME of a stored secret to inject. Never the value. Repeatable. |
+| `--gpu-vram GB` |  | minimum GPU memory, e.g. 48 |
+| `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
+| `--gpu-count N` |  | how many GPUs (default 1) |
+| `--cpus CPUS` |  | CPU request, e.g. "4" |
+| `--memory MEMORY` |  | memory request, e.g. "16Gi" |
+| `--expected-hours EXPECTED_HOURS` |  | your own guess at the runtime, in hours |
+| `--pairs PAIRS` |  | how many training pairs your dataset holds |
+| `--epochs EPOCHS` |  | how many passes over the dataset |
+| `--row-tokens N` |  | average length of ONE response, in tokens. Without it there is no runtime estimate. |
+| `--cap CAP` |  | --max-len, which decides peak memory |
+| `--batch-size BATCH_SIZE` |  | per_device_train_batch_size (default 1) |
+| `--grad-accum GRAD_ACCUM` |  | gradient_accumulation_steps (default 8) |
+| `--resumable` |  | your job can restart from a checkpoint |
+| `--script PATH` |  | your run.sh. Four more validate checks become available with it. It is read and sent, never stored. |
+| `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
 
 ## ddpsrun submit
 
-```
-usage: ddpsrun submit [-h] [-f FILE] [--name NAME] [--image IMAGE] [--arg ARG]
-                      [--env KEY=VALUE] [--secret NAME] [--gpu-vram GB]
-                      [--gpu-name MODEL] [--gpu-count N] [--cpus CPUS]
-                      [--memory MEMORY] [--expected-hours EXPECTED_HOURS]
-                      [--pairs PAIRS] [--epochs EPOCHS] [--row-tokens N]
-                      [--cap CAP] [--batch-size BATCH_SIZE]
-                      [--grad-accum GRAD_ACCUM] [--resumable] [--script PATH]
-                      [--json]
+Give a YAML or JSON file, or build the request from flags, or both. Flags win over the file.
 
-Give a YAML or JSON file, or build the request from flags, or both. Flags win
-over the file.
-
-options:
-  -h, --help            show this help message and exit
-  -f, --file FILE       a YAML or JSON file describing the job
-  --name NAME           a name for your own benefit
-  --image IMAGE         container image to run
-  --arg ARG             one argument to the container. Repeat it, in order.
-  --env KEY=VALUE       a non-secret environment variable. Repeatable.
-  --secret NAME         the NAME of a stored secret to inject. Never the
-                        value. Repeatable.
-  --gpu-vram GB         minimum GPU memory, e.g. 48
-  --gpu-name MODEL      exact GPU model, e.g. L40S
-  --gpu-count N         how many GPUs (default 1)
-  --cpus CPUS           CPU request, e.g. "4"
-  --memory MEMORY       memory request, e.g. "16Gi"
-  --expected-hours EXPECTED_HOURS
-                        your own guess at the runtime, in hours
-  --pairs PAIRS         how many training pairs your dataset holds
-  --epochs EPOCHS       how many passes over the dataset
-  --row-tokens N        average length of ONE response, in tokens. Without it
-                        there is no runtime estimate.
-  --cap CAP             --max-len, which decides peak memory
-  --batch-size BATCH_SIZE
-                        per_device_train_batch_size (default 1)
-  --grad-accum GRAD_ACCUM
-                        gradient_accumulation_steps (default 8)
-  --resumable           your job can restart from a checkpoint
-  --script PATH         your run.sh. Four more validate checks become
-                        available with it. It is read and sent, never stored.
-  --json                print raw JSON instead of a human summary. Use this
-                        from a script.
-```
+| argument | required | what it does |
+|---|---|---|
+| `-f FILE`, `--file FILE` |  | a YAML or JSON file describing the job |
+| `--name NAME` |  | a name for your own benefit |
+| `--image IMAGE` |  | container image to run |
+| `--arg ARG` |  | one argument to the container. Repeat it, in order. |
+| `--env KEY=VALUE` |  | a non-secret environment variable. Repeatable. |
+| `--secret NAME` |  | the NAME of a stored secret to inject. Never the value. Repeatable. |
+| `--gpu-vram GB` |  | minimum GPU memory, e.g. 48 |
+| `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
+| `--gpu-count N` |  | how many GPUs (default 1) |
+| `--cpus CPUS` |  | CPU request, e.g. "4" |
+| `--memory MEMORY` |  | memory request, e.g. "16Gi" |
+| `--expected-hours EXPECTED_HOURS` |  | your own guess at the runtime, in hours |
+| `--pairs PAIRS` |  | how many training pairs your dataset holds |
+| `--epochs EPOCHS` |  | how many passes over the dataset |
+| `--row-tokens N` |  | average length of ONE response, in tokens. Without it there is no runtime estimate. |
+| `--cap CAP` |  | --max-len, which decides peak memory |
+| `--batch-size BATCH_SIZE` |  | per_device_train_batch_size (default 1) |
+| `--grad-accum GRAD_ACCUM` |  | gradient_accumulation_steps (default 8) |
+| `--resumable` |  | your job can restart from a checkpoint |
+| `--script PATH` |  | your run.sh. Four more validate checks become available with it. It is read and sent, never stored. |
+| `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
 
 ## ddpsrun status
 
-```
-usage: ddpsrun status [-h] [--json] job_id
-
-positional arguments:
-  job_id
-
-options:
-  -h, --help  show this help message and exit
-  --json      print raw JSON instead of a human summary. Use this from a
-              script.
-```
+| argument | required | what it does |
+|---|---|---|
+| `job_id` | yes |  |
+| `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
 
 ## ddpsrun watch
 
-```
-usage: ddpsrun watch [-h] [--window SECONDS] [--json] job_id
+Read out of the job's own log. Nothing is stored, so what you can see goes back as far as the log does.
 
-Read out of the job's own log. Nothing is stored, so what you can see goes
-back as far as the log does.
-
-positional arguments:
-  job_id
-
-options:
-  -h, --help        show this help message and exit
-  --window SECONDS  how far back to read (default 3600, max 86400)
-  --json            print raw JSON instead of a human summary. Use this from a
-                    script.
-```
+| argument | required | what it does |
+|---|---|---|
+| `job_id` | yes |  |
+| `--window SECONDS` |  | how far back to read (default 3600, max 86400) (default `3600`) |
+| `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
 
 ## ddpsrun logs
 
-```
-usage: ddpsrun logs [-h] [-f] job_id
-
-positional arguments:
-  job_id
-
-options:
-  -h, --help    show this help message and exit
-  -f, --follow  keep printing as new lines arrive
-```
+| argument | required | what it does |
+|---|---|---|
+| `job_id` | yes |  |
+| `-f`, `--follow` |  | keep printing as new lines arrive |
 
 ## Exit codes
 

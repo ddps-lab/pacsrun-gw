@@ -83,3 +83,32 @@ def test_the_plugin_and_the_marketplace_agree_on_the_name():
     # `source` is the path Claude Code loads the plugin from. A wrong one fails
     # silently: the marketplace lists a plugin that never appears.
     assert (REPO_ROOT / entry["source"].lstrip("./")).is_dir()
+
+
+def test_the_generated_output_does_not_depend_on_terminal_width():
+    # The first version captured `--help`, which argparse wraps to
+    # shutil.get_terminal_size(). CI rejected it because a developer's terminal
+    # and the runner's produced different files, which made the check
+    # meaningless. Reading the parser's actions depends on neither the width nor
+    # the Python version (3.13 changed how argparse prints `-f, --file FILE`).
+    import os
+
+    outputs = []
+    for width in ("40", "200"):
+        environment = dict(os.environ, COLUMNS=width)
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, 'agent/scripts');"
+             "import generate_references as g; print(g.render_cli(), end='')"],
+            cwd=REPO_ROOT, capture_output=True, text=True, env=environment,
+        )
+        assert result.returncode == 0, result.stderr
+        outputs.append(result.stdout)
+    assert outputs[0] == outputs[1]
+
+
+def test_the_cli_reference_lists_each_command_with_its_flags():
+    text = (REFERENCES / "cli.md").read_text(encoding="utf-8")
+    # A table, not a wall of help text: the flag and what it does, per command.
+    assert "| `--server SERVER` | yes | the gateway URL" in text
+    assert "| `--gpu-vram GB` |  | minimum GPU memory" in text

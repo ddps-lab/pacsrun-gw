@@ -7,8 +7,10 @@ END-TO-END FLOW of this script:
      document. That document is built from the pydantic models, so it is the
      server's actual contract rather than a description of it.
   2. It renders that into `agent/references/api.md`.
-  3. It runs the CLI's argument parser and prints every subcommand's help, and
-     renders that into `agent/references/cli.md`.
+  3. It walks the CLI's argument parser and renders every subcommand and flag
+     into `agent/references/cli.md`. It does NOT capture `--help` text: that
+     wraps to the terminal width and changed shape in Python 3.13, so it
+     differed between a laptop and the CI runner. See `render_cli`.
   4. `--check` compares what it would write against what is on disk and exits 1
      if they differ. CI runs that, so a route or a flag cannot change without
      the references changing with it.
@@ -33,10 +35,7 @@ Grep anchor: DDPSRUN-GENERATE-REFERENCES
 from __future__ import annotations
 
 import argparse
-import io
-import json
 import sys
-from contextlib import redirect_stdout
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -122,36 +121,112 @@ def render_api() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _flag_names(action: object) -> str:
+    """How one option is written on a command line.
+
+    Args:
+        action: an argparse action.
+
+    Returns:
+        Its option strings joined, with the metavar where a value goes.
+    """
+    import argparse
+
+    if not action.option_strings:
+        return f"`{action.metavar or action.dest}`"
+
+    takes_value = not isinstance(
+        action, (argparse._StoreTrueAction, argparse._StoreFalseAction, argparse._HelpAction)
+    )
+    value = ""
+    if takes_value:
+        value = " " + (action.metavar or action.dest.upper())
+    return ", ".join(f"`{name}{value}`" for name in action.option_strings)
+
+
+def _options_table(parser: object) -> list[str]:
+    """Render one parser's arguments as a table.
+
+    Args:
+        parser: an ArgumentParser.
+
+    Returns:
+        Markdown lines, or an empty list when it takes nothing but `--help`.
+    """
+    import argparse
+
+    rows = []
+    for action in parser._actions:
+        if isinstance(action, (argparse._HelpAction, argparse._SubParsersAction)):
+            continue
+        default = ""
+        if action.default not in (None, False) and not isinstance(action.default, list):
+            default = f" (default `{action.default}`)"
+        help_text = (action.help or "").replace("\n", " ").strip()
+        required = "yes" if getattr(action, "required", False) or not action.option_strings else ""
+        rows.append(f"| {_flag_names(action)} | {required} | {help_text}{default} |")
+
+    if not rows:
+        return []
+    return ["| argument | required | what it does |", "|---|---|---|", *rows, ""]
+
+
 def render_cli() -> str:
     """Turn the CLI's argument parser into a reference page.
 
     Returns:
         Markdown.
 
-    `--help` output is captured rather than reconstructed, so what appears here
-    is character for character what a user sees in their terminal.
+    WHY THIS WALKS THE PARSER INSTEAD OF CAPTURING `--help`. Capturing was the
+    first version and CI rejected it, correctly. `--help` text is wrapped to
+    `shutil.get_terminal_size()`, and Python 3.13 changed how argparse prints an
+    option that has both a short and a long form (`-f, --file FILE` where 3.12
+    wrote `-f FILE, --file FILE`). So the output differed between a developer's
+    machine and the runner, and **a generated artefact that CI checks has to be
+    identical everywhere or the check means nothing**. Reading the actions
+    themselves depends on neither.
     """
+    import argparse
+
     from ddpsrun.cli import build_parser
 
     parser = build_parser()
-    lines = [BANNER, "# CLI reference", "", "Generated from `ddpsrun --help`.", ""]
+    lines = [
+        BANNER,
+        "# CLI reference",
+        "",
+        "Generated from `ddpsrun`'s own argument parser.",
+        "",
+        "```",
+        "ddpsrun <command> [options]",
+        "```",
+        "",
+        "## Commands",
+        "",
+        "| command | what it does |",
+        "|---|---|",
+    ]
 
-    def help_for(target: argparse.ArgumentParser) -> str:
-        buffer = io.StringIO()
-        with redirect_stdout(buffer):
-            target.print_help()
-        return buffer.getvalue().rstrip()
-
-    lines += ["## ddpsrun", "", "```", help_for(parser), "```", ""]
-
-    # argparse keeps the subparsers in the one _SubParsersAction it was given.
     subactions = [
         action for action in parser._actions
         if isinstance(action, argparse._SubParsersAction)
     ]
+    choices: dict[str, object] = {}
     for action in subactions:
-        for name, subparser in action.choices.items():
-            lines += [f"## ddpsrun {name}", "", "```", help_for(subparser), "```", ""]
+        # `choices` preserves the order the subcommands were added, which is the
+        # order they are meant to be used in.
+        choices.update(action.choices)
+        for entry in action._choices_actions:
+            lines.append(f"| `ddpsrun {entry.dest}` | {(entry.help or '').strip()} |")
+
+    lines.append("")
+
+    for name, subparser in choices.items():
+        lines += [f"## ddpsrun {name}", ""]
+        description = (subparser.description or "").replace("\n", " ").strip()
+        if description:
+            lines += [description, ""]
+        lines += _options_table(subparser)
 
     lines += [
         "## Exit codes",
