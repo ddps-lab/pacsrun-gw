@@ -91,3 +91,4 @@
 | `06-multi-tenancy.md` | namespace 와 S3 prefix 분리 |
 | `07-agent-skill.md` | skill 구성과 Codex 대비 |
 | `08-plan.md` | 만드는 순서와 미결 항목 |
+| `09-server.md` | 서버 1단계. 라우트, 인증, RBAC, 돌리는 법 |

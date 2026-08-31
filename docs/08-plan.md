@@ -2,15 +2,17 @@
 
 ## 순서
 
-### 1단계 — 서버 (얇게)
+### ~~1단계 — 서버 (얇게)~~ **끝. 2026-08-31. `09-server.md` 참고**
 
-`/v1/jobs` 제출, `/v1/jobs/{id}` 조회, `/v1/jobs/{id}/logs` 만. **판단은 아직 없다.**
-CRD 를 만들고 읽는 것이 전부다. 인증은 token 한 종류.
+`/healthz`, `/v1/jobs` 제출, `/v1/jobs/{id}` 조회, `/v1/jobs/{id}/logs`. **판단은 없다.**
+인증은 static token 파일 한 종류이고, Cognito 는 CLI 가 생기는 2단계 뒤로 미뤘다.
 
-이 단계에서 정해야 하는 것이 셋이다. 서버 위치, 로그인 방식, token 형식.
+**규모 [추정]은 600~800 줄이었고 실제는 1,924 줄이다.** 코드 7 파일 1,350 줄, test 4 파일
+574 줄. 추정이 빗나간 이유가 둘이다. test 를 안 세었고, `pacsrun` 의 주석 규칙(파일마다
+end-to-end 흐름 docstring, 함수마다 목적과 입출력)을 적용하면 주석과 빈 줄이 절반 가까이
+된다. 주석과 docstring 과 빈 줄을 뺀 실제 구문은 585 줄이다.
 
-**규모**: 기존 설계 문서가 CLI 본문을 600~800 줄로 잡았다. 서버는 라우트 아홉 개에
-kubernetes client 를 물리는 것이라 비슷하게 본다. **[추정] 실측 근거는 없다.**
+cluster 에 아직 안 올렸다. 확인 못 한 것 셋은 `09-server.md` 끝에 적어 두었다.
 
 ### 2단계 — CLI
 
@@ -58,6 +60,9 @@ Claude plugin 은 그 위에 얹는다.
 | 9 | **`--resume-from-checkpoint`** | 학습 script 소유자에게 요청해 둔 상태. 긴 학습의 복구가 여기 걸려 있다 |
 | 10 | **shell 접근** | VM 경우에 한해 나중에. 보안 설계가 필요 |
 | 11 | **Lightning Thunder** | 아직 안 씀. 쓰면 측정표에 컴파일러 열 추가 |
+| 12 | **서버 앞에 무엇을 두는가** | TLS 를 끝내고 8080 으로 넘길 것. Ingress 인지 ALB 인지 tunnel 인지. 그전까지는 `kubectl port-forward` |
+| 13 | **image 를 어느 registry 로** | CI 가 빌드만 하고 push 를 안 한다. PACSrun 은 ECR 두 곳에 올린다 |
+| 14 | **로그 `follow` 가 몇 시간을 버티는가** | 앞단의 idle timeout 이 끊으면 CLI 가 재연결해야 한다. driver 가 RunPod 상대로 이미 겪은 문제다 |
 
 ---
 

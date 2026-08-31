@@ -3,7 +3,7 @@
 # 이 저장소는 나중에 public 으로 연다. 그때 손볼 것이 없도록 계정 식별자를 처음부터
 # 자리표시자로 쓴다. 사람이 지키기로 하면 언젠가 새므로 여기서 막는다.
 #
-# 코드가 생기면 lint 와 test job 을 아래에 더한다. 그때도 이 job 은 남긴다.
+# 코드가 생겼으므로 server-test 와 server-image 를 아래에 더했다. no-identifiers 는 남긴다.
 name: ci
 
 on:
@@ -24,7 +24,12 @@ jobs:
           check() {
             local name="$1" pat="$2"
             local hits
-            hits=$(grep -rInE "$pat" --exclude-dir=.git --exclude-dir=node_modules . || true)
+            # -e 가 필요하다. 개인키 패턴은 "-----BEGIN..." 으로 시작하므로 -e 없이
+            # 넘기면 grep 이 그것을 옵션으로 읽고 usage 를 내며 죽는다. 뒤의
+            # `|| true` 가 그 실패를 삼켜서, 이 검사는 무엇이 들어 있든 0 건으로
+            # 통과했다. 2026-08-31 에 발견해 고쳤다.
+            hits=$(grep -rInE --exclude-dir=.git --exclude-dir=.venv \
+                     --exclude-dir=node_modules -e "$pat" . || true)
             if [ -n "$hits" ]; then
               echo "::error::$name 이(가) 섞여 있습니다. 자리표시자로 바꾸십시오."
               echo "$hits"
@@ -42,3 +47,31 @@ jobs:
             exit 1
           fi
           echo "통과: 계정 식별자 없음"
+
+  server-test:
+    name: 서버 test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 설치
+        working-directory: server
+        run: pip install -e '.[dev]'
+      - name: pytest
+        working-directory: server
+        run: python -m pytest -q
+
+  server-image:
+    name: 서버 image 가 빌드되는지
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 빌드만 하고 push 하지 않는다. registry 를 아직 안 정했다
+      # (docs/08-plan.md 미결 항목 13). 여기서 빌드해 두는 이유는 Dockerfile 이
+      # 깨진 것을 배포하는 날에 처음 알게 되지 않도록 하려는 것이다.
+      # 이미지는 로컬 docker daemon 으로 절대 굽지 않는다 — CI 가 유일한 빌더다.
+      - name: docker build
+        working-directory: server
+        run: docker build -t ddpsrun-gw:${{ github.sha }} .

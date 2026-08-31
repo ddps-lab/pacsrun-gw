@@ -8,14 +8,14 @@
 **문서를 읽기 전에 도구에 물어본다.** 답이 항상 최신이다.
 
 ```bash
-ddps explain          # 이 도구가 무엇이고 어떻게 쓰는지
-ddps schema           # 제출 본문의 형식
-ddps gpus             # 지금 빌릴 수 있는 GPU 와 단가
-ddps validate run.sh  # 이 script 의 문제를 지적
-ddps estimate ...     # 시간과 비용, 권장 GPU
+ddpsrun explain          # 이 도구가 무엇이고 어떻게 쓰는지
+ddpsrun schema           # 제출 본문의 형식
+ddpsrun gpus             # 지금 빌릴 수 있는 GPU 와 단가
+ddpsrun validate run.sh  # 이 script 의 문제를 지적
+ddpsrun estimate ...     # 시간과 비용, 권장 GPU
 ```
 
-**GPU 크기, spot 여부, 예상 시간을 스스로 판단하지 않는다.** `ddps estimate` 를 부른다.
+**GPU 크기, spot 여부, 예상 시간을 스스로 판단하지 않는다.** `ddpsrun estimate` 를 부른다.
 판단 로직은 서버에 한 벌만 있다.
 
 ## 사용자 저장소를 읽어 학습 script 를 만들 때

@@ -1,0 +1,49 @@
+# What the gateway server is allowed to do in the cluster.
+#
+# THE SHAPE, AND WHY. One ClusterRole holding the verbs, then ONE RoleBinding
+# PER TENANT NAMESPACE. A ClusterRoleBinding would have been one object instead
+# of N, and it would also let the server read pods in kube-system. Binding per
+# namespace means adding a tenant is a deliberate act with a reviewable diff.
+#
+# WHAT IS DELIBERATELY ABSENT: `secrets`. The server writes a `secretKeyRef`
+# into the PacsJob and lets kubelet resolve it, so it never holds a GitHub token
+# or an API key. Somebody who takes over this pod cannot read them either.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ddpsrun-gw
+  namespace: ddpsrun-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ddpsrun-gw
+rules:
+  # Submit and read back the jobs it created.
+  - apiGroups: ["pacsrun.io"]
+    resources: ["pacsjobs"]
+    verbs: ["create", "get", "list"]
+  # Find the pod behind a job, so `/v1/jobs/{id}/logs` knows whose stdout to read.
+  # `list` and not `get`: the server looks a pod up by label, never by name.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+# One of these per tenant namespace. `<TENANT_NAMESPACE>` is the namespace a
+# token maps to in the token file (see `docs/09-server.md`).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ddpsrun-gw
+  namespace: <TENANT_NAMESPACE>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ddpsrun-gw
+subjects:
+  - kind: ServiceAccount
+    name: ddpsrun-gw
+    namespace: ddpsrun-system

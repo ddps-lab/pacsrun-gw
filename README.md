@@ -1,11 +1,21 @@
 # pacsrun-gw
 
-PACSrun 앞단. kubectl 도 AWS IAM 도 없는 사용자가 job 을 제출하고 결과를 받는 경로다.
+**kubectl 도 AWS IAM 도 없는 사용자가 GPU job 을 제출하고 결과를 받는 경로.**
 
-- `server/` API 서버. 유일하게 클러스터에 붙는 쪽이고 판단 로직을 전부 갖는다
-- `cli/`    명령줄. 서버 라우트를 부른다
-- `ui/`     브라우저. 제출 form 과 monitoring
-- `agent/`  code agent 용 skill 과 참조 문서
-- `docs/`   설계
+PACSrun 앞단이다. 사용자가 보는 이름은 `ddpsrun` 이다.
 
-사용자가 보는 이름은 `ddpsrun` 이다. `pacsrun` 과 `kubepacs` 는 노출하지 않는다.
+| | 상태 |
+|---|---|
+| 설계 | `docs/00-overview.md` 부터 아홉 편 |
+| 서버 1단계 | 있다. `server/`, `docs/09-server.md` |
+| CLI | 없다 (2단계) |
+| UI | 없다 (6단계) |
+
+```bash
+cd server
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m pytest -q
+```
+
+이 저장소의 문서와 코드에는 계정 식별자를 쓰지 않는다. `<ACCOUNT_ID>`, `<RESULT_BUCKET>`
+같은 자리표시자를 쓰고 CI 가 매 push 마다 검사한다.

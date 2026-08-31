@@ -1,0 +1,89 @@
+# The gateway server itself.
+#
+# HOW A REQUEST REACHES IT. Something in front terminates TLS and forwards to
+# the Service on port 80, which forwards to the pod on 8080. What that something
+# is (an Ingress, an ALB, a tunnel) is open item 12 in `docs/08-plan.md` — until
+# it is decided, reach the server with `kubectl port-forward`.
+#
+# EVERY IDENTIFIER HERE IS A PLACEHOLDER. `<IMAGE>` is what CI built,
+# `<RESULT_BUCKET>` is the S3 bucket jobs write to. Fill them in when applying;
+# do not commit the filled-in copy (`docs/00-overview.md`).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ddpsrun-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ddpsrun-gw
+  namespace: ddpsrun-system
+spec:
+  # One replica on purpose. The server holds no state between requests, so more
+  # would work, but nothing yet needs the throughput and a second replica
+  # doubles the surface reading the token Secret.
+  replicas: 1
+  selector:
+    matchLabels: { app: ddpsrun-gw }
+  template:
+    metadata:
+      labels: { app: ddpsrun-gw }
+    spec:
+      serviceAccountName: ddpsrun-gw
+      containers:
+        - name: server
+          image: <IMAGE>
+          ports:
+            - containerPort: 8080
+          env:
+            # Where every job's output goes. The server builds each job's
+            # resultPath from this plus the caller's namespace, which is what
+            # stops one user writing into another's folder.
+            - name: DDPSRUN_RESULT_BUCKET
+              value: <RESULT_BUCKET>
+            - name: DDPSRUN_RESULT_PREFIX
+              value: pacsrun/
+            # Must match PACSrun's PACSRUN_RESULT_PREFIX_TEMPLATE, which checks
+            # the same prefix a second time on the cluster side. If the two
+            # disagree every job is refused at admission.
+            - name: DDPSRUN_SERVICE_ACCOUNT
+              value: pacsrun-workload
+            - name: DDPSRUN_TOKENS_PATH
+              value: /etc/ddpsrun/tokens.json
+            # Which stored secrets a user may ask for by name, and where each
+            # one really lives. A name absent here cannot be requested at all.
+            - name: DDPSRUN_SECRET_BINDINGS
+              value: '{"GITHUB_PAT": {"name": "<SECRET_NAME>", "key": "token"}}'
+          volumeMounts:
+            - name: tokens
+              mountPath: /etc/ddpsrun
+              readOnly: true
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 2
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: tokens
+          secret:
+            # Created by hand today; see docs/09-server.md for the one command.
+            secretName: ddpsrun-tokens
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ddpsrun-gw
+  namespace: ddpsrun-system
+spec:
+  selector: { app: ddpsrun-gw }
+  ports:
+    - port: 80
+      targetPort: 8080
