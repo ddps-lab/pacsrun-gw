@@ -202,3 +202,31 @@ def test_logs_before_the_container_exists_say_so(client):
     response = as_alice(client, "GET", f"/v1/jobs/{job_id}/logs")
     assert response.status_code == 404
     assert "not started a container" in response.json()["detail"]
+
+
+def test_explain_needs_no_token_and_names_no_internals(client):
+    # This endpoint is the most public thing the server has, so what it must NOT
+    # contain matters more than what it does.
+    response = client.get("/v1/explain")
+    assert response.status_code == 200
+    text = response.text
+    assert "POST /v1/jobs" in text
+    for internal in ("PACSRUN_", "namespace", "ServiceAccount", "kubectl", "<RESULT_BUCKET>"):
+        assert internal not in text
+
+
+def test_schema_is_generated_from_the_model_so_it_cannot_drift(client):
+    document = client.get("/v1/schema").json()
+    properties = document["properties"]
+    # Present because the user sends them.
+    for field in ("name", "image", "args", "env", "secrets", "gpu", "expected_hours"):
+        assert field in properties
+    # Absent because the server fills them from the token.
+    for field in ("namespace", "serviceAccountName", "resultPath", "placement", "parallelism"):
+        assert field not in properties
+    assert document["required"] == ["name", "image"]
+
+
+def test_schema_carries_the_descriptions_a_stranger_reads(client):
+    properties = client.get("/v1/schema").json()["properties"]
+    assert "never travels through" in properties["secrets"]["description"]

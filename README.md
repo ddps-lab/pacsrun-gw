@@ -8,13 +8,17 @@ PACSrun 앞단이다. 사용자가 보는 이름은 `ddpsrun` 이다.
 |---|---|
 | 설계 | `docs/00-overview.md` 부터 아홉 편 |
 | 서버 1단계 | 있다. `server/`, `docs/09-server.md` |
-| CLI | 없다 (2단계) |
+| CLI 2단계 | 있다. `cli/`, `docs/10-cli.md` |
 | UI | 없다 (6단계) |
 
 ```bash
-cd server
-python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+# 서버
+cd server && python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/python -m pytest -q
+
+# CLI
+cd cli && python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+.venv/bin/ddpsrun --help
 ```
 
 이 저장소의 문서와 코드에는 계정 식별자를 쓰지 않는다. `<ACCOUNT_ID>`, `<RESULT_BUCKET>`

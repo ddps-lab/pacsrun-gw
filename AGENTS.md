@@ -10,13 +10,16 @@
 ```bash
 ddpsrun explain          # 이 도구가 무엇이고 어떻게 쓰는지
 ddpsrun schema           # 제출 본문의 형식
-ddpsrun gpus             # 지금 빌릴 수 있는 GPU 와 단가
-ddpsrun validate run.sh  # 이 script 의 문제를 지적
-ddpsrun estimate ...     # 시간과 비용, 권장 GPU
+ddpsrun submit -f job.yaml
+ddpsrun status <job_id>
+ddpsrun logs <job_id> --follow
 ```
 
-**GPU 크기, spot 여부, 예상 시간을 스스로 판단하지 않는다.** `ddpsrun estimate` 를 부른다.
-판단 로직은 서버에 한 벌만 있다.
+**아직 없는 명령이 셋이다.** `gpus`(빌릴 수 있는 GPU 와 단가), `validate`(script 의 문제
+지적), `estimate`(시간과 비용, 권장 GPU). 서버에 라우트가 없다. 3단계에서 생긴다.
+
+**그때까지도 GPU 크기와 예상 시간을 스스로 판단하지 말고, 모른다고 말하라.** 판단 로직은
+서버에 한 벌만 두는 것이 이 설계의 전제이고, agent 가 임시로 채운 값은 그 한 벌과 어긋난다.
 
 ## 사용자 저장소를 읽어 학습 script 를 만들 때
 

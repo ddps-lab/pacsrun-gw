@@ -29,8 +29,10 @@ config/deploy/
 | POST | `/v1/jobs` | 제출. `job_id` 와 `result_path` 를 돌려준다 |
 | GET | `/v1/jobs/{job_id}` | phase, message, GPU, recovery 횟수 |
 | GET | `/v1/jobs/{job_id}/logs?follow=true` | 로그 |
+| GET | `/v1/explain` | 이 서비스가 무엇인지. token 불필요 (2단계에서 추가) |
+| GET | `/v1/schema` | 제출 본문의 JSON Schema. token 불필요 (2단계에서 추가) |
 
-`03-api.md` 의 나머지 여덟 개는 아직 없다. `/validate` 와 `/estimate` 는 3단계이고,
+`03-api.md` 의 나머지 여섯 개는 아직 없다. `/validate` 와 `/estimate` 는 3단계이고,
 `/uploads` 와 `/artifacts` 는 그 다음이다.
 
 ## 제출 한 번이 지나가는 길
@@ -157,8 +159,9 @@ DDPSRUN_TOKENS_PATH=./tokens.json \
 **cluster 에 한 번도 안 올렸다.** test 65 개는 kube-apiserver 를 흉내 낸 것으로 돈다. 그래서
 아직 모르는 것이 이렇다.
 
-1. **우리가 만든 PacsJob 을 CRD 가 받는지.** 필드 이름은 `config/crd/pacsrun.io_pacsjobs.yaml`
-   에서 직접 뽑았지만 CEL 규칙까지 통과하는지는 실제 create 로만 안다.
+1. ~~**우리가 만든 PacsJob 을 CRD 가 받는지.**~~ **2026-08-31 에 닫혔다.**
+   `kubectl apply --dry-run=server` 로 다섯 형태를 넣어 전부 통과했다. 로그는
+   `10-cli.md` 에 있다.
 2. **`follow=true` 로그가 몇 시간짜리 job 에서 끊기지 않는지.** 중간의 load balancer 가
    idle timeout 으로 끊을 수 있다.
 3. **image 가 registry 어디로 가는지.** CI 는 빌드만 하고 push 하지 않는다.

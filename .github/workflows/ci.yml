@@ -63,6 +63,25 @@ jobs:
         working-directory: server
         run: python -m pytest -q
 
+  cli-test:
+    name: CLI test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # requires-python 은 >=3.9 다. 사용자 노트북의 파이썬을 우리가 고를 수
+          # 없으므로 가장 낮은 것으로 돌린다. 서버는 우리 이미지라 3.12 로 돈다.
+          python-version: "3.9"
+      - name: 설치
+        working-directory: cli
+        run: pip install -e '.[dev]'
+      - name: pytest
+        working-directory: cli
+        run: python -m pytest -q
+      - name: 명령이 실제로 설치되는지
+        run: ddpsrun --help
+
   server-image:
     name: 서버 image 가 빌드되는지
     runs-on: ubuntu-latest

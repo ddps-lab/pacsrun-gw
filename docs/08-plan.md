@@ -14,10 +14,17 @@ end-to-end 흐름 docstring, 함수마다 목적과 입출력)을 적용하면 �
 
 cluster 에 아직 안 올렸다. 확인 못 한 것 셋은 `09-server.md` 끝에 적어 두었다.
 
-### 2단계 — CLI
+### ~~2단계 — CLI~~ **끝. 2026-08-31. `10-cli.md` 참고**
 
-`ddps submit / status / logs / get / gpus` 와 자기 설명 명령 `explain / schema`.
-서버 라우트를 그대로 부른다. **사용자에게 kubeconfig 도 kubectl 도 없다.**
+`ddpsrun login / logout / explain / schema / submit / status / logs`. 서버 라우트를 그대로
+부르고, 노트북에는 `requests` 와 `PyYAML` 만 설치된다.
+
+`gpus` 는 안 만들었다. 답하려면 이 pod 에 vendor API key 와 catalog 캐시가 있어야 하는데
+그것은 `04-estimate.md` 의 주제이지 라우트 하나로 붙일 것이 아니다. `validate` 와
+`estimate` 는 예정대로 3단계다.
+
+서버에 `/v1/explain` 과 `/v1/schema` 를 더했다. 판단은 하지 않는다 — 하나는 고정된 산문,
+하나는 요청 모델에서 생성한 JSON Schema 다.
 
 ### 3단계 — `/validate` 와 `/estimate`
 

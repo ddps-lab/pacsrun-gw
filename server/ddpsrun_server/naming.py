@@ -50,6 +50,17 @@ JOB_ID_LABEL = "ddpsrun.io/job-id"
 OWNER_LABEL = "ddpsrun.io/owner"
 DISPLAY_NAME_LABEL = "ddpsrun.io/name"
 
+# The name the user actually typed, kept somewhere it survives intact.
+#
+# WHY THIS EXISTS AS WELL AS THE LABEL. A label value may hold only
+# [A-Za-z0-9._-], so `label_value("은행 실험2")` is "2" — every Korean character
+# is stripped and what is left says nothing. `ddpsrun status` reads the name
+# back to show the user, so a name they cannot recognise is a real loss.
+# An annotation has no character restriction (only a total size limit), so the
+# raw name goes here and the sanitised one stays in the label for `kubectl -l`.
+# Found 2026-08-31 by dry-running a Korean job name against the live CRD.
+DISPLAY_NAME_ANNOTATION = "ddpsrun.io/display-name"
+
 # A Kubernetes label value must be at most 63 characters and must start and end
 # with an alphanumeric, with dashes, underscores and dots allowed in between.
 # https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/

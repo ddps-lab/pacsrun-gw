@@ -20,10 +20,17 @@ END-TO-END FLOW of one submission, which is what this whole stage exists to do:
   8. `GET /v1/jobs/{job_id}/logs` finds the driver pod behind that job and
      streams its stdout, redacting the runner's own bookkeeping lines.
 
+`/v1/explain` and `/v1/schema` were added with the CLI in stage 2. They make
+no judgement either — one is static prose, the other is generated from the
+request model — but they are what lets an agent use this service without having
+read a document.
+
 WHAT IS NOT HERE, ON PURPOSE. `docs/08-plan.md` stage 1: "판단은 아직 없다."
-No `/validate`, no `/estimate`, no `/gpus`, no upload, no cancel. Those are
-stages 2 and 3, and putting a half-formed version of them here would mean two
-sources of truth for the same judgement.
+No `/validate`, no `/estimate`, no upload, no cancel. Those are stage 3, and
+putting a half-formed version of them here would mean two sources of truth for
+the same judgement. `/v1/gpus` is missing for a different reason: answering it
+needs a vendor API key in this pod and a catalogue cache, which is
+`docs/04-estimate.md`'s subject, not a route we can bolt on.
 
 Grep anchor: DDPSRUN-ROUTES
 """
@@ -35,12 +42,13 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from . import naming
 from .auth import AuthError, Principal, TokenStore, bearer_token
 from .config import Settings
 from .k8s import Cluster, ClusterError, NotFound
+from .explain import EXPLAIN_TEXT
 from .models import JobView, SubmitRequest, SubmitResponse, to_pacsjob
 
 logger = logging.getLogger("ddpsrun")
@@ -103,6 +111,35 @@ def healthz() -> dict[str, str]:
     """Liveness probe. Deliberately does not touch kube-apiserver: a probe that
     fails when the cluster is briefly busy would restart a server that is fine."""
     return {"status": "ok"}
+
+
+@app.get("/v1/explain", response_class=PlainTextResponse)
+def explain() -> str:
+    """Say what this service is and how to use it, in prose.
+
+    WHO THIS IS FOR: a coding agent that has a shell and this URL and has read
+    nothing else. `docs/07-agent-skill.md` makes the case — a document in a
+    repository goes stale the moment the API changes, whereas an answer the
+    running server gives is true by construction.
+
+    Deliberately NOT behind a token. It reveals no user data and no internal
+    name, and needing a credential to find out what a thing is would be the
+    wrong way round.
+    """
+    return EXPLAIN_TEXT
+
+
+@app.get("/v1/schema")
+def schema() -> dict[str, Any]:
+    """Return the JSON Schema of a submit request.
+
+    Generated from `SubmitRequest` itself, so it cannot drift from what the
+    server actually accepts. Every field's `description` is the one written on
+    the model, which is why those descriptions are written for a stranger.
+
+    Like `/v1/explain`, no token required.
+    """
+    return SubmitRequest.model_json_schema()
 
 
 @app.post("/v1/jobs", response_model=SubmitResponse, status_code=201)

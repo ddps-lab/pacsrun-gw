@@ -195,6 +195,7 @@ class JobView(BaseModel):
         """
         metadata = obj.get("metadata") or {}
         labels = metadata.get("labels") or {}
+        annotations = metadata.get("annotations") or {}
         spec = obj.get("spec") or {}
         status = obj.get("status") or {}
 
@@ -213,7 +214,14 @@ class JobView(BaseModel):
 
         return JobView(
             job_id=job_id or "",
-            name=labels.get(naming.DISPLAY_NAME_LABEL, metadata.get("name", "")),
+            # The annotation first: it holds the name the user typed, Korean and
+            # all. The label is the ASCII remains of it, and the object name is
+            # the last resort for a PacsJob somebody applied by hand.
+            name=(
+                annotations.get(naming.DISPLAY_NAME_ANNOTATION)
+                or labels.get(naming.DISPLAY_NAME_LABEL)
+                or metadata.get("name", "")
+            ),
             phase=status.get("phase", ""),
             message=status.get("message", ""),
             created_at=metadata.get("creationTimestamp"),
@@ -330,13 +338,16 @@ def to_pacsjob(
     if resources:
         spec["resources"] = resources
 
+    annotations: dict[str, str] = {naming.DISPLAY_NAME_ANNOTATION: request.name}
+    if request.expected_hours is not None:
+        annotations[EXPECTED_HOURS_ANNOTATION] = str(request.expected_hours)
+
     metadata: dict[str, Any] = {
         "name": naming.object_name(job_id),
         "namespace": principal.namespace,
         "labels": naming.labels(job_id, principal.user, request.name),
+        "annotations": annotations,
     }
-    if request.expected_hours is not None:
-        metadata["annotations"] = {EXPECTED_HOURS_ANNOTATION: str(request.expected_hours)}
 
     return {
         "apiVersion": f"{PACSJOB_GROUP}/{PACSJOB_VERSION}",

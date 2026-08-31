@@ -1,0 +1,33 @@
+# The package a user installs on their own laptop: `pip install ddpsrun`.
+#
+# WHY THIS IS A SEPARATE DISTRIBUTION FROM server/. A researcher's laptop must
+# not need the kubernetes client, and the server must not need a browser login
+# flow. They share a repository so the two halves of one API change land in one
+# commit, but nothing else.
+#
+# TWO DEPENDENCIES ON PURPOSE. `requests` to speak HTTP and `PyYAML` because the
+# job description a user writes is YAML. Every further package is one that can
+# conflict with something their research code already pins, so the line stops
+# here: no click, no rich, no pydantic.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ddpsrun"
+version = "0.1.0"
+description = "Submit a GPU job and get results back. No kubectl, no cloud account."
+requires-python = ">=3.9"
+dependencies = ["requests>=2.31", "PyYAML>=6.0"]
+
+[project.scripts]
+ddpsrun = "ddpsrun.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "responses>=0.25"]
+
+[tool.setuptools.packages.find]
+include = ["ddpsrun*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

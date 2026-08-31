@@ -183,3 +183,22 @@ def test_the_response_drops_the_internal_fields():
     without_path = dict(rendered)
     without_path.pop("result_path")
     assert "lab-alice" not in str(without_path)
+
+
+def test_a_korean_job_name_survives_the_round_trip():
+    # A label value may hold only [A-Za-z0-9._-], so "은행 실험2" sanitises to "2".
+    # The annotation is what carries the real name back to the user.
+    obj = to_pacsjob(minimal(name="은행 실험2"), ALICE, SETTINGS, JOB_ID)
+    assert obj["metadata"]["labels"][naming.DISPLAY_NAME_LABEL] == "2"
+    assert obj["metadata"]["annotations"][naming.DISPLAY_NAME_ANNOTATION] == "은행 실험2"
+    assert JobView.from_pacsjob(obj).name == "은행 실험2"
+
+
+def test_the_name_falls_back_to_the_label_then_to_the_object_name():
+    # An object written by an older server has no annotation; one applied with
+    # kubectl by hand has neither.
+    only_label = {"metadata": {"name": "ddpsrun-a8acdef80a07",
+                               "labels": {naming.DISPLAY_NAME_LABEL: "bank-exp2"}}}
+    assert JobView.from_pacsjob(only_label).name == "bank-exp2"
+    neither = {"metadata": {"name": "hand-written-job"}}
+    assert JobView.from_pacsjob(neither).name == "hand-written-job"
