@@ -34,15 +34,18 @@ cluster 에 아직 안 올렸다. 확인 못 한 것 셋은 `09-server.md` 끝�
 `03-api.md` 의 검사 일곱 중 넷을 코드로 옮겼고, 나머지 셋은 저장소를 clone 해야 볼 수 있어
 `not_checked` 로 내보낸다.
 
-### 4단계 — monitoring 뒷단
+### ~~4단계 — monitoring 뒷단~~ **끝. 2026-08-31. `12-monitoring.md` 참고**
 
-`run.sh` 에 `PACSRUN_GPU=` 감시를 넣고, 서버가 그 줄과 학습 진행 줄을 골라내 시계열로
-저장한다. `05-monitoring.md` 참고.
+`GET /v1/jobs/{id}/metrics` 와 `ddpsrun watch`. **시계열을 저장하지 않기로 했다** — 두 줄
+모양이 이미 로그에 있고, `since_seconds` 로 창만 읽으면 되므로 서버가 상태를 들 이유가 없다.
+대가는 pod 이 사라지면 지표도 사라지는 것이고, 그것은 로그가 원래 그렇다.
 
-### 5단계 — agent skill
+### ~~5단계 — agent skill~~ **끝. 2026-08-31**
 
-`ddps explain` 이 이미 있으므로 `AGENTS.md` 와 `references/` 는 그것을 가리키기만 하면 된다.
-Claude plugin 은 그 위에 얹는다.
+`agent/` 에 skill, plugin, reference 넷이 있고 저장소 최상위 `.claude-plugin/marketplace.json`
+이 가리킨다. **문법 둘(`api.md`, `cli.md`)은 코드에서 생성하고 함정 둘은 사람이 쓴다.**
+CI 가 매 push 마다 생성본이 코드와 어긋나지 않았는지 검사한다 — 실제로 4단계에서 라우트를
+더했을 때 그 검사가 막았다.
 
 ### 6단계 — UI
 

@@ -15,6 +15,9 @@ END-TO-END FLOW of this file:
   5. Every line coming back goes through `redact()` before it reaches the user,
      because the driver's own bookkeeping lines are on the same stream as the
      workload's output.
+  6. `recent_log_lines()` reads the same stream WITHOUT redacting, for the
+     metrics endpoint, whose whole purpose is to read one of the lines the relay
+     masks. See its docstring for why the redaction lives at the point of use.
 
 WHY THE DYNAMIC CLIENT AND NOT GENERATED TYPES. PacsJob is a CRD, so the Python
 client has no model for it. `CustomObjectsApi` takes and returns plain dicts,
@@ -51,6 +54,13 @@ from .config import (
 # purely so the log stream stays open; a user reading their training output does
 # not want one of those between every progress line.
 _KEEPALIVE_LINE = re.compile(r"^\s*PACSRUN_KEEPALIVE\s*$")
+# The GPU telemetry line, also every 30 seconds, also dropped whole. It is not
+# the user's output: it exists for /v1/jobs/{id}/metrics, which reads the same
+# log unredacted. Masking it instead of dropping it left a line reading
+# "<internal>=97,38380,45440,72,304.0" between every couple of training lines,
+# which is exactly the noise the keepalive rule exists to prevent. Found
+# 2026-08-31 running the two endpoints against the same log.
+_GPU_LINE = re.compile(r"^\s*PACSRUN_GPU=")
 # Any other PACSRUN_* token is an internal name (`docs/03-api.md`, 응답 규칙
 # 첫째). The line around it may be the user's own output, so the token is masked
 # and the line kept, rather than the line being dropped.
@@ -77,10 +87,12 @@ def redact(line: str) -> str | None:
     Example:
         >>> redact("PACSRUN_KEEPALIVE") is None
         True
+        >>> redact("PACSRUN_GPU=94,38200,45440,71,298.5") is None
+        True
         >>> redact("done, PACSRUN_EXIT=0")
         'done, <internal>=0'
     """
-    if _KEEPALIVE_LINE.match(line):
+    if _KEEPALIVE_LINE.match(line) or _GPU_LINE.match(line):
         return None
     return _INTERNAL_TOKEN.sub("<internal>", line)
 
@@ -189,6 +201,43 @@ class Cluster:
         if not pods.items:
             raise NotFound(f"no pod yet for {job_name}")
         return pods.items[0].metadata.name
+
+    def recent_log_lines(
+        self, namespace: str, job_name: str, since_seconds: int
+    ) -> list[str]:
+        """Read a time window of a job's log, unredacted.
+
+        WHY UNREDACTED, when `job_logs` masks these very lines. The metrics
+        endpoint exists precisely to read `PACSRUN_GPU=`, which the user-facing
+        relay masks as an internal name. The two callers want opposite things
+        from the same stream, so the redaction belongs at the point of use
+        rather than here.
+
+        WHY A WINDOW RATHER THAN THE WHOLE LOG. A 25-hour training run's log
+        runs to hundreds of thousands of lines. `since_seconds` is what makes
+        reading it every few seconds affordable, and it is enough: a chart shows
+        a window anyway.
+
+        Args:
+            namespace: the caller's namespace.
+            job_name: the PacsJob's Kubernetes name.
+            since_seconds: how far back to read.
+
+        Returns:
+            The lines, oldest first.
+
+        Raises:
+            NotFound: the pod does not exist yet, or has been collected.
+            ClusterError: the API server refused.
+        """
+        pod = self.job_pod_name(namespace, job_name)
+        try:
+            text = self._core.read_namespaced_pod_log(
+                name=pod, namespace=namespace, since_seconds=since_seconds
+            )
+        except ApiException as exc:
+            raise ClusterError(_api_message(exc)) from exc
+        return text.splitlines()
 
     def job_logs(
         self,

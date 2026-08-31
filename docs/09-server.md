@@ -33,6 +33,7 @@ config/deploy/
 | GET | `/v1/schema` | 제출 본문의 JSON Schema. token 불필요 (2단계에서 추가) |
 | POST | `/v1/estimate` | 시간, 비용, 권장 GPU. 제출하지 않는다 (3단계에서 추가) |
 | POST | `/v1/validate` | 검사만 한다. 제출하지 않는다 (3단계에서 추가) |
+| GET | `/v1/jobs/{job_id}/metrics` | GPU 와 학습 진행. 로그에서 읽는다 (4단계에서 추가) |
 
 `03-api.md` 의 나머지 넷은 아직 없다. `/v1/uploads`, `/v1/jobs` 목록, `/v1/jobs/{id}/artifacts`,
 `/v1/gpus` 다. `/validate` 와 `/estimate` 는 3단계이고,

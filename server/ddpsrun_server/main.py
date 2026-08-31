@@ -49,6 +49,7 @@ from .auth import AuthError, Principal, TokenStore, bearer_token
 from .config import Settings
 from .k8s import Cluster, ClusterError, NotFound
 from . import estimate as estimator
+from . import metrics as metrics_reader
 from . import validate as validator
 from .explain import EXPLAIN_TEXT
 from .models import (
@@ -58,7 +59,10 @@ from .models import (
     GpuAdviceView,
     HoursRange,
     JobView,
+    GpuSampleView,
     JudgementRequest,
+    MetricsResponse,
+    ProgressView,
     SubmitRequest,
     SubmitResponse,
     ValidateResponse,
@@ -317,6 +321,85 @@ def get_job(request: Request, job_id: str, principal: PrincipalDep) -> JobView:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return JobView.from_pacsjob(obj)
+
+
+@app.get("/v1/jobs/{job_id}/metrics", response_model=MetricsResponse)
+def get_metrics(
+    request: Request,
+    job_id: str,
+    principal: PrincipalDep,
+    window_seconds: int = Query(
+        default=3600, ge=60, le=86400,
+        description="How far back to read the log. An hour by default.",
+    ),
+) -> MetricsResponse:
+    """GPU usage and training progress, read out of the job's own log.
+
+    NOTHING IS STORED. The job's script prints one `PACSRUN_GPU=` line every 30
+    seconds and the training library prints its own progress line, so both are
+    already in the log next to the output they describe. Reading a window of it
+    is cheaper than keeping a second copy, and it cannot disagree with the log.
+
+    Args:
+        job_id: an id this server issued.
+        window_seconds: how far back to read. A wider window costs more to read
+            and shows more history.
+
+    Raises:
+        HTTPException: 404 for an unknown id or a job with no container yet;
+            502 on a cluster error.
+    """
+    cluster: Cluster = request.app.state.cluster
+    try:
+        name = naming.object_name(job_id)
+    except naming.NamingError as exc:
+        raise HTTPException(status_code=404, detail="no such job") from exc
+
+    try:
+        lines = cluster.recent_log_lines(principal.namespace, name, window_seconds)
+    except NotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="no metrics yet: the job has not started a container",
+        ) from exc
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    reading = metrics_reader.scan(lines, window_seconds)
+    return MetricsResponse(
+        latest_gpu=_gpu_view(reading.latest_gpu),
+        gpu_series=[view for view in (_gpu_view(s) for s in reading.gpu_series) if view],
+        progress=(
+            ProgressView(
+                step=reading.progress.step,
+                total_steps=reading.progress.total_steps,
+                percent=reading.progress.percent,
+                seconds_per_step=reading.progress.seconds_per_step,
+                elapsed=reading.progress.elapsed,
+                remaining=reading.progress.remaining,
+                projected_total_hours=round(reading.progress.projected_total_hours, 2),
+                steady=reading.progress.steady,
+            )
+            if reading.progress
+            else None
+        ),
+        window_seconds=reading.window_seconds,
+        note=reading.note,
+    )
+
+
+def _gpu_view(sample: metrics_reader.GpuSample | None) -> GpuSampleView | None:
+    """Turn one parsed reading into its response shape."""
+    if sample is None:
+        return None
+    return GpuSampleView(
+        utilization_percent=sample.utilization_percent,
+        memory_used_mib=sample.memory_used_mib,
+        memory_total_mib=sample.memory_total_mib,
+        memory_percent=sample.memory_percent,
+        temperature_c=sample.temperature_c,
+        power_w=sample.power_w,
+    )
 
 
 @app.get("/v1/jobs/{job_id}/logs")

@@ -28,6 +28,8 @@ THE COMMANDS, AND WHY EACH EXISTS
                     submit on it.
   submit            the point of the whole thing.
   status            phase, message, which GPU, how many restarts.
+  watch             GPU usage and training progress, read out of the job's own
+                    log. Nothing is stored anywhere for this.
   logs              output, optionally followed.
 
 WHAT IS NOT HERE. No `gpus`. Answering it needs a vendor API key in the server
@@ -184,6 +186,18 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status", help="how a job is doing")
     status.add_argument("job_id")
     add_json_flag(status)
+
+    watch = sub.add_parser(
+        "watch", help="GPU usage and training progress",
+        description="Read out of the job's own log. Nothing is stored, so what "
+        "you can see goes back as far as the log does.",
+    )
+    watch.add_argument("job_id")
+    watch.add_argument(
+        "--window", type=int, default=3600, metavar="SECONDS",
+        help="how far back to read (default 3600, max 86400)",
+    )
+    add_json_flag(watch)
 
     logs = sub.add_parser("logs", help="a job's output")
     logs.add_argument("job_id")
@@ -505,6 +519,59 @@ def cmd_status(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def bar(percent: float, width: int = 20) -> str:
+    """Draw a progress bar.
+
+    Args:
+        percent: 0 to 100.
+        width: how many characters wide.
+
+    Returns:
+        A string of filled and empty blocks.
+
+    Example:
+        >>> bar(50, width=10)
+        '#####-----'
+    """
+    filled = int(round(width * max(0.0, min(100.0, percent)) / 100))
+    return "#" * filled + "-" * (width - filled)
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Print a job's GPU usage and how far the training has got."""
+    result = client_from_config().metrics(args.job_id, args.window)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return EXIT_OK
+
+    progress = result.get("progress")
+    if progress:
+        print(f"  학습        {bar(progress['percent'])}  "
+              f"{progress['step']:,} / {progress['total_steps']:,} 스텝  "
+              f"({progress['percent']}%)")
+        print(f"              {progress['seconds_per_step']} 초/스텝, "
+              f"{progress['elapsed']} 경과, {progress['remaining']} 남음")
+        # `steady` False means too few steps have run for this to be worth
+        # quoting, so it is labelled rather than printed as a fact.
+        settled = "" if progress["steady"] else "  (아직 안 정해짐)"
+        print(f"  예상 총계   {progress['projected_total_hours']} 시간{settled}")
+
+    gpu = result.get("latest_gpu")
+    if gpu:
+        print(f"  GPU 사용률  {bar(gpu['utilization_percent'])}  "
+              f"{gpu['utilization_percent']}%")
+        print(f"  메모리      {bar(gpu['memory_percent'])}  "
+              f"{gpu['memory_used_mib']:,} / {gpu['memory_total_mib']:,} MiB "
+              f"({gpu['memory_percent']}%)")
+        print(f"  온도, 전력  {gpu['temperature_c']} C, {gpu['power_w']} W")
+        print(f"  표본        {len(result.get('gpu_series', []))} 개, "
+              f"최근 {result['window_seconds']}초")
+
+    if result.get("note"):
+        print(f"  참고        {result['note']}")
+    return EXIT_OK
+
+
 def cmd_logs(args: argparse.Namespace) -> int:
     """Print a job's output."""
     for line in client_from_config().logs(args.job_id, follow=args.follow):
@@ -521,6 +588,7 @@ COMMANDS = {
     "validate": cmd_validate,
     "submit": cmd_submit,
     "status": cmd_status,
+    "watch": cmd_watch,
     "logs": cmd_logs,
 }
 

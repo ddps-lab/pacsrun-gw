@@ -82,6 +82,24 @@ jobs:
       - name: 명령이 실제로 설치되는지
         run: ddpsrun --help
 
+  references-current:
+    name: agent reference 가 코드와 맞는지
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 설치
+        # generator 가 서버의 OpenAPI 와 CLI 의 parser 를 둘 다 읽는다.
+        run: |
+          pip install -e server
+          pip install -e cli
+      - name: 대조
+        # 라우트나 flag 가 바뀌었는데 reference 를 다시 안 만들었으면 여기서 막힌다.
+        # agent 가 읽는 문법 문서가 코드와 어긋나는 것을 사람의 기억에 맡기지 않는다.
+        run: python3 agent/scripts/generate_references.py --check
+
   server-image:
     name: 서버 image 가 빌드되는지
     runs-on: ubuntu-latest

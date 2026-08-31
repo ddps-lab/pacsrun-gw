@@ -41,6 +41,12 @@ class FakeCluster:
         except KeyError:
             raise k8s.NotFound(name) from None
 
+    def recent_log_lines(self, namespace, job_name, since_seconds):
+        lines = self.logs.get((namespace, job_name))
+        if lines is None:
+            raise k8s.NotFound(job_name)
+        return lines
+
     def job_logs(self, namespace, job_name, follow, tail_lines):
         lines = self.logs.get((namespace, job_name))
         if lines is None:
@@ -330,3 +336,66 @@ def test_the_schema_explains_the_training_facts_it_asks_for(client):
     facts = client.get("/v1/schema").json()["$defs"]["TrainingFacts"]["properties"]
     assert "no step count" in facts["pairs"]["description"]
     assert "no runtime" in facts["row_tokens"]["description"]
+
+
+# ------------------------------------------------------ stage 4: metrics
+
+
+def test_metrics_are_read_out_of_the_job_s_own_log(client, cluster):
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    cluster.logs[("lab-alice", naming.object_name(job_id))] = [
+        "PACSRUN_GPU=94,38200,45440,71,298.5",
+        "{'loss': 0.42}",
+        " 63%|######3   | 350/556 [4:02:35<2:22:44, 41.57s/it]",
+    ]
+    result = as_alice(client, "GET", f"/v1/jobs/{job_id}/metrics").json()
+    assert result["latest_gpu"]["memory_percent"] == 84.1
+    assert result["progress"]["step"] == 350
+    assert result["progress"]["projected_total_hours"] == 6.42
+    assert result["note"] == ""
+
+
+def test_the_two_endpoints_read_the_same_line_and_want_opposite_things(client, cluster):
+    # /metrics exists to read PACSRUN_GPU=. The user-facing log drops it whole,
+    # because it is telemetry rather than the user's output and it arrives every
+    # 30 seconds for the life of the job. Same source, opposite treatment, which
+    # is why the redaction is at the point of use rather than in the reader.
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    cluster.logs[("lab-alice", naming.object_name(job_id))] = [
+        "PACSRUN_GPU=94,38200,45440,71,298.5",
+        "{'loss': 0.42}",
+    ]
+    metrics = as_alice(client, "GET", f"/v1/jobs/{job_id}/metrics").json()
+    assert metrics["latest_gpu"]["memory_used_mib"] == 38200
+
+    log = as_alice(client, "GET", f"/v1/jobs/{job_id}/logs").text
+    assert "38200" not in log
+    assert "{'loss': 0.42}" in log
+
+
+def test_metrics_before_a_container_exists_say_so(client):
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    response = as_alice(client, "GET", f"/v1/jobs/{job_id}/metrics")
+    assert response.status_code == 404
+    assert "not started a container" in response.json()["detail"]
+
+
+def test_another_users_metrics_are_absent_not_forbidden(client, cluster):
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    cluster.logs[("lab-alice", naming.object_name(job_id))] = ["PACSRUN_GPU=1,2,3,4,5.0"]
+    response = client.get(
+        f"/v1/jobs/{job_id}/metrics", headers={"Authorization": "Bearer bob-token"}
+    )
+    assert response.status_code == 404
+
+
+def test_the_window_is_bounded_so_a_caller_cannot_ask_for_the_whole_log(client):
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    # A 25-hour training log runs to hundreds of thousands of lines; an
+    # unbounded window would let one request read all of it every few seconds.
+    assert as_alice(
+        client, "GET", f"/v1/jobs/{job_id}/metrics?window_seconds=999999"
+    ).status_code == 422
+    assert as_alice(
+        client, "GET", f"/v1/jobs/{job_id}/metrics?window_seconds=1"
+    ).status_code == 422

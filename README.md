@@ -10,7 +10,9 @@ PACSrun 앞단이다. 사용자가 보는 이름은 `ddpsrun` 이다.
 | 서버 1단계 | 있다. `server/`, `docs/09-server.md` |
 | CLI 2단계 | 있다. `cli/`, `docs/10-cli.md` |
 | 판단 3단계 | 있다. `estimate`, `validate`, `docs/11-judgement.md` |
-| UI | 없다 (6단계) |
+| monitoring 4단계 | 뒷단만 있다. `watch`, `docs/12-monitoring.md` |
+| agent skill 5단계 | 있다. `agent/`, `AGENTS.md` |
+| UI | 없다 (6단계). Jinja2 + HTMX 로 정함 |
 
 ```bash
 # 서버

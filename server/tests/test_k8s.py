@@ -34,3 +34,16 @@ def test_a_word_that_merely_starts_with_the_prefix_in_prose_is_left_alone():
     # The pattern requires the uppercase form with a word boundary, so a user's
     # own lowercase variable is not touched.
     assert redact("pacsrun_exit is not ours") == "pacsrun_exit is not ours"
+
+
+def test_the_gpu_telemetry_line_is_dropped_from_the_user_facing_log():
+    # It goes to /v1/jobs/{id}/metrics, which reads the log unredacted. Leaving
+    # it here masked put "<internal>=97,38380,45440,72,304.0" between every
+    # couple of training lines, every 30 seconds, for the life of the job.
+    assert redact("PACSRUN_GPU=94,38200,45440,71,298.5") is None
+    assert redact("  PACSRUN_GPU=1,2,3,4,5.0") is None
+
+
+def test_a_training_line_that_merely_mentions_gpu_survives():
+    line = "using GPU 0: NVIDIA L40S"
+    assert redact(line) == line

@@ -577,3 +577,69 @@ def vram_gb_for(request: JudgementRequest) -> int | None:
         return request.gpu.vram_gb
     gpu = gpu_by_name(request.gpu.name or "")
     return gpu.vram_gb if gpu else None
+
+
+# ---------------------------------------------------------------------------
+# Stage 4: /v1/jobs/{id}/metrics.
+#
+# Nothing here is stored. The values come from parsing the job's own log, which
+# is already durable next to the output it describes. See `metrics.py` for why
+# that beats a time series store.
+#
+# Grep anchor: DDPSRUN-METRICS-MODELS
+# ---------------------------------------------------------------------------
+
+
+class GpuSampleView(BaseModel):
+    """One nvidia-smi reading."""
+
+    utilization_percent: int
+    memory_used_mib: int
+    memory_total_mib: int
+    memory_percent: float = Field(
+        description="How full the card is. This is the one to watch: running out "
+        "of memory is what killed a run, and this curve approaching 100 is the "
+        "warning that did not exist at the time."
+    )
+    temperature_c: int
+    power_w: float
+
+
+class ProgressView(BaseModel):
+    """Where the training run has got to, by its own reckoning."""
+
+    step: int
+    total_steps: int
+    percent: float
+    seconds_per_step: float
+    elapsed: str = Field(description="As the training library prints it, e.g. 4:02:35")
+    remaining: str
+    projected_total_hours: float
+    steady: bool = Field(
+        description="False while too few steps have run for the projection to be "
+        "worth quoting. One run was 32% out at step 1 and within 4% by step 50."
+    )
+
+
+class MetricsResponse(BaseModel):
+    """What /v1/jobs/{id}/metrics returns.
+
+    Every field can be empty. A job that has not started computing, or whose
+    script does not print the two line shapes, gets an empty answer and a `note`
+    saying which of those it is.
+    """
+
+    latest_gpu: GpuSampleView | None = None
+    gpu_series: list[GpuSampleView] = Field(
+        default_factory=list,
+        description="Readings over the window, oldest first, thinned to at most 400 points.",
+    )
+    progress: ProgressView | None = None
+    window_seconds: int = Field(
+        description="How far back the log was read. Older readings are still in "
+        "the log; ask for a bigger window to see them."
+    )
+    note: str = Field(
+        default="",
+        description="What is missing and why, in plain words. Empty when nothing is.",
+    )

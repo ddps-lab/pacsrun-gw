@@ -123,6 +123,12 @@ class Client:
         """Read one job's state."""
         return self._call("GET", f"/v1/jobs/{job_id}").json()
 
+    def metrics(self, job_id: str, window_seconds: int = 3600) -> dict[str, Any]:
+        """Read a job's GPU usage and training progress."""
+        return self._call(
+            "GET", f"/v1/jobs/{job_id}/metrics?window_seconds={window_seconds}"
+        ).json()
+
     def logs(self, job_id: str, follow: bool = False) -> Iterator[str]:
         """Yield a job's output line by line.
 

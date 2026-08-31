@@ -34,12 +34,16 @@ class FakeClient:
         self.log_lines = ["line one", "line two"]
         self.estimate_result = {}
         self.validate_result = {"ok": True, "findings": [], "not_checked": []}
+        self.metrics_result = {"window_seconds": 3600, "gpu_series": [], "note": ""}
 
     def estimate(self, body):
         return self.estimate_result
 
     def validate(self, body):
         return self.validate_result
+
+    def metrics(self, job_id, window_seconds=3600):
+        return self.metrics_result
 
     def submit(self, body):
         self.submitted = body
@@ -355,3 +359,60 @@ def test_estimate_validate_and_submit_take_the_same_flags():
         for command in ("estimate", "validate", "submit")
     ]
     assert bodies[0] == bodies[1] == bodies[2]
+
+
+# ------------------------------------------------------------ stage 4: watch
+
+
+def test_the_progress_bar_fills_in_proportion():
+    assert cli.bar(0, width=10) == "----------"
+    assert cli.bar(50, width=10) == "#####-----"
+    assert cli.bar(100, width=10) == "##########"
+
+
+def test_a_percentage_outside_the_range_does_not_overflow_the_bar():
+    # A malformed progress line could produce anything; the bar must stay the
+    # width it was asked for.
+    assert len(cli.bar(-10, width=10)) == 10
+    assert len(cli.bar(1000, width=10)) == 10
+
+
+def test_watch_prints_progress_and_gpu(fake, capsys):
+    fake.metrics_result = {
+        "latest_gpu": {"utilization_percent": 94, "memory_used_mib": 38200,
+                       "memory_total_mib": 45440, "memory_percent": 84.1,
+                       "temperature_c": 71, "power_w": 298.5},
+        "gpu_series": [{}] * 120,
+        "progress": {"step": 350, "total_steps": 556, "percent": 62.9,
+                     "seconds_per_step": 41.57, "elapsed": "4:02:35",
+                     "remaining": "2:22:44", "projected_total_hours": 6.42,
+                     "steady": True},
+        "window_seconds": 3600, "note": "",
+    }
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    assert "350 / 556" in printed
+    assert "6.42 시간" in printed
+    assert "38,200 / 45,440 MiB" in printed
+    assert "120 개" in printed
+
+
+def test_an_unsettled_projection_is_labelled_rather_than_stated(fake, capsys):
+    fake.metrics_result = {
+        "progress": {"step": 5, "total_steps": 556, "percent": 0.9,
+                     "seconds_per_step": 45.74, "elapsed": "04:34",
+                     "remaining": "6:52:00", "projected_total_hours": 7.06,
+                     "steady": False},
+        "gpu_series": [], "window_seconds": 3600, "note": "",
+    }
+    run(["watch", "job-a8acdef80a07"])
+    assert "아직 안 정해짐" in capsys.readouterr().out
+
+
+def test_an_empty_window_prints_the_note_that_explains_it(fake, capsys):
+    fake.metrics_result = {
+        "gpu_series": [], "window_seconds": 3600,
+        "note": "no GPU readings and no progress lines in this window.",
+    }
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    assert "no GPU readings" in capsys.readouterr().out

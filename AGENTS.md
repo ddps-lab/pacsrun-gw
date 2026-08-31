@@ -33,7 +33,8 @@ catalog 캐시가 있어야 한다.
 
 ## 사용자 저장소를 읽어 학습 script 를 만들 때
 
-`agent/references/script-contract.md` 를 읽는다. 요점만 적으면 이렇다.
+`agent/references/script-contract.md` 를 읽는다. 규칙 아홉 개이고 **전부 실제로 깨져 본
+것들**이라, 각 규칙에 그것이 어긋났을 때 무슨 일이 일어났는지 붙어 있다. 요점은 이렇다.
 
 1. 문서에 적힌 경로와 저장소 실제 구조를 대조한다
 2. 학습의 출력 경로와 추론의 입력 경로를 한 변수로 묶는다
@@ -41,10 +42,33 @@ catalog 캐시가 있어야 한다.
 4. clone 직후 파일 줄 수, 학습 시작 직후 표본 수를 찍는다
 5. `trap ... EXIT` 로 어느 단계에서 죽어도 그때까지를 올린다
 6. 학습이 끝나면 추론을 기다리지 말고 어댑터를 먼저 올린다
+7. 긴 학습에는 checkpoint 감시를 붙이고, 끝낼 때 그 프로세스를 죽인다
+8. GPU 상태를 `PACSRUN_GPU=` 한 줄로 30 초마다 찍는다
+9. 판단은 서버에 묻는다
 
 ## 실패를 만나면
 
-`agent/references/troubleshooting.md` 에 우리가 실제로 겪은 것과 로그가 있다.
+`agent/references/troubleshooting.md` 에 우리가 실제로 겪은 것과 **그것을 알아보는 로그 줄**이
+있다. 증상 문자열로 찾으면 된다.
+
+## reference 넷의 경계
+
+| 파일 | 무엇 | 누가 유지하나 |
+|---|---|---|
+| `agent/references/api.md` | 라우트와 요청 필드 | **자동 생성.** 고치지 말 것 |
+| `agent/references/cli.md` | 명령과 flag | **자동 생성.** 고치지 말 것 |
+| `agent/references/script-contract.md` | run.sh 를 만드는 법 | 사람 |
+| `agent/references/troubleshooting.md` | 겪은 실패와 로그 | 사람 |
+
+**문법은 코드에서 뽑고 함정은 사람이 쓴다.** 앞의 둘은
+`agent/scripts/generate_references.py` 가 서버의 OpenAPI 와 CLI 의 parser 에서 만들고,
+CI 가 매 push 마다 코드와 어긋나지 않았는지 검사한다. 손으로 고치면 그 검사에서 막힌다.
+
+## Claude Code 로 쓸 때
+
+`agent/skills/ddpsrun/SKILL.md` 가 있다. plugin 규격은 `agent/.claude-plugin/plugin.json`
+이고 저장소 최상위 `.claude-plugin/marketplace.json` 이 그것을 가리킨다. **Codex 등 다른
+agent 는 그 파일을 안 읽으므로, 모두가 읽는 안내문은 이 `AGENTS.md` 다.**
 
 ## 설계
 
