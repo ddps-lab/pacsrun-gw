@@ -135,6 +135,7 @@ A submit request plus the facts needed to judge it.
 | field | required | description |
 |---|---|---|
 | `args` |  | Arguments. With RunPod these REPLACE the image's CMD, which is how a one-line workload is expressed today. |
+| `capacity_type` |  | How the machine is bought. YOU decide this, not the server. `on-demand` costs more and is not taken away; `spot` is cheaper and can be reclaimed mid-run. Call /v1/estimate first — it answers with a recommendation and the reason. Required: leaving it out is refused rather than guessed, because a wrong value here is invisible until the job has already run somewhere you did not intend. |
 | `command` |  | Entry point override. Leave unset to keep the image's own. |
 | `cpus` |  | CPU request, e.g. "4". |
 | `env` |  | Non-secret configuration, passed to the container verbatim. |

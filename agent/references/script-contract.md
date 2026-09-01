@@ -162,7 +162,23 @@ watch_gpu & GPU_PID=$!
 
 ---
 
-## 9. 판단은 서버에 묻는다
+## 9. 구매 방식은 사용자에게 묻는다
+
+`--capacity-type` 은 **서버가 정하지 않습니다. 제출하는 사람이 정합니다.** 빠지면 제출이
+거절됩니다.
+
+```bash
+ddpsrun estimate ...          # 권고와 이유가 나온다
+ddpsrun submit ... --capacity-type on-demand
+```
+
+- `on-demand` 는 비싸고 뺏기지 않습니다.
+- `spot` 은 싸고 도중에 회수될 수 있습니다. **checkpoint 가 없는 긴 학습에서는 전부 잃습니다.**
+- RunPod 은 spot 을 팔지 않아서, `spot` 으로 내면 RunPod 이 후보에서 빠집니다.
+
+**agent 가 대신 고르지 마십시오.** 권고와 이유를 보여 주고 사용자가 답하게 하십시오.
+
+## 10. 나머지 판단은 서버에 묻는다
 
 GPU 크기, 구매 방식, 예상 시간을 **script 에도 skill 에도 적지 않는다.**
 

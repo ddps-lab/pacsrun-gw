@@ -53,6 +53,7 @@ Nothing is submitted. An answer of `unknown` is a real answer: the last time we 
 | `--gpu-vram GB` |  | minimum GPU memory, e.g. 48 |
 | `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
 | `--gpu-count N` |  | how many GPUs PER POD (default 1) |
+| `--capacity-type CAPACITY_TYPE` |  | how the machine is bought. YOU decide this. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed mid-run. Run `ddpsrun estimate` first — it recommends one and says why. submit refuses without it rather than choosing for you. |
 | `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |
@@ -82,6 +83,7 @@ Nothing is submitted. Pass --script to unlock four more checks.
 | `--gpu-vram GB` |  | minimum GPU memory, e.g. 48 |
 | `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
 | `--gpu-count N` |  | how many GPUs PER POD (default 1) |
+| `--capacity-type CAPACITY_TYPE` |  | how the machine is bought. YOU decide this. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed mid-run. Run `ddpsrun estimate` first — it recommends one and says why. submit refuses without it rather than choosing for you. |
 | `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |
@@ -111,6 +113,7 @@ Give a YAML or JSON file, or build the request from flags, or both. Flags win ov
 | `--gpu-vram GB` |  | minimum GPU memory, e.g. 48 |
 | `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
 | `--gpu-count N` |  | how many GPUs PER POD (default 1) |
+| `--capacity-type CAPACITY_TYPE` |  | how the machine is bought. YOU decide this. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed mid-run. Run `ddpsrun estimate` first — it recommends one and says why. submit refuses without it rather than choosing for you. |
 | `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |

@@ -110,6 +110,16 @@ class SubmitRequest(BaseModel):
     )
     cpus: str | None = Field(default=None, description='CPU request, e.g. "4".')
     memory: str | None = Field(default=None, description='Memory request, e.g. "16Gi".')
+    capacity_type: str | None = Field(
+        default=None,
+        pattern="^(spot|on-demand)$",
+        description="How the machine is bought. YOU decide this, not the server. "
+        "`on-demand` costs more and is not taken away; `spot` is cheaper and can be "
+        "reclaimed mid-run. Call /v1/estimate first — it answers with a recommendation "
+        "and the reason. Required: leaving it out is refused rather than guessed, "
+        "because a wrong value here is invisible until the job has already run "
+        "somewhere you did not intend.",
+    )
     parallelism: int = Field(
         default=1,
         ge=1,
@@ -284,15 +294,22 @@ def to_pacsjob(
       serviceAccountName  from cluster settings
       resultPath          from the token's namespace plus the job id
 
-    Since stage 3 there is a fifth: `placement.capacityType`.
+    `placement.capacityType` is written too, but it is NOT one of the fields the
+    server decides. THE CALLER DECIDES IT and the server copies it down.
 
-    THAT ONE IS NOT A PREFERENCE, IT IS A CORRECTNESS FIX. An empty
-    capacityType means spot (`pkg/decider/decider.go:331`) and PACSrun defaults
-    a job to spot (`internal/controller/placement.go:202`), while RunPod's
-    decider declines any request that is not on-demand before it even reads the
-    catalogue (`pkg/decider/runpod/decider.go:242`). So a job that says nothing
-    quietly loses RunPod as a candidate. `estimate.capacity_type` decides what
-    to write and why.
+    WHY IT CANNOT BE LEFT EMPTY, whoever chooses it. An empty capacityType means
+    spot (`pkg/decider/decider.go:331`) and PACSrun defaults a job to spot
+    (`internal/controller/placement.go:202`), while RunPod's decider declines any
+    request that is not on-demand before it even reads the catalogue
+    (`pkg/decider/runpod/decider.go:242`). A job that says nothing quietly loses
+    RunPod as a candidate — it still runs, just never there.
+
+    WHY THE SERVER STOPPED CHOOSING IT (2026-09-01). It used to fill this from
+    `estimate.capacity_type`, which meant a user could submit a thirty-hour job
+    onto reclaimable capacity without ever being asked. The judgement still
+    exists and /v1/estimate still answers it with a reason; what changed is that
+    the answer is now shown to whoever is submitting and they put it in the
+    request. A submit without it is refused, not guessed.
 
     Args:
         request: the validated body.

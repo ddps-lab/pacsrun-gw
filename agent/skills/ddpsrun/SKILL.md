@@ -42,8 +42,13 @@ ddpsrun estimate --name <n> --image <i> --gpu-vram 48 \
   --pairs 1110 --epochs 4 --row-tokens 4100 --cap 12288
 ```
 
-Report what it says, including the `confidence`. **`unknown` is a real answer — pass it
-through.** It exists because a prediction was once made for a combination nobody had
+Report what it says, including the `confidence` and the `capacity_type` it recommends.
+**`unknown` is a real answer — pass it through.**
+
+**`capacity_type` is the user's decision and you must ask for it.** `submit` refuses without
+it. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed
+mid-run, which on a long job with no checkpoint means losing everything. Show the estimate's
+recommendation and its reason, and let them choose. It exists because a prediction was once made for a combination nobody had
 measured and it was 96% wrong. Filling that gap with your own guess removes the only
 protection against repeating it.
 

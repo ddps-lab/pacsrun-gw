@@ -319,9 +319,23 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
     cluster: Cluster = request.app.state.cluster
 
     job_id = naming.new_job_id()
-    # The one judgement stage 1 could not make and stage 3 can. See to_pacsjob:
-    # leaving capacityType empty means spot, and spot means no RunPod.
-    capacity_type = _estimate_for(body).capacity_type
+
+    # THE CALLER DECIDES THIS, and a submit that does not is refused rather than
+    # guessed. The server used to fill it from its own estimate, which let a
+    # thirty-hour job land on reclaimable capacity without anyone being asked.
+    # /v1/estimate still answers it with a reason; the answer just has to travel
+    # through the person or agent doing the submitting.
+    if body.capacity_type is None:
+        recommendation = _estimate_for(body)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"capacity_type is required: 'on-demand' or 'spot'. "
+                f"/v1/estimate recommends {recommendation.capacity_type!r} for this job. "
+                f"{recommendation.capacity_reason}"
+            ),
+        )
+    capacity_type = body.capacity_type
     try:
         obj = to_pacsjob(body, principal, settings, job_id, capacity_type)
     except ValueError as exc:

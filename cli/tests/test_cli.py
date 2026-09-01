@@ -467,3 +467,36 @@ def test_stats_prints_the_note_when_the_total_is_incomplete(fake, capsys):
     }
     run(["stats"])
     assert "no measured price" in capsys.readouterr().out
+
+
+def test_the_capacity_type_flag_reaches_the_body():
+    # The caller decides this. The server refuses a submit without it rather
+    # than choosing, because a wrong value is invisible until the job has
+    # already run somewhere the user did not intend.
+    body = cli.build_submit_body(
+        args_for(["submit", "--name", "x", "--image", "i", "--capacity-type", "spot"])
+    )
+    assert body["capacity_type"] == "spot"
+
+
+def test_no_capacity_type_flag_leaves_the_field_out_so_the_server_can_refuse():
+    body = cli.build_submit_body(args_for(["submit", "--name", "x", "--image", "i"]))
+    assert "capacity_type" not in body
+
+
+def test_a_capacity_type_the_flag_does_not_know_is_refused_at_the_cli():
+    with pytest.raises(SystemExit):
+        args_for(["submit", "--name", "x", "--image", "i", "--capacity-type", "reserved"])
+
+
+def test_estimate_tells_you_the_flag_to_use(fake, capsys):
+    fake.estimate_result = {
+        "steps": 556, "hours": {"low": 6.5, "high": 6.9, "confidence": "measured"},
+        "cost_usd": {"low": 6.4, "high": 6.8}, "basis": "measured",
+        "gpu": {"recommended": "L40S", "recommended_vram_gb": 48,
+                "peak_logits_gib": 6.96, "reason": "fits"},
+        "capacity_type": "on-demand", "capacity_reason": "RunPod does not sell spot",
+        "warnings": [],
+    }
+    run(["estimate", "--name", "x", "--image", "i"])
+    assert "--capacity-type on-demand" in capsys.readouterr().out

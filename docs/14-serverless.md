@@ -226,11 +226,82 @@ if lines:
 30 시간짜리 job 을 6 초 간격으로 보면 18,000 건입니다. **Lambda 무료 등급이 월 100 만 건이라
 문제가 되지 않습니다.**
 
-## 남는 제약 둘
+## cold start 를 쟀습니다 (2026-09-01). 4.1 초입니다
 
-**cold start.** FastAPI 와 kubernetes client 를 import 하는 시간이 첫 요청에 붙습니다.
-**실측하지 않았습니다.** 대화형 CLI 에서 첫 명령이 느린 것은 체감되고, 안 쓰는 동안 컨테이너가
-사라지므로 하루에 몇 번씩 겪게 됩니다.
+우리 의존성을 그대로 담은 Lambda 를 하나 만들어 재고 지웠습니다. 설정을 바꾸면 다음 호출이
+반드시 새 컨테이너에서 도는 것을 이용했습니다.
+
+```
+압축 해제 105.5 MB, memory 512MB
+
+  회차 종류       Init(ms)     Duration(ms) import(s)
+  1      cold         4138.86      1.74         4.056
+  1      warm         -            1.53         -
+  2      cold         4136.22      1.99         4.05
+  2      warm         -            1.49         -
+  3      cold         4044.78      1.70         3.948
+  3      warm         -            1.69         -
+```
+
+**Init 의 거의 전부가 import 입니다.** 실행 자체는 1.7ms 이고 warm 은 1.5ms 입니다. 즉 함수가
+하는 일이 느린 것이 아니라 **짐을 푸는 데 4 초가 걸립니다.**
+
+### 원인은 패키지 크기입니다
+
+`kubernetes` client 를 빼고 다시 쟀습니다.
+
+```
+kubernetes 있음   105.5 MB   Init 4138 / 4136 / 4044 ms
+kubernetes 없음    36.9 MB   Init 1307 / 1532 / 1619 ms
+```
+
+**4.1 초가 1.5 초가 됩니다.** 그리고 메모리를 올려도 안 줄어듭니다.
+
+```
+memory 1024MB     Init 1587 / 1554 ms
+```
+
+Lambda 는 메모리에 비례해 CPU 를 주므로, **메모리를 두 배로 줘도 그대로라는 것은 연산이 아니라
+파일을 읽는 시간이라는 뜻입니다.** 크기가 지배합니다.
+
+참고로 로컬에서 각 라이브러리의 import 시간만 재면 다 합쳐 530ms 입니다.
+
+```
+fastapi           199 ms
+kubernetes        288 ms
+mangum             30 ms
+pydantic           15 ms
+```
+
+**4 초와 530ms 의 차이가 Lambda 의 파일 읽기입니다.**
+
+### 그래서 무엇을 할 것인가 — 아직 정하지 않았습니다
+
+우리가 `kubernetes` client 에서 실제로 쓰는 것은 다섯 개뿐이고 전부 평범한 REST 호출입니다.
+
+```
+self._custom.create_namespaced_custom_object
+self._custom.get_namespaced_custom_object
+self._custom.list_namespaced_custom_object
+self._core.list_namespaced_pod
+self._core.read_namespaced_pod_log
+```
+
+**74 MB 를 이 다섯 줄 때문에 들고 있는 셈입니다.** `requests` 로 직접 부르면 됩니다.
+
+다만 그 client 가 대신 해 주던 일이 남습니다.
+
+```
+kubeconfig 읽기        Lambda 에는 kubeconfig 가 없으므로 어차피 우리가 만든다
+EKS token 만들기       STS presigned URL 을 우리가 서명해야 한다
+CA 인증서 처리         eks:DescribeCluster 로 받아 임시 파일에 쓴다
+응답 역직렬화          dict 그대로 쓰면 된다.  우리는 이미 그렇게 쓴다
+```
+
+**세 번째까지가 실제 작업입니다.** 1.5 초를 위해 그것을 직접 짤지는 별도 판단이라 미결로
+둡니다 (미결 17).
+
+## 남는 제약 하나
 
 **15 분 상한.** 로그를 polling 으로 바꾸면 이 상한에 닿는 라우트가 없어지지만, 앞으로 오래
 걸리는 일을 라우트로 만들면 다시 걸립니다. 그런 일은 Lambda 에 두지 않는다는 규칙으로 둡니다.
@@ -352,7 +423,7 @@ terraform 에서는 `depends_on` 이나 재시도가 필요합니다.
 An error occurred (InvalidParameterException) ... invalid principal.
 
 === 4. role 을 맡아서 ... ===
-  맡은 신원: arn:aws:iam::<ACCOUNT_ID>:user/jglee
+  맡은 신원: arn:aws:iam::<ACCOUNT_ID>:user/<IAM_USER>
   can-i list pacsjobs : yes
 ```
 
@@ -362,6 +433,7 @@ An error occurred (InvalidParameterException) ... invalid principal.
 
 ## 확인 안 된 것
 
-1. **cold start 를 재지 않았습니다.**
-2. **polling 으로 바꾼 `logs` 를 긴 job 에 붙여 본 적이 없습니다.** 위 실측은 40 줄짜리
+1. **polling 으로 바꾼 `logs` 를 긴 job 에 붙여 본 적이 없습니다.** 위 실측은 40 줄짜리
    pod 입니다.
+2. **cold start 를 줄이는 쪽은 재기만 했습니다.** `kubernetes` client 를 빼면 1.5 초가 되는
+   것은 확인했지만, 그것 없이 apiserver 를 부르는 코드는 아직 없습니다.

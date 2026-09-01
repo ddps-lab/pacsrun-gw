@@ -96,6 +96,13 @@ def job_arguments() -> argparse.ArgumentParser:
         "--gpu-count", type=int, metavar="N", help="how many GPUs PER POD (default 1)"
     )
     shared.add_argument(
+        "--capacity-type", choices=["on-demand", "spot"],
+        help="how the machine is bought. YOU decide this. on-demand costs more and is "
+        "not taken away; spot is cheaper and can be reclaimed mid-run. Run "
+        "`ddpsrun estimate` first — it recommends one and says why. submit refuses "
+        "without it rather than choosing for you.",
+    )
+    shared.add_argument(
         "--parallelism", type=int, metavar="N",
         help="how many pods run at once (default 1). They are independent workers that never "
         "talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: "
@@ -321,6 +328,8 @@ def build_submit_body(args: argparse.Namespace) -> dict[str, Any]:
         body["expected_hours"] = args.expected_hours
     if getattr(args, "parallelism", None) is not None:
         body["parallelism"] = args.parallelism
+    if getattr(args, "capacity_type", None):
+        body["capacity_type"] = args.capacity_type
 
     # A GPU is asked for in exactly one of two styles, by memory or by model.
     # TWO CASES THAT LOOK ALIKE AND ARE NOT:
@@ -479,7 +488,8 @@ def cmd_estimate(args: argparse.Namespace) -> int:
     print(f"  GPU         {gpu.get('recommended') or '없음'}"
           f" ({gpu.get('recommended_vram_gb')} GB), 최대 logits {gpu['peak_logits_gib']} GiB")
     print(f"              {gpu['reason']}")
-    print(f"  구매 방식   {result['capacity_type']}")
+    print(f"  구매 방식   {result['capacity_type']}   "
+          f"<- 제출할 때 --capacity-type {result['capacity_type']} 로 넣으십시오")
     print(f"              {result['capacity_reason']}")
     for warning in result.get("warnings", []):
         print(f"  참고        {warning}")

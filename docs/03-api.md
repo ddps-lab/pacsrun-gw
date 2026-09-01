@@ -45,11 +45,31 @@ Codex 든 셸을 쓸 수 있으면 통한다.
 | `namespace` | token 에서 유도 | 남의 namespace 를 못 적게 |
 | `serviceAccountName` | 그 namespace 의 고정값 | 사용자가 알 필요 없음 |
 | `resultPath` | `s3://<bucket>/pacsrun/<namespace>/<name>/` | 남의 폴더에 못 쓰게 |
-| `placement.capacityType` | `expected_hours` 와 vendor 로 판단 | RunPod 은 spot 이 없음 |
+| ~~`placement.capacityType`~~ | **2026-09-01 에 빠짐. 이제 요청이 들고 온다** | 아래 참고 |
 | `placement.regions` | 가용성과 가격으로 판단 | |
 | `parallelism` | 1 (지금은 고정) | |
 | fetch mode | `expected_hours > 11` 이면 켬 | STS 12 시간 한계 |
 | `SAVE_CKPT` | `expected_hours > 6` 이면 켬 | 중단 대비 |
+
+### capacityType 은 서버가 정하지 않는다 (2026-09-01)
+
+한동안 서버가 `/v1/estimate` 의 판단으로 이 값을 채웠다. **그러면 서른 시간짜리 job 이
+회수 가능한 자원 위에 올라가는데도 아무도 묻지 않은 것이 된다.**
+
+지금은 요청에 `capacity_type` 이 있고 **없으면 400 으로 거절한다.** 판단 자체는 그대로
+`/v1/estimate` 가 이유와 함께 답하고, 그 답이 사람이나 agent 를 거쳐 요청에 실린다.
+
+```
+$ ddpsrun estimate ...
+  구매 방식   on-demand   <- 제출할 때 --capacity-type on-demand 로 넣으십시오
+              RunPod does not sell spot. ...
+
+$ ddpsrun submit ... --capacity-type on-demand
+```
+
+비워 두면 안 되는 이유는 그대로다. 빈 값은 spot 을 뜻하고
+(`pkg/decider/decider.go:331`), RunPod decider 는 on-demand 가 아니면 catalog 를 읽기 전에
+거절한다 (`pkg/decider/runpod/decider.go:242`). **job 은 돌지만 RunPod 에서만 안 돈다.**
 
 **지금은 사용자가 yaml 에 `resultPath` 를 직접 쓴다.** 그래서 남의 prefix 를 적을 수 있다.
 이것이 다중 사용자로 갈 때 반드시 막아야 하는 자리다.

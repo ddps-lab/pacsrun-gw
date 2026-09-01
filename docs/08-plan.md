@@ -81,7 +81,8 @@ S3 와 CloudFront 에 둔다. 미결 8, 12, 14 를 한꺼번에 닫는다. `14-s
 | 11 | **Lightning Thunder** | 아직 안 씀. 쓰면 측정표에 컴파일러 열 추가 |
 | ~~12~~ | ~~서버 앞에 무엇을 두는가~~ | **정함: 아무것도 안 둔다.** 서버를 Lambda 로 옮기면 Function URL 이 HTTPS 주소를 준다. Gateway API CRD, load balancer controller, ACM 인증서, Route53 레코드가 전부 필요 없어진다. (`ingress-nginx` 는 2026-03-24 에 archive 되었고 Gateway API 가 대안이지만, 그 길도 결국 ALB 월 $22 이다) `14-serverless.md` |
 | ~~13~~ | ~~image 를 어느 registry 로~~ | **정함: us-west-2 의 `ddpsrun/gateway` 하나.** cluster 가 us-west-2 이고 이미지를 당기는 것은 서버 pod 하나뿐이라 두 번째 사본은 값만 든다. `terraform/registry/` 가 ECR 과 전용 IAM role 을 만들고 `release.yml` 이 push 한다. 2026-08-31 apply 함. **2026-09-01 주석: Lambda 로 가면 zip 배포라 이 저장소를 쓰지 않는다. 의존성이 92.4 MB 로 250 MB 한도 안이다. 지우지는 않는다 — pod 으로 되돌릴 판단이 남아 있고 월 $0.40 이다** |
-| 15 | **Lambda cold start** | FastAPI 와 kubernetes client import 시간. 재지 않았다. 대화형 CLI 에서 체감되는 자리 |
+| ~~15~~ | ~~Lambda cold start~~ | **2026-09-01 실측: 4.1 초.** 거의 전부가 import 이고, `kubernetes` client (74 MB) 를 빼면 1.5 초가 된다. 메모리를 올려도 안 줄어드는 것으로 보아 연산이 아니라 파일 읽기다. `14-serverless.md` |
+| 17 | **`kubernetes` client 를 뺄 것인가** | 우리가 쓰는 것은 REST 호출 다섯 개뿐이다. 빼면 cold start 가 2.6 초 줄지만, EKS token 만들기와 CA 인증서 처리를 직접 짜야 한다 |
 | ~~16~~ | ~~Lambda 실행 role 로 apiserver 에 붙어 본 적이 없다~~ | **2026-09-01 확인.** 같은 모양의 IAM role 로 붙어서 `Groups` 에 `kubernetesGroups` 값이 들어오는 것을 봤다. IAM 전파에 약 10 초가 걸리고, username 에 `{{SessionName}}` 이 들어가므로 RBAC 은 group 에 걸어야 한다. `14-serverless.md` |
 | ~~14~~ | ~~로그 `follow` 가 몇 시간을 버티는가~~ | **정함: streaming 을 버리고 polling 으로 간다.** Lambda 는 한 번 실행이 15 분이라 30 시간 연결이 성립하지 않는다. `timestamps=True` 로 받아 클라이언트가 마지막 시각 하나만 기억하면 서버는 무상태로 남는다. 6 초 간격 / 30 초 창으로 실측했다 (`14-serverless.md`) |
 

@@ -94,7 +94,11 @@ def client(tmp_path, monkeypatch, cluster):
 
 
 def submit_body(**overrides):
-    body = {"name": "bank-exp2", "image": "runpod/pytorch:1.1.0"}
+    # capacity_type is required since 2026-09-01: the caller decides it, not the
+    # server. Tests that are about something else send a value so they exercise
+    # that something else.
+    body = {"name": "bank-exp2", "image": "runpod/pytorch:1.1.0",
+            "capacity_type": "on-demand"}
     body.update(overrides)
     return body
 
@@ -258,9 +262,33 @@ def test_a_submission_now_carries_a_capacity_type(client, cluster):
 
 def test_a_submit_body_from_stage_one_still_works(client, cluster):
     # JudgementRequest extends SubmitRequest, so a caller who never heard of
-    # `training` sends exactly what they sent before.
+    # `training` sends exactly what they sent before, plus capacity_type.
     response = as_alice(client, "POST", "/v1/jobs", json=submit_body())
     assert response.status_code == 201
+
+
+def test_a_submit_without_a_capacity_type_is_refused_not_guessed(client, cluster):
+    # The server used to fill this from its own estimate, which let a thirty-hour
+    # job land on reclaimable capacity without anyone being asked.
+    body = submit_body()
+    body.pop("capacity_type")
+    response = as_alice(client, "POST", "/v1/jobs", json=body)
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "capacity_type is required" in detail
+    assert "/v1/estimate recommends" in detail
+    assert cluster.created == []
+
+
+def test_the_callers_choice_is_what_reaches_the_object(client, cluster):
+    as_alice(client, "POST", "/v1/jobs", json=submit_body(capacity_type="spot"))
+    _, body = cluster.created[0]
+    assert body["spec"]["placement"] == {"capacityType": "spot"}
+
+
+def test_a_capacity_type_we_do_not_understand_is_refused(client):
+    response = as_alice(client, "POST", "/v1/jobs", json=submit_body(capacity_type="reserved"))
+    assert response.status_code == 422
 
 
 # ------------------------------------------------ stage 3: estimate and validate
@@ -272,6 +300,7 @@ def judgement_body(**overrides):
         "image": "runpod/pytorch:1.1.0",
         "gpu": {"vram_gb": 48},
         "training": {"pairs": 1110, "epochs": 4, "row_tokens": 4100, "cap": 12288},
+        "capacity_type": "on-demand",
     }
     body.update(overrides)
     return body
