@@ -290,10 +290,78 @@ kube-system/karpenter    replicas=1  requests={}
 1, 4 는 이 저장소 안의 코드이고 2, 3, 5, 6 은 terraform 입니다. CI 는 이미지를 굽는 대신
 zip 을 만들어 올리는 형태로 바꿉니다.
 
+## Lambda 신원으로 apiserver 에 붙는 것을 확인했습니다 (2026-09-01)
+
+Lambda 를 실제로 만들지 않고, **Lambda 가 쓸 것과 같은 IAM role** 을 만들어 그 신원으로
+확인했습니다. 끝나고 전부 지웠습니다.
+
+```
+=== 4. role 을 맡는다 ===
+  지금 신원: arn:aws:sts::<ACCOUNT_ID>:assumed-role/ddpsrun-gw-lambda-probe/lambda-probe
+
+=== 5. 그 신원으로 apiserver 를 부른다 ===
+Username   arn:aws:sts::<ACCOUNT_ID>:assumed-role/ddpsrun-gw-lambda-probe/lambda-probe
+Groups     [ddpsrun-gw-probe-group system:authenticated]
+
+  can-i list pacsjobs    : no
+  실제 조회:
+Error from server (Forbidden): pacsjobs.pacsrun.io is forbidden: User ".../lambda-probe"
+cannot list resource "pacsjobs" in API group "pacsrun.io" at the cluster scope
+```
+
+**`Forbidden` 이 성공입니다.** 읽는 법이 이렇습니다.
+
+- `Username` 이 그 role 입니다. apiserver 가 신원을 알아봤다는 뜻이고 **인증이 통과했습니다.**
+- `Groups` 에 access entry 에 적어 넣은 `ddpsrun-gw-probe-group` 이 들어 있습니다.
+  **`kubernetesGroups` 가 실제로 kubernetes group 으로 전달됩니다.** 이것이 확인하려던 것입니다.
+- 막힌 것은 인가입니다. 붙여 둔 `view` ClusterRole 에 CRD 인 `pacsjobs` 가 없습니다.
+  **인증이 막혔다면 `Unauthorized` 가 나옵니다.**
+
+실제로 쓸 때는 `view` 대신 `config/deploy/rbac.yaml` 의 ClusterRole 을 그 group 에 겁니다.
+
+### 그 과정에서 알게 된 것 둘
+
+**IAM role 을 만든 직후에는 access entry 에 등록되지 않습니다.**
+
+```
+=== 2. access entry 등록.  IAM 전파를 기다리며 재시도 ===
+  1회차 대기 (IAM 전파)
+  2회차 대기 (IAM 전파)
+  3회차에 성공
+```
+
+5 초 간격으로 재시도해서 **3 회차, 약 10 초 뒤에** 붙었습니다. 첫 시도는 이것 때문에
+`InvalidParameterException: The specified principalArn is invalid` 로 실패했습니다.
+terraform 에서는 `depends_on` 이나 재시도가 필요합니다.
+
+**access entry 의 `username` 에 세션 이름이 들어갑니다.**
+
+```
+"user": "arn:aws:sts::<ACCOUNT_ID>:assumed-role/ddpsrun-gw-lambda-probe/{{SessionName}}"
+```
+
+세션 이름은 실행마다 달라집니다. **그래서 RBAC 을 username 이 아니라 group 에 걸어야 합니다.**
+`kubernetesGroups` 를 쓰기로 한 것이 결과적으로 맞았습니다.
+
+### 첫 시도가 왜 틀렸는지도 적어 둡니다
+
+실패했는데 **출력이 성공처럼 보였습니다.**
+
+```
+=== 2. access entry 등록 ===
+An error occurred (InvalidParameterException) ... invalid principal.
+
+=== 4. role 을 맡아서 ... ===
+  맡은 신원: arn:aws:iam::<ACCOUNT_ID>:user/jglee
+  can-i list pacsjobs : yes
+```
+
+`assume-role` 도 조용히 실패해서 **뒤 단계가 원래 신원의 admin 권한으로 돌았습니다.** 그 `yes`
+는 probe role 의 답이 아니었습니다. 두 번째 시도에서는 단계마다 신원을 확인하고 아니면
+중단하게 고쳤습니다. **확인 script 는 각 단계가 실제로 무엇으로 돌고 있는지를 찍어야 합니다.**
+
 ## 확인 안 된 것
 
 1. **cold start 를 재지 않았습니다.**
-2. **Lambda 에서 EKS token 을 만들어 apiserver 에 붙여 본 적이 없습니다.** 사람 kubectl 로는
-   되는 것을 확인했지만 Lambda 실행 role 로는 안 해 봤습니다.
-3. **polling 으로 바꾼 `logs` 를 긴 job 에 붙여 본 적이 없습니다.** 위 실측은 40 줄짜리
+2. **polling 으로 바꾼 `logs` 를 긴 job 에 붙여 본 적이 없습니다.** 위 실측은 40 줄짜리
    pod 입니다.
