@@ -24,3 +24,8 @@ logout_urls = ["https://<CLOUDFRONT_DOMAIN>/"]
 // without them; see docs/16-login.md 16.6.
 google_client_id     = ""
 google_client_secret = ""
+
+// Once google_client_id is set, the login page shows only the Google button.
+// Set this to true to keep the email/password form alongside it.
+// An operator does not need it: the static token works with no browser at all.
+allow_password_login = false

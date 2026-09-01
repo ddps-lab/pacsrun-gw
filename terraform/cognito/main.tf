@@ -103,9 +103,14 @@ resource "aws_cognito_user_pool_client" "gw" {
   # for because nothing here uses a name or a picture.
   allowed_oauth_scopes = ["openid", "email"]
 
-  supported_identity_providers = concat(
-    ["COGNITO"],
-    var.google_client_id == "" ? [] : ["Google"],
+  // With no Google configured, COGNITO is the only way in and has to stay.
+  // With Google configured, COGNITO is offered only if someone asked for it:
+  // the goal is that a researcher signs in with the account they already have
+  // and never invents a password for this service.
+  supported_identity_providers = (
+    var.google_client_id == ""
+    ? ["COGNITO"]
+    : (var.allow_password_login ? ["Google", "COGNITO"] : ["Google"])
   )
 
   callback_urls = var.callback_urls

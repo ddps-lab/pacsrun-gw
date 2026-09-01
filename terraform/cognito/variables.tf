@@ -67,3 +67,23 @@ variable "tags" {
     ManagedBy = "terraform"
   }
 }
+
+variable "allow_password_login" {
+  description = <<-EOT
+    Whether the login page also offers Cognito's own email and password form.
+
+    Once Google is connected this defaults to false, so the page has one button
+    and nobody has to invent a password for this service. It is not a security
+    setting: a Cognito user that exists can still be signed in with the AWS API
+    by anyone holding admin credentials. It only decides what the page shows.
+
+    The fallback for an operator is not a password, it is the static token
+    (DDPSRUN-TWO-CREDENTIALS). That path needs no browser at all, which is why
+    it is also what CI and the agent skill use.
+
+    Ignored while google_client_id is empty: with no Google, the password form
+    is the only way in and removing it would lock everyone out.
+  EOT
+  type        = bool
+  default     = false
+}
