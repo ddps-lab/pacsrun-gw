@@ -194,3 +194,68 @@ def test_the_cluster_name_is_signed_into_the_token(fake_aws_credentials):
     url = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode()
     query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
     assert "x-k8s-aws-id" in query["X-Amz-SignedHeaders"]
+
+
+# ---------------------------------------------------------------------------
+# DDPSRUN-BUILD-ONCE. The defect this guards: Mangum's lifespan="auto" runs the
+# ASGI lifespan around every invocation, so the whole startup ran per request.
+# Measured on the deployed function 2026-09-02: 48 requests, 48 startup log
+# lines, 3 real cold starts, and /healthz taking 1.78 s to return a two-key dict.
+# ---------------------------------------------------------------------------
+
+
+def handler_source() -> str:
+    """The file's own text.
+
+    The fixture above deliberately stops reading at `# COLD START WORK`, because
+    everything after it calls AWS. The two lines these tests care about are after
+    that mark, so they are checked in the source. That is a weaker test than
+    running them, and it is the right strength for what it guards: someone
+    changing one string back.
+    """
+    from pathlib import Path
+
+    return (Path(__file__).resolve().parents[1] / "ddpsrun_server"
+            / "lambda_handler.py").read_text()
+
+
+def test_mangum_is_told_not_to_run_the_lifespan():
+    """`auto` runs the ASGI lifespan around EVERY invocation, so the whole
+    startup ran per request: a new kubernetes client, a new EKS token minted in
+    a subprocess, and Cognito's JWKS refetched. /healthz took 1.78 s."""
+    import mangum
+
+    # Assert the option still exists and is spelled this way, so the string
+    # check below is not quietly testing a name mangum has since renamed.
+    assert mangum.Mangum(lambda *a: None, lifespan="off").lifespan == "off"
+    assert 'Mangum(app, lifespan="off")' in handler_source()
+
+
+def test_the_state_is_built_at_import():
+    """With the lifespan off, nothing else would ever build it, and every route
+    would fail on a missing app.state."""
+    source = handler_source()
+    assert "build_state(app)" in source
+    # Order matters: Mangum wraps an app that is already ready.
+    assert source.index("build_state(app)") < source.index("Mangum(app")
+
+
+def test_building_twice_does_not_rebuild(monkeypatch):
+    """What makes calling it at import safe even if something calls it again."""
+    from ddpsrun_server import main
+
+    app = main.FastAPI()
+    calls = {"n": 0}
+
+    def counted():
+        calls["n"] += 1
+        raise RuntimeError("should not be reached the second time")
+
+    app.state.ready = True
+    monkeypatch.setattr(main.Settings, "from_env", staticmethod(counted))
+    main.build_state(app)          # guarded: returns at once
+    assert calls["n"] == 0
+
+    with pytest.raises(RuntimeError):
+        main.build_state(app, force=True)   # lifespan's path: always rebuilds
+    assert calls["n"] == 1

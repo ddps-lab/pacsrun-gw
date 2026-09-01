@@ -682,7 +682,16 @@ document.querySelectorAll("nav button[data-view]").forEach((b) => {
 });
 
 document.querySelectorAll("#jobs-tabs button").forEach((b) => {
-  b.onclick = () => { jobsTab = b.dataset.phase; poll.stop(); drawJobs(); };
+  b.onclick = () => {
+    jobsTab = b.dataset.phase;
+    poll.stop();
+    // Say something immediately. The round trip is not instant, and leaving the
+    // previous tab's rows on screen makes a click look like it did nothing —
+    // worse, the rows shown belong to the tab the user just left.
+    $("jobs-body").innerHTML = `<div class="empty"><p class="dim">Loading...</p></div>`;
+    $("jobs-count").textContent = "";
+    drawJobs();
+  };
 });
 
 $("d-again").onclick = () => {

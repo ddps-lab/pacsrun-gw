@@ -163,6 +163,13 @@ _write_kubeconfig()
 
 from mangum import Mangum  # noqa: E402 - must follow the two writes above
 
-from .main import app  # noqa: E402
+from .main import app, build_state  # noqa: E402
 
-handler = Mangum(app, lifespan="auto")
+# DDPSRUN-BUILD-ONCE. Build the state here, at import, which Lambda runs once
+# per execution environment. Then tell Mangum NOT to run the ASGI lifespan:
+# "auto" runs it around every invocation, which rebuilt the kubernetes client
+# and the JWKS cache on every single request and cost 1.4 seconds each time
+# (measured on the deployed function, 2026-09-02).
+build_state(app)
+
+handler = Mangum(app, lifespan="off")

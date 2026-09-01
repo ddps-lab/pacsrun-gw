@@ -83,14 +83,40 @@ from .models import (
 logger = logging.getLogger("ddpsrun")
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Build everything the routes need, once, before the first request.
+def build_state(app: FastAPI, force: bool = False) -> None:
+    """Build everything the routes need.
 
-    Anything that fails here kills the process. That is the intent: a server
-    with no token file accepts nobody, and a server with no result bucket
-    creates jobs whose output goes nowhere. Both are better as a startup crash.
+    DDPSRUN-BUILD-ONCE. This used to live inside `lifespan`, which uvicorn runs
+    exactly once. Mangum does not: with `lifespan="auto"` it runs the ASGI
+    lifespan protocol around EVERY invocation, so every request rebuilt all of
+    this. Measured on the deployed function on 2026-09-02: 48 requests produced
+    48 startup log lines against 3 real cold starts, and `/healthz` — a route
+    that returns a two-key dict and touches nothing — took 1.78 seconds.
+
+    The expensive part is `Cluster.connect()`. Loading the kubeconfig runs its
+    `exec` credential plugin, which spawns a fresh Python interpreter to mint an
+    EKS token; importing botocore in that child alone measures 309 ms. Rebuilding
+    the Verifier was the other half of the waste, because it threw away the
+    cached JWKS document and made every authenticated request refetch Cognito's
+    public keys.
+
+    Args:
+        app: the FastAPI application to attach the state to.
+        force: rebuild even if this app already has state. `lifespan` passes
+            True because a process starting up genuinely wants fresh state, and
+            because `app` is a module-level singleton that the tests reuse:
+            without this, the second test in a run would keep the first one's
+            token file and cluster stub. The Lambda path passes False, since it
+            calls this once at import and never wants a second build.
+
+    Raises:
+        ConfigError, TokenFileError, ClusterError: any of these at startup is
+            deliberately fatal. A server with no token file accepts nobody, and
+            one with no result bucket creates jobs whose output goes nowhere.
     """
+    if not force and getattr(app.state, "ready", False):
+        return
+
     settings = Settings.from_env()
     tokens = TokenStore.load(settings.tokens_path)
     cluster = Cluster.connect()
@@ -119,6 +145,13 @@ async def lifespan(app: FastAPI):
     app.state.tokens = tokens
     app.state.cluster = cluster
     app.state.cognito = verifier
+    app.state.ready = True
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """What uvicorn runs once, around the life of the process."""
+    build_state(app, force=True)
     yield
 
 
