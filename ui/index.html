@@ -50,13 +50,29 @@
 <div id="login">
   <div>
     <h1 class="brand" style="font-size:24px">ddps<span>run</span></h1>
-    <p class="dim small">Enter the server address and the token you were issued.</p>
+    <p class="dim small">Sign in to submit jobs and watch them run.</p>
   </div>
-  <label><span>Server</span>
-    <input id="in-server" placeholder="https://....lambda-url.us-west-2.on.aws" autocomplete="off"></label>
-  <label><span>Token</span>
-    <input id="in-token" type="password" placeholder="ddpsrun-..." autocomplete="off"></label>
-  <button class="go" id="do-login">Sign in</button>
+
+  <!-- Shown when the server reports Cognito is configured. app.js asks
+       GET /v1/login-config at startup and unhides exactly one of these two. -->
+  <div id="cognito-box" hidden style="display:flex;flex-direction:column;gap:12px">
+    <button class="go" id="cognito-login">Sign in</button>
+    <p class="dim tiny">You will be sent to the sign-in page and brought back here.</p>
+  </div>
+
+  <!-- The original way in. It stays because a deployment with no user pool is
+       still supported, and because CI and scripts have no browser. -->
+  <div id="token-box" style="display:flex;flex-direction:column;gap:12px">
+    <label><span>Server</span>
+      <input id="in-server" placeholder="https://....lambda-url.us-west-2.on.aws" autocomplete="off"></label>
+    <label><span>Token</span>
+      <input id="in-token" type="password" placeholder="ddpsrun-..." autocomplete="off"></label>
+    <button class="go" id="do-login">Sign in with a token</button>
+  </div>
+
+  <button class="flat tiny" id="token-toggle" hidden
+          style="align-self:center;padding:4px 10px">Use a token instead</button>
+
   <div id="login-err"></div>
 </div>
 

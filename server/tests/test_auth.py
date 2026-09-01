@@ -10,7 +10,7 @@ from ddpsrun_server import auth
 
 
 def store_with(*entries):
-    return auth.TokenStore(auth.parse_token_document({"tokens": list(entries)}))
+    return auth.TokenStore.from_document(({"tokens": list(entries)}))
 
 
 def entry(token, user, namespace):

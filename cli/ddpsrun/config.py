@@ -41,10 +41,20 @@ class NotLoggedIn(Exception):
 
 @dataclass(frozen=True)
 class Credentials:
-    """Everything needed to reach the server."""
+    """Everything needed to reach the server.
+
+    Attributes:
+        server: the gateway URL.
+        token: what goes in `Authorization: Bearer`. Either a static token an
+            operator issued, or a Cognito id_token from `ddpsrun login`.
+        refresh_token: only set after a browser sign-in. An id_token lives an
+            hour; this buys a new one without opening a browser again, and is
+            why the file is written at mode 0600.
+    """
 
     server: str
     token: str
+    refresh_token: str = ""
 
 
 def config_dir() -> Path:
@@ -84,7 +94,12 @@ def save(credentials: Credentials) -> Path:
     # which would create it with the process umask applied to 0666.
     descriptor = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        json.dump({"server": credentials.server, "token": credentials.token}, handle, indent=2)
+        document = {"server": credentials.server, "token": credentials.token}
+        # Only written when there is one. A file from a static-token login stays
+        # exactly the shape it was before Cognito existed.
+        if credentials.refresh_token:
+            document["refresh_token"] = credentials.refresh_token
+        json.dump(document, handle, indent=2)
         handle.write("\n")
     return path
 
@@ -130,6 +145,7 @@ def load() -> Credentials:
     return Credentials(
         server=(server or file_server).rstrip("/"),
         token=token or file_token,
+        refresh_token=str(document.get("refresh_token", "")).strip(),
     )
 
 

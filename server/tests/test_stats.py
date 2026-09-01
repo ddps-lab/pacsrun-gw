@@ -147,7 +147,7 @@ def test_a_clean_team_has_nothing_to_note():
 
 
 def test_team_membership_comes_from_the_token_file_not_from_the_cluster():
-    store = auth.TokenStore(auth.parse_token_document({"tokens": [
+    store = auth.TokenStore.from_document(({"tokens": [
         {"sha256": auth.hash_token("a"), "user": "alice", "namespace": "ddps-alice", "team": "ddps"},
         {"sha256": auth.hash_token("b"), "user": "bob", "namespace": "ddps-bob", "team": "ddps"},
         {"sha256": auth.hash_token("c"), "user": "carol", "namespace": "other-carol", "team": "other"},
@@ -157,14 +157,14 @@ def test_team_membership_comes_from_the_token_file_not_from_the_cluster():
 
 
 def test_an_empty_team_name_matches_nobody():
-    store = auth.TokenStore(auth.parse_token_document({"tokens": [
+    store = auth.TokenStore.from_document(({"tokens": [
         {"sha256": auth.hash_token("a"), "user": "alice", "namespace": "ddps-alice"},
     ]}))
     assert store.namespaces_in_team("") == []
 
 
 def test_a_token_without_a_team_still_works_for_everything_else():
-    store = auth.TokenStore(auth.parse_token_document({"tokens": [
+    store = auth.TokenStore.from_document(({"tokens": [
         {"sha256": auth.hash_token("a"), "user": "alice", "namespace": "ddps-alice"},
     ]}))
     principal = store.principal_for("a")

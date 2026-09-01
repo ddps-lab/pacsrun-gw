@@ -52,6 +52,10 @@ const store = {
    server wrote it: the CRD's validation messages are written for a person to
    read, so rewriting them here would only lose information. */
 async function call(path, options = {}) {
+  // Before every request, not on a timer: a tab left open overnight would sleep
+  // through a timer, and the next thing the user does is the moment that
+  // matters. A static token has no expiry and this returns immediately.
+  await refreshIfExpired();
   const response = await fetch(store.server + path, {
     ...options,
     headers: {
@@ -710,6 +714,149 @@ $("d-spec-copy").onclick = () => {
 
 /* ------------------------------------------------------------------ sign in */
 
+/*
+ * DDPSRUN-UI-LOGIN. Two ways in, and the server decides which is offered.
+ *
+ *   Cognito, when GET /v1/login-config says enabled. The page sends the browser
+ *   to Cognito's own login page, Cognito sends it back with a code, and the page
+ *   trades that code for an id_token. Nothing here ever sees a password.
+ *
+ *   A pasted token, otherwise. That is the whole of what existed before Cognito,
+ *   and it stays because a deployment with no user pool is still a supported one
+ *   (`docs/16-login.md` 16.3).
+ *
+ * WHY PKCE. Trading a code for a token normally needs a client secret, and this
+ * page is three static files anyone can read — there is nowhere to put one. PKCE
+ * replaces the secret with a random number this tab generates and never sends:
+ * only its SHA-256 goes out at the start, and the original goes out at the end.
+ * Whoever steals the code cannot complete step two without the original.
+ */
+
+const LOGIN_KEY = "ddpsrun.pkce";      // the random number, while the round trip is in flight
+const REFRESH_KEY = "ddpsrun.refresh"; // survives a tab close, unlike the id_token's hour
+
+let loginConfig = null;
+
+/* base64url with no padding, which is what OAuth asks for everywhere. */
+function b64url(bytes) {
+  return btoa(String.fromCharCode(...new Uint8Array(bytes)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function makeVerifier() {
+  const raw = crypto.getRandomValues(new Uint8Array(32));
+  const verifier = b64url(raw);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return { verifier, challenge: b64url(digest) };
+}
+
+/* The address of this page with nothing after it. Cognito matches redirect_uri
+   against its registered list character for character, so a stray ?code= left
+   over from the last sign-in would make the next one fail. */
+const redirectUri = () => location.origin + location.pathname;
+
+async function startCognitoLogin() {
+  const { verifier, challenge } = await makeVerifier();
+  // sessionStorage, not localStorage: this value is meaningless once the round
+  // trip finishes, and it should not outlive the tab that made it.
+  sessionStorage.setItem(LOGIN_KEY, verifier);
+  const query = new URLSearchParams({
+    client_id: loginConfig.client_id,
+    response_type: "code",
+    scope: loginConfig.scopes.join(" "),
+    redirect_uri: redirectUri(),
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  });
+  location.assign(`${loginConfig.login_domain}/oauth2/authorize?${query}`);
+}
+
+/* Ask Cognito's token endpoint for tokens. Used twice: once with the code after
+   a sign-in, and again with the refresh token when the hour is up. */
+async function exchange(body) {
+  const response = await fetch(`${loginConfig.login_domain}/oauth2/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: loginConfig.client_id, ...body }),
+  });
+  const parsed = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(parsed.error_description || parsed.error || "Cognito refused the exchange");
+  }
+  return parsed;
+}
+
+/* Called on every load. Returns true when it consumed a ?code= and signed in. */
+async function finishCognitoLogin() {
+  const code = new URLSearchParams(location.search).get("code");
+  if (!code) return false;
+
+  const verifier = sessionStorage.getItem(LOGIN_KEY);
+  sessionStorage.removeItem(LOGIN_KEY);
+  // Take the code out of the address bar before anything else. It is single-use,
+  // and leaving it there means a reload tries to spend it twice and shows an
+  // error for a sign-in that actually worked.
+  history.replaceState({}, "", redirectUri());
+
+  if (!verifier) {
+    $("login-err").innerHTML = note("err",
+      "This sign-in was started in a different tab, so it could not be completed.",
+      "Press the sign-in button again in this tab.");
+    return false;
+  }
+
+  try {
+    const tokens = await exchange({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri(),
+      code_verifier: verifier,
+    });
+    store.set(location.origin, tokens.id_token);
+    if (tokens.refresh_token) localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
+    return true;
+  } catch (err) {
+    $("login-err").innerHTML = note("err", err.message);
+    return false;
+  }
+}
+
+/* An id_token lives an hour. Without this the screen works, then stops with a
+   401 nobody asked for. `call` runs this before every request. */
+async function refreshIfExpired() {
+  const token = store.token;
+  if (!token || !loginConfig || !loginConfig.enabled) return;
+
+  let expiry;
+  try {
+    // The payload is base64url JSON. Reading `exp` here is not a security check
+    // — the server verifies the signature — it only tells us when to refresh.
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    expiry = payload.exp;
+  } catch {
+    return;   // a pasted static token has no exp and needs no refresh.
+  }
+  // 60 seconds of margin, so a request does not expire in flight.
+  if (!expiry || Date.now() / 1000 < expiry - 60) return;
+
+  const refresh = localStorage.getItem(REFRESH_KEY);
+  if (!refresh) { signOut(); return; }
+  try {
+    const tokens = await exchange({ grant_type: "refresh_token", refresh_token: refresh });
+    store.set(store.server, tokens.id_token);
+  } catch {
+    // The refresh token is gone or revoked. Nothing to do but sign in again.
+    signOut();
+  }
+}
+
+function signOut() {
+  poll.stop();
+  store.clear();
+  localStorage.removeItem(REFRESH_KEY);
+  showApp(false);
+}
+
 function showApp(on) {
   $("login").hidden = on;
   $("bar").hidden = !on;
@@ -739,7 +886,44 @@ $("do-login").onclick = async () => {
   }
 };
 
-$("logout").onclick = () => { poll.stop(); store.clear(); showApp(false); };
+$("cognito-login").onclick = () => startCognitoLogin().catch((err) => {
+  $("login-err").innerHTML = note("err", err.message);
+});
+
+$("logout").onclick = signOut;
+
+// The token box is hidden when Cognito is on, but not removed: someone holding
+// a static token for a script still has to be able to get in from a browser.
+$("token-toggle").onclick = () => {
+  const box = $("token-box");
+  box.hidden = !box.hidden;
+  $("token-toggle").textContent = box.hidden ? "Use a token instead" : "Hide";
+};
 
 window.addEventListener("hashchange", route);
-showApp(Boolean(store.server && store.token));
+
+/* Startup, in this order:
+     1. ask the server whether Cognito is on, so the right box is drawn;
+     2. if we came back from Cognito, finish that before anything else;
+     3. show the app when we now hold a credential. */
+(async function start() {
+  try {
+    // The page is served from the same origin as the API in a pod deployment and
+    // from CloudFront in the Lambda one, so the server address has to be known
+    // before this call. A stored one wins; otherwise this page's own origin.
+    const base = store.server || location.origin;
+    const response = await fetch(base + "/v1/login-config");
+    loginConfig = response.ok ? await response.json() : { enabled: false };
+    if (loginConfig.enabled && !store.server) store.set(base, store.token || "");
+  } catch {
+    loginConfig = { enabled: false };
+  }
+
+  const cognitoOn = Boolean(loginConfig && loginConfig.enabled);
+  $("cognito-box").hidden = !cognitoOn;
+  $("token-box").hidden = cognitoOn && !location.hash.includes("token");
+  $("token-toggle").hidden = !cognitoOn;
+
+  const arrived = await finishCognitoLogin();
+  showApp(arrived || Boolean(store.server && store.token));
+})();

@@ -132,3 +132,30 @@ variable "tags" {
     ManagedBy = "terraform"
   }
 }
+
+// DDPSRUN-COGNITO-WIRING. Outputs of `terraform/cognito`. Kept as variables
+// rather than a data source or a remote state read so that the two stacks stay
+// independent: the lambda can be applied when no user pool exists at all, which
+// is what every deployment before 2026-09-01 did and what a fresh clone does.
+//
+// None of these is a credential. The client id and the login domain appear in
+// every login URL a browser shows, and the pool id is in the issuer of every
+// token this service hands out.
+
+variable "cognito_pool_id" {
+  description = "From `terraform -chdir=../cognito output -raw user_pool_id`. Empty disables the Cognito branch entirely."
+  type        = string
+  default     = ""
+}
+
+variable "cognito_client_id" {
+  description = "From `terraform -chdir=../cognito output -raw client_id`. An id_token addressed to any other client is refused."
+  type        = string
+  default     = ""
+}
+
+variable "cognito_login_domain" {
+  description = "From `terraform -chdir=../cognito output -raw login_domain`. The server never calls it; it hands the address to the screen and the CLI."
+  type        = string
+  default     = ""
+}

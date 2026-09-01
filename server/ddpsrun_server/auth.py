@@ -41,6 +41,16 @@ class AuthError(Exception):
     """The caller could not be identified. Routes turn this into HTTP 401."""
 
 
+class UnknownUser(Exception):
+    """Cognito vouched for this person, but nobody registered them here.
+
+    Separate from `AuthError` because the two mean different things to whoever
+    is reading the response. `AuthError` is 401, "I do not know who you are".
+    This is 403, "I know exactly who you are and you are not on the list" —
+    which is an operator's job to fix, not the caller's.
+    """
+
+
 class TokenFileError(RuntimeError):
     """The token file is missing or malformed. Raised at startup, never later."""
 
@@ -97,8 +107,33 @@ class TokenStore:
     numbers in the wrong team's total.
     """
 
-    def __init__(self, by_hash: dict[str, Principal]) -> None:
+    def __init__(
+        self,
+        by_hash: dict[str, Principal],
+        by_email: dict[str, Principal] | None = None,
+    ) -> None:
         self._by_hash = by_hash
+        self._by_email = by_email or {}
+
+    @staticmethod
+    def from_document(document: object) -> "TokenStore":
+        """Build a store from an already-parsed token document.
+
+        Exists so callers do not have to know that `parse_token_document`
+        returns two maps. `load` reads a file; this takes the same thing already
+        in memory, which is what tests want.
+
+        Args:
+            document: whatever `json.load` produced.
+
+        Returns:
+            A `TokenStore`.
+
+        Raises:
+            TokenFileError: on any shape the server cannot use.
+        """
+        by_hash, by_email = parse_token_document(document)
+        return TokenStore(by_hash, by_email)
 
     @staticmethod
     def load(path: str) -> "TokenStore":
@@ -124,7 +159,8 @@ class TokenStore:
         except json.JSONDecodeError as exc:
             raise TokenFileError(f"the token file at {path} is not valid JSON: {exc}") from exc
 
-        return TokenStore(parse_token_document(document))
+        by_hash, by_email = parse_token_document(document)
+        return TokenStore(by_hash, by_email)
 
     def principal_for(self, token: str) -> Principal:
         """Identify the caller behind a bearer token.
@@ -149,6 +185,35 @@ class TokenStore:
             if hmac.compare_digest(stored_hash, presented):
                 return principal
         raise AuthError("unknown token")
+
+    def principal_for_email(self, email: str) -> Principal:
+        """Identify a caller Cognito has already vouched for.
+
+        DDPSRUN-COGNITO-DIRECTORY. Cognito answered "who is this"; this answers
+        "and what may they touch". The two are deliberately separate, because a
+        namespace has to exist in the cluster before anyone can be given it and
+        Cognito has no way to know whether it does (`docs/16-login.md` 16.2).
+
+        Args:
+            email: the verified address out of the id_token, already lowercased.
+
+        Returns:
+            The `Principal` that address is registered to.
+
+        Raises:
+            UnknownUser: the signature was good and the address is real, but
+                nobody has registered it here. Routes turn this into HTTP 403,
+                not 401: refusing with "who are you" after a successful sign-in
+                sends people to debug their login, which is not the problem.
+        """
+        principal = self._by_email.get(email.strip().lower())
+        if principal is None:
+            raise UnknownUser(
+                f"{email} signed in successfully but is not registered with this "
+                f"service. An operator has to create a namespace for you and add "
+                f"you to the token file."
+            )
+        return principal
 
     def namespaces_in_team(self, team: str) -> list[str]:
         """Every namespace belonging to one team, sorted.
@@ -176,8 +241,8 @@ class TokenStore:
         return len(self._by_hash)
 
 
-def parse_token_document(document: object) -> dict[str, Principal]:
-    """Turn the parsed token file into the hash -> Principal map.
+def parse_token_document(document: object) -> tuple[dict[str, Principal], dict[str, Principal]]:
+    """Turn the parsed token file into the two lookup maps.
 
     Kept separate from `TokenStore.load` so tests can exercise the validation
     without touching the filesystem.
@@ -186,7 +251,11 @@ def parse_token_document(document: object) -> dict[str, Principal]:
         document: whatever `json.load` produced.
 
     Returns:
-        A dict keyed by lowercase hex SHA-256.
+        `(by_hash, by_email)`. The first is keyed by lowercase hex SHA-256 and
+        answers a static token; the second is keyed by lowercase email and
+        answers a Cognito sign-in. An entry may appear in one, the other, or
+        both: a person who uses the CLI from a script AND signs in to the screen
+        has both keys pointing at the same Principal.
 
     Raises:
         TokenFileError: on any shape the server cannot use.
@@ -199,32 +268,53 @@ def parse_token_document(document: object) -> dict[str, Principal]:
         raise TokenFileError('the token file must have a non-empty "tokens" array')
 
     by_hash: dict[str, Principal] = {}
+    by_email: dict[str, Principal] = {}
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise TokenFileError(f"tokens[{index}] is not an object")
         # `team` is deliberately not required. A deployment with one group has no
         # use for it, and an absent team simply means /v1/stats has nobody to add
         # this caller to.
-        missing = [field for field in ("sha256", "user", "namespace") if not entry.get(field)]
+        # `team` is not required, and since Cognito landed neither is `sha256`:
+        # a person who only ever uses the screen has no static token at all.
+        # What IS required is at least one way to recognise them.
+        missing = [field for field in ("user", "namespace") if not entry.get(field)]
         if missing:
             raise TokenFileError(f"tokens[{index}] is missing {', '.join(missing)}")
-
-        digest = str(entry["sha256"]).strip().lower()
-        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        if not entry.get("sha256") and not entry.get("email"):
             raise TokenFileError(
-                f"tokens[{index}].sha256 is not a 64-character hex SHA-256. "
-                f"Store the HASH of the token here, not the token."
+                f"tokens[{index}] has neither sha256 nor email, so nothing can ever "
+                f"match it. Give it a token hash, a Cognito email, or both."
             )
-        if digest in by_hash:
-            raise TokenFileError(f"tokens[{index}].sha256 appears twice")
 
-        by_hash[digest] = Principal(
+        digest = str(entry.get("sha256", "")).strip().lower()
+        if digest:
+            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+                raise TokenFileError(
+                    f"tokens[{index}].sha256 is not a 64-character hex SHA-256. "
+                    f"Store the HASH of the token here, not the token."
+                )
+            if digest in by_hash:
+                raise TokenFileError(f"tokens[{index}].sha256 appears twice")
+
+        principal = Principal(
             user=str(entry["user"]).strip(),
             namespace=str(entry["namespace"]).strip(),
             team=str(entry.get("team", "")).strip(),
         )
+        if digest:
+            by_hash[digest] = principal
 
-    return by_hash
+        email = str(entry.get("email", "")).strip().lower()
+        if email:
+            # Lowercased on both sides. Cognito treats addresses case-insensitively
+            # and `cognito.Verifier` lowercases what it returns, so a file written
+            # with "Alice@Example.com" still matches.
+            if email in by_email:
+                raise TokenFileError(f"tokens[{index}].email appears twice")
+            by_email[email] = principal
+
+    return by_hash, by_email
 
 
 def bearer_token(header_value: str | None) -> str:

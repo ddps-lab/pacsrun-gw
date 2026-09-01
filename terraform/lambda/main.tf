@@ -164,6 +164,16 @@ resource "aws_lambda_function" "gw" {
       DDPSRUN_TOKENS_SECRET_ID = aws_secretsmanager_secret.tokens.name
       DDPSRUN_CLUSTER_NAME     = var.cluster_name
       DDPSRUN_SECRET_BINDINGS  = jsonencode(var.secret_bindings)
+
+      // DDPSRUN-COGNITO-WIRING. All four empty means the server accepts static
+      // tokens only, which is what it did before Cognito existed and what a
+      // local run still does. They are set together or not at all: a pool id
+      // with no client id would refuse every token rather than accept a wrong
+      // one, but it would also be a half-configured deployment nobody meant.
+      DDPSRUN_COGNITO_POOL_ID      = var.cognito_pool_id
+      DDPSRUN_COGNITO_CLIENT_ID    = var.cognito_client_id
+      DDPSRUN_COGNITO_REGION       = var.cognito_pool_id == "" ? "" : var.region
+      DDPSRUN_COGNITO_LOGIN_DOMAIN = var.cognito_login_domain
     }
   }
 

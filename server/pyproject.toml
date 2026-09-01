@@ -25,6 +25,11 @@ dependencies = [
     # workflow drops it from the package; it is declared here for local runs and
     # tests.
     "botocore>=1.34",
+    # Verifies Cognito id_tokens locally instead of calling Cognito on every
+    # request (DDPSRUN-COGNITO-VERIFY). The [crypto] extra pulls `cryptography`,
+    # which is what actually does RS256; measured 3.8 MB, against a package that
+    # unzips to 106.5 MB of a 250 MB limit.
+    "pyjwt[crypto]>=2.8",
 ]
 
 [project.optional-dependencies]

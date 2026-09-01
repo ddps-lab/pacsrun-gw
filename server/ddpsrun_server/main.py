@@ -46,7 +46,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from . import naming
-from .auth import AuthError, Principal, TokenStore, bearer_token
+from . import cognito
+from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
 from .k8s import Cluster, ClusterError, NotFound
 from . import estimate as estimator
@@ -93,11 +94,29 @@ async def lifespan(app: FastAPI):
     settings = Settings.from_env()
     tokens = TokenStore.load(settings.tokens_path)
     cluster = Cluster.connect()
-    logger.info("ready: %d token(s), results under %s%s",
-                len(tokens), settings.result_bucket, settings.result_prefix)
+
+    # Built here rather than per request so the JWKS document is fetched once
+    # per container and reused by every warm invocation. None means Cognito is
+    # not configured, and `require_principal` then takes only the static branch.
+    verifier = None
+    if settings.cognito_pool_id and settings.cognito_client_id:
+        verifier = cognito.Verifier(
+            pool_id=settings.cognito_pool_id,
+            region=settings.cognito_region,
+            client_id=settings.cognito_client_id,
+        )
+
+    logger.info(
+        "ready: %d token(s), results under %s%s, cognito %s",
+        len(tokens),
+        settings.result_bucket,
+        settings.result_prefix,
+        settings.cognito_pool_id or "not configured",
+    )
     app.state.settings = settings
     app.state.tokens = tokens
     app.state.cluster = cluster
+    app.state.cognito = verifier
     yield
 
 
@@ -115,18 +134,52 @@ def require_principal(
 ) -> Principal:
     """FastAPI dependency: identify the caller or refuse the request.
 
+    DDPSRUN-TWO-CREDENTIALS. Two kinds of credential arrive here and both end at
+    the same `Principal`:
+
+      * a Cognito id_token, from the screen and from `ddpsrun login`. Verified
+        against the pool's public keys, then the verified email is looked up in
+        the token file.
+      * a static token, from CI, from scripts and from the agent skill. Hashed
+        and looked up directly. These exist because none of those callers has a
+        browser to complete a login with (`docs/16-login.md` 16.3).
+
+    The shape test that picks a branch is NOT what admits anything. A JWT-shaped
+    string still has to pass every check in `cognito.Verifier`; anything else
+    still has to match a stored hash.
+
     Args:
-        request: used only to reach `app.state.tokens`.
+        request: used to reach `app.state.tokens` and `app.state.cognito`.
         authorization: the `Authorization` header, injected by FastAPI.
 
     Returns:
         The authenticated `Principal`, whose `namespace` every route below uses.
 
     Raises:
-        HTTPException: 401, with a message that does not say which half was wrong.
+        HTTPException: 401 when the credential does not identify anyone; 403
+            when Cognito vouched for a person nobody has registered here.
     """
     try:
-        return request.app.state.tokens.principal_for(bearer_token(authorization))
+        credential = bearer_token(authorization)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    verifier = getattr(request.app.state, "cognito", None)
+    if verifier is not None and cognito.looks_like_a_jwt(credential):
+        try:
+            identity = verifier.claims(credential)
+        except cognito.TokenError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        try:
+            return request.app.state.tokens.principal_for_email(identity.email)
+        except UnknownUser as exc:
+            # 403, not 401. The sign-in worked; the person simply has no
+            # namespace yet, and only an operator can change that. A 401 here
+            # sends them off to debug a login that is not broken.
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        return request.app.state.tokens.principal_for(credential)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
@@ -155,6 +208,33 @@ def explain() -> str:
     wrong way round.
     """
     return EXPLAIN_TEXT
+
+
+@app.get("/v1/login-config")
+def login_config(request: Request) -> dict[str, object]:
+    """Where to send someone to sign in.
+
+    NO TOKEN NEEDED, on purpose: this is what a caller reads BEFORE they have
+    one. Nothing here is a secret. The client id and the login domain both
+    appear in every login URL a browser shows, and the pool id is in the issuer
+    of every token we hand out.
+
+    Returns:
+        `enabled` false when Cognito is not configured, in which case the screen
+        keeps its paste-a-token box and the CLI keeps `--token`. Otherwise the
+        three values a PKCE flow needs (`docs/16-login.md` 16.4).
+    """
+    settings: Settings = request.app.state.settings
+    verifier = getattr(request.app.state, "cognito", None)
+    if verifier is None:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "client_id": settings.cognito_client_id,
+        "issuer": verifier.issuer,
+        "login_domain": settings.cognito_login_domain,
+        "scopes": ["openid", "email"],
+    }
 
 
 @app.get("/v1/schema")

@@ -13,7 +13,7 @@ ddpsrun <command> [options]
 
 | command | what it does |
 |---|---|
-| `ddpsrun login` | store the server address and your token |
+| `ddpsrun login` | sign in and store the result |
 | `ddpsrun logout` | delete the stored token |
 | `ddpsrun explain` | what this tool is and how to use it (asks the server) |
 | `ddpsrun schema` | the exact shape of a submit request (asks the server) |
@@ -30,7 +30,7 @@ ddpsrun <command> [options]
 | argument | required | what it does |
 |---|---|---|
 | `--server SERVER` | yes | the gateway URL, e.g. https://run.example |
-| `--token TOKEN` |  | your token. Omit it and you will be prompted, which keeps it out of your shell history. |
+| `--token TOKEN` |  | skip the browser and use this token. For CI and scripts, which have nobody to sign in. Omitting it opens a browser when the server supports that, and prompts otherwise so it stays out of shell history. |
 
 ## ddpsrun logout
 

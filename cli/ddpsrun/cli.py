@@ -49,12 +49,14 @@ Grep anchor: DDPSRUN-CLI
 from __future__ import annotations
 
 import argparse
+import base64
 import getpass
 import json
 import time
 import sys
 from typing import Any
 
+from . import browser_login
 from . import config
 from .client import Client, ServerError
 
@@ -165,12 +167,13 @@ def build_parser() -> argparse.ArgumentParser:
             help="print raw JSON instead of a human summary. Use this from a script.",
         )
 
-    login = sub.add_parser("login", help="store the server address and your token")
+    login = sub.add_parser("login", help="sign in and store the result")
     login.add_argument("--server", required=True, help="the gateway URL, e.g. https://run.example")
     login.add_argument(
         "--token",
-        help="your token. Omit it and you will be prompted, which keeps it out of "
-        "your shell history.",
+        help="skip the browser and use this token. For CI and scripts, which "
+        "have nobody to sign in. Omitting it opens a browser when the server "
+        "supports that, and prompts otherwise so it stays out of shell history.",
     )
 
     sub.add_parser("logout", help="delete the stored token")
@@ -399,6 +402,57 @@ def build_submit_body(args: argparse.Namespace) -> dict[str, Any]:
     return body
 
 
+def refreshed(credentials: config.Credentials) -> config.Credentials:
+    """Renew the stored id_token when it is about to expire.
+
+    DDPSRUN-CLI-REFRESH. A Cognito id_token lives an hour. Without this, a
+    command run 61 minutes after `ddpsrun login` fails with 401 and the person
+    has no idea why. With a refresh token stored, the renewal is silent.
+
+    Args:
+        credentials: what `config.load` returned.
+
+    Returns:
+        The same credentials, or ones carrying a fresh id_token. A static token
+        has no `exp` and comes back untouched, as does anything that cannot be
+        renewed — the request then fails on its own and says so, which is a
+        better error than one from in here.
+    """
+    if not credentials.refresh_token:
+        return credentials
+    try:
+        payload = credentials.token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload).decode())
+        expiry = float(claims["exp"])
+    except Exception:
+        return credentials
+    # 60 seconds of margin, so a token does not expire between this check and
+    # the request it is about to be used on.
+    if time.time() < expiry - 60:
+        return credentials
+
+    try:
+        settings = browser_login.login_config(credentials.server)
+        if not settings.get("enabled"):
+            return credentials
+        tokens = browser_login.exchange(settings, {
+            "grant_type": "refresh_token",
+            "refresh_token": credentials.refresh_token,
+        })
+    except browser_login.LoginError:
+        return credentials
+
+    renewed = config.Credentials(
+        server=credentials.server,
+        token=tokens.id_token or credentials.token,
+        # A refresh does not mint a new refresh token, so keep the one we have.
+        refresh_token=tokens.refresh_token or credentials.refresh_token,
+    )
+    config.save(renewed)
+    return renewed
+
+
 def client_from_config() -> Client:
     """Build a client, or exit 2 saying how to log in."""
     try:
@@ -406,6 +460,7 @@ def client_from_config() -> Client:
     except config.NotLoggedIn as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(EXIT_USAGE) from exc
+    credentials = refreshed(credentials)
     return Client(credentials.server, credentials.token)
 
 
@@ -415,12 +470,30 @@ def cmd_login(args: argparse.Namespace) -> int:
     The token is read with `getpass` when it was not given on the command line,
     so it does not end up in the shell's history file.
     """
-    token = args.token or getpass.getpass("token: ")
-    if not token.strip():
+    server = args.server.rstrip("/")
+    refresh = ""
+
+    if args.token:
+        token = args.token.strip()
+    else:
+        # DDPSRUN-CLI-LOGIN. With no --token, try the browser first. A server
+        # that has no user pool says so and we fall back to the prompt, which is
+        # exactly what this command did before Cognito existed.
+        try:
+            tokens = browser_login.login(server)
+            token, refresh = tokens.id_token, tokens.refresh_token
+        except browser_login.LoginError as exc:
+            if "does not have browser sign-in" not in str(exc):
+                print(str(exc), file=sys.stderr)
+                return EXIT_SERVER
+            token = getpass.getpass("token: ").strip()
+
+    if not token:
         print("no token given", file=sys.stderr)
         return EXIT_USAGE
 
-    path = config.save(config.Credentials(server=args.server.rstrip("/"), token=token.strip()))
+    path = config.save(config.Credentials(
+        server=server, token=token, refresh_token=refresh))
     print(f"saved to {path}")
 
     # Prove the credentials work now, rather than at the user's first real

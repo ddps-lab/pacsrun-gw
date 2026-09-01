@@ -1,0 +1,26 @@
+// Copy to terraform.tfvars and fill in.
+//   cp terraform.tfvars.example terraform.tfvars
+// terraform.tfvars is gitignored; this .example is committed.
+//
+// google_client_secret IS a credential. It must never be committed, and the
+// terraform state file holds it too, so that file is a secret as well.
+
+region = "us-west-2"
+
+// Must be unique across every AWS account in the region.
+domain_prefix = "ddpsrun-<SOMETHING_UNIQUE>"
+
+// The screen, plus the ports `ddpsrun login` may listen on.
+callback_urls = [
+  "https://<CLOUDFRONT_DOMAIN>/",
+  "http://localhost:51234/callback",
+  "http://localhost:51235/callback",
+  "http://localhost:51236/callback",
+]
+
+logout_urls = ["https://<CLOUDFRONT_DOMAIN>/"]
+
+// Leave both empty until the Google OAuth client exists. The pool works
+// without them; see docs/16-login.md 16.6.
+google_client_id     = ""
+google_client_secret = ""

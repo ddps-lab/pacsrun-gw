@@ -76,6 +76,16 @@ class Settings:
         secret_bindings: name a user may write -> where it really is.
         log_tail_lines: how many lines of backlog `/v1/jobs/{id}/logs` returns
             before it starts following. 2000 is enough to see a training run's
+        cognito_pool_id: the Cognito user pool that signs id_tokens. Empty
+            disables the Cognito branch entirely and leaves static tokens as the
+            only credential.
+        cognito_client_id: the app client id an id_token must be addressed to.
+        cognito_region: which region the pool is in. Half of the issuer URL, so
+            a wrong value refuses every token rather than accepting a foreign one.
+        cognito_login_domain: the Hosted UI, e.g.
+            https://ddpsrun-x.auth.us-west-2.amazoncognito.com. The server never
+            calls it; it hands the address to the screen and the CLI, which is
+            why it is configuration and not something derived here.
             most recent progress lines without downloading hours of output.
     """
 
@@ -85,6 +95,13 @@ class Settings:
     tokens_path: str
     secret_bindings: dict[str, SecretBinding]
     log_tail_lines: int
+    # All four default to empty because "no Cognito" is a supported state, not a
+    # half-configured one: the server then accepts static tokens only, which is
+    # what a local run, a test, and every deployment before 2026-09-01 does.
+    cognito_pool_id: str = ""
+    cognito_client_id: str = ""
+    cognito_region: str = ""
+    cognito_login_domain: str = ""
 
     @staticmethod
     def from_env(env: dict[str, str] | None = None) -> "Settings":
@@ -148,4 +165,14 @@ class Settings:
             tokens_path=required("DDPSRUN_TOKENS_PATH"),
             secret_bindings=bindings,
             log_tail_lines=tail,
+            # All three empty means no Cognito. That is a supported state, not a
+            # broken one: the server then accepts static tokens only, which is
+            # exactly what it did before Cognito existed and is what a local run
+            # or a test wants (`docs/16-login.md` 16.3).
+            cognito_pool_id=env.get("DDPSRUN_COGNITO_POOL_ID", "").strip(),
+            cognito_client_id=env.get("DDPSRUN_COGNITO_CLIENT_ID", "").strip(),
+            cognito_region=env.get(
+                "DDPSRUN_COGNITO_REGION", env.get("AWS_REGION", "")
+            ).strip(),
+            cognito_login_domain=env.get("DDPSRUN_COGNITO_LOGIN_DOMAIN", "").rstrip("/"),
         )
