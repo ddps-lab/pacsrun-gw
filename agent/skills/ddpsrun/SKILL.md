@@ -34,6 +34,13 @@ that broke. The two that cost the most:
 - **Find the pairs that must share one variable.** Training's `--out` and inference's
   `--lora` are separate commands and nothing links them. When they disagree, training
   finishes first and only then does inference fail. On a 31-hour job that is 31 hours.
+- **Put a reachability check on the data, the model and the result path BEFORE the
+  training command.** All three come from outside the container and all three can fail
+  after a GPU has already been rented. `model_info()` confirms a model without
+  downloading it; `wc -l` on the dataset catches a Git LFS pointer that cloned fine and
+  contains three lines; a one-byte write to the result path catches a permission problem
+  that would otherwise surface after the run. Rule 5 of the script contract has the
+  four lines.
 
 ## Step 2 — never decide the GPU, the runtime or the purchase type yourself
 

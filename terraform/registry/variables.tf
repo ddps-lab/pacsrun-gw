@@ -110,3 +110,18 @@ variable "tags" {
     ManagedBy = "terraform"
   }
 }
+
+variable "lambda_function_name" {
+  description = <<-EOT
+    The Lambda function CI publishes to, or "" to grant nothing.
+
+    WHY THIS IS HERE AND NOT IN terraform/lambda. The permission belongs to the
+    GitHub Actions role, which this module owns; the function belongs to the other
+    module. Naming the function by string rather than by reference keeps the two
+    modules independent — neither has to be applied before the other, and neither
+    holds the other's state.
+  EOT
+  type        = string
+  default     = ""
+}
+

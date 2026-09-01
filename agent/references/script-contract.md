@@ -77,7 +77,69 @@ echo "학습 쌍 파일 줄 수: $(wc -l < "$PAIRS")"
 
 ---
 
-## 5. 어느 단계에서 죽어도 그때까지를 올린다
+## 5. 데이터셋과 모델에 닿는지를 학습 전에 확인한다
+
+**둘 다 컨테이너 밖에서 와야 하고, 둘 다 조용히 실패할 수 있습니다.** 그런데 실패가 드러나는
+시점이 다릅니다.
+
+```
+학습 쌍       clone 직후에 없으면 바로 죽는다.  값이 싸다
+모델          다운로드가 몇 분 걸리고, 그 뒤에 죽는다
+              GPU 를 이미 빌린 뒤이므로 값이 비싸다
+```
+
+**그래서 학습 명령 앞에 확인 두 줄을 둡니다.**
+
+```bash
+# 데이터
+test -s "$PAIRS" || { echo "학습 쌍 파일이 없거나 비어 있다: $PAIRS"; exit 1; }
+echo "학습 쌍 파일 줄 수: $(wc -l < "$PAIRS")"
+
+# 모델.  받아 보기 전에는 닿는지 알 수 없다
+python - <<'PY'
+import os
+from huggingface_hub import model_info
+name = os.environ["BASE_MODEL"]
+info = model_info(name)                       # 없거나 권한이 없으면 여기서 죽는다
+print(f"모델 확인: {name}, 파일 {len(info.siblings)}개")
+PY
+```
+
+- `model_info` 는 **가중치를 받지 않고 목록만 봅니다.** 몇 초에 끝납니다.
+- 이 두 줄이 통과하면 그 다음의 몇 시간짜리 학습이 데이터나 모델 때문에 죽지 않습니다.
+
+**닿지 않는 경우가 셋이고 원인이 다 다릅니다.**
+
+| 증상 | 원인 |
+|---|---|
+| `401` 또는 `403` | gated 모델이라 토큰이 필요하다. `secrets` 에 `HF_TOKEN` 을 넣는다 |
+| `404` | 이름이 틀렸다. 조직명까지 정확해야 한다 |
+| 연결 자체가 안 됨 | 원격이 인터넷으로 못 나가는 경우. vendor 설정 문제다 |
+
+**저장소 안의 데이터가 Git LFS 로 관리되는 경우를 조심해야 합니다.** clone 은 되는데 파일
+내용이 포인터 한 줄뿐입니다. 줄 수를 찍으면 그것이 바로 보입니다.
+
+```bash
+# LFS 포인터는 이렇게 생겼다.  줄 수가 3 이면 의심한다
+version https://git-lfs.github.com/spec/v1
+oid sha256:...
+size 12345678
+```
+
+**결과를 올릴 자리도 같이 확인합니다.** 학습이 끝나고 나서 권한이 없다는 것을 알면 늦습니다.
+
+```bash
+echo probe | aws s3 cp - "$PACSRUN_RESULT_PATH.probe" \
+  && aws s3 rm "$PACSRUN_RESULT_PATH.probe" \
+  || { echo "결과 경로에 쓸 수 없다: $PACSRUN_RESULT_PATH"; exit 1; }
+```
+
+`ddpsrun validate` 는 이것들을 대신 봐 주지 못합니다. **사용자의 저장소도, vendor 의 자격증명도
+서버에서는 보이지 않습니다.** 그래서 script 안에 두어야 합니다.
+
+---
+
+## 6. 어느 단계에서 죽어도 그때까지를 올린다
 
 ```bash
 upload_everything() {
@@ -92,7 +154,7 @@ trap upload_everything EXIT
 
 ---
 
-## 6. 학습이 끝나면 추론을 기다리지 말고 어댑터를 먼저 올린다
+## 7. 학습이 끝나면 추론을 기다리지 말고 어댑터를 먼저 올린다
 
 ```bash
 python train_dpo_m3.py ... | tee "train_${JOB}.log"
@@ -104,7 +166,7 @@ python gen_openrca_tasks_fast.py ...                                 # 그 다�
 
 ---
 
-## 7. 긴 학습에는 checkpoint 감시를 붙인다
+## 8. 긴 학습에는 checkpoint 감시를 붙인다
 
 trainer 가 에폭마다 `checkpoint-NNN/` 을 로컬에 쓴다. 그것을 S3 로 옮기려면 **다 쓴 뒤에**
 압축해야 한다.
@@ -138,7 +200,7 @@ trap on_exit EXIT
 
 ---
 
-## 8. GPU 상태를 30 초마다 한 줄로 찍는다
+## 9. GPU 상태를 30 초마다 한 줄로 찍는다
 
 원격 컨테이너에서 나오는 것은 stdout 한 줄기뿐이다. `nvidia-smi` 는 그 machine 안에서만
 실행되므로, 밖에서 보려면 **script 가 스스로 찍어 보내야 한다.**
@@ -162,7 +224,7 @@ watch_gpu & GPU_PID=$!
 
 ---
 
-## 9. 구매 방식은 사용자에게 묻는다
+## 10. 구매 방식은 사용자에게 묻는다
 
 `--capacity-type` 은 **서버가 정하지 않습니다. 제출하는 사람이 정합니다.** 빠지면 제출이
 거절됩니다.
@@ -178,7 +240,7 @@ ddpsrun submit ... --capacity-type on-demand
 
 **agent 가 대신 고르지 마십시오.** 권고와 이유를 보여 주고 사용자가 답하게 하십시오.
 
-## 10. 나머지 판단은 서버에 묻는다
+## 11. 나머지 판단은 서버에 묻는다
 
 GPU 크기, 구매 방식, 예상 시간을 **script 에도 skill 에도 적지 않는다.**
 

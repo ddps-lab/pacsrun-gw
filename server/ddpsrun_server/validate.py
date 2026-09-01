@@ -307,7 +307,11 @@ NOT_CHECKED = (
     "own recipe said `runs/xxx/` and the repository had `dpo-training/runs/xxx/`.",
     "whether your commands actually produce every file you expect back. Three of "
     "the five outputs we needed had to be produced by the wrapper script.",
-    "whether the training data is where the script looks for it.",
+    "whether the training data is where the script looks for it, or whether a file "
+    "that cloned fine is really a Git LFS pointer.",
+    "whether the model can be downloaded. A gated model answers 401 to a job with "
+    "no HF_TOKEN, and the run has already rented a GPU by then. Rule 5 of the "
+    "script contract puts a check for all of this ahead of the training command.",
 )
 
 

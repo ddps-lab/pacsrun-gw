@@ -1,29 +1,34 @@
-# RELEASE — build the gateway image and push it to a private Amazon ECR repository.
+# RELEASE — build the gateway's deployment package and publish it to Lambda.
 #
 # END-TO-END FLOW of one release:
 #
 #   1. A push to main, a v* tag, or a manual run starts this workflow.
-#   2. `permissions: id-token: write` lets the job ask GitHub for an OIDC token whose `sub`
-#      claim names this repository.
-#   3. configure-aws-credentials trades that token for temporary credentials by calling
-#      sts:AssumeRoleWithWebIdentity against the IAM role terraform/registry created. The
-#      role's trust policy checks `sub`, which is what stops any other repository using it.
-#   4. amazon-ecr-login calls ecr:GetAuthorizationToken and does a `docker login`.
-#   5. buildx builds server/ and pushes two tags: the git SHA and `latest`.
+#   2. `permissions: id-token: write` lets the job ask GitHub for an OIDC token
+#      whose `sub` claim names this repository.
+#   3. configure-aws-credentials trades that token for temporary credentials by
+#      calling sts:AssumeRoleWithWebIdentity against the IAM role
+#      terraform/registry created. The role's trust policy checks `sub`, which is
+#      what stops any other repository using it.
+#   4. Dependencies are installed for Lambda's platform, not the runner's, and
+#      zipped with the server package.
+#   5. update-function-code publishes it.
 #
-# THE SHA TAG IS THE POINT. An image built anywhere else carries a tag that matches no commit,
-# and then nobody can reproduce what the cluster is running. This workflow is the only builder;
-# never `docker build` this image on a laptop.
+# WHY A ZIP AND NOT AN IMAGE. Measured 2026-09-01: the dependencies come to
+# 92.4 MB unzipped against Lambda's 250 MB limit. The ECR repository this
+# workflow used to push to is still there for a possible return to running as a
+# pod, and costs $0.40 a month.
 #
-# WHY NO ACCESS KEYS. A long-lived IAM user key in GitHub secrets is a standing credential that
-# leaks by sitting there. OIDC mints one that lives for the length of the job.
+# WHY --platform manylinux2014_x86_64 AND --only-binary. The runner is Ubuntu and
+# Lambda is Amazon Linux; a wheel compiled for one can fail to load on the other,
+# and it fails at import time inside the function rather than here. Forcing
+# prebuilt wheels for Lambda's platform makes that impossible.
 #
-# REQUIRED repository configuration (Settings -> Secrets and variables -> Actions -> Variables),
-# all three printed by `terraform output github_repository_variables`:
+# REQUIRED repository configuration (Settings -> Secrets and variables -> Actions
+# -> Variables), printed by `terraform output next_steps`:
 #
-#   ECR_REGION       us-west-2          the CLUSTER's region. The server pod is the only puller
+#   AWS_REGION       us-west-2
 #   AWS_ROLE_ARN     arn:aws:iam::<ACCOUNT_ID>:role/ddpsrun-gw-github-actions
-#   ECR_REPOSITORY   ddpsrun/gateway
+#   LAMBDA_FUNCTION  ddpsrun-gw
 name: release
 
 on:
@@ -38,49 +43,54 @@ permissions:
   contents: read
 
 jobs:
-  image:
-    name: build and push to ECR
+  publish:
+    name: build the zip and publish it to Lambda
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: assume the ECR push role over OIDC
+      - uses: actions/setup-python@v5
+        with:
+          # Must match the function's runtime. A wheel built for a different
+          # minor version can import here and fail there.
+          python-version: "3.12"
+
+      - name: assume the publish role over OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.ECR_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-      # REQUIRED BY cache-to BELOW, and easy to leave out. A runner's default buildx
-      # driver is `docker`, which cannot export a cache; the build then fails with
-      # "Cache export is not supported for the docker driver" AFTER the ECR login has
-      # already succeeded, which reads like a registry problem and is not. This action
-      # switches to the `docker-container` driver, which can.
-      - name: set up buildx with a driver that can export a cache
-        uses: docker/setup-buildx-action@v3
-
-      - name: docker login to the private ECR registry
-        id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: server
-          push: true
-          # Two tags on one build. The SHA is what a deployment pins to; `latest` is a
-          # convenience for a human reading `docker pull` instructions and is never what the
-          # cluster runs.
-          tags: |
-            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
-            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest
-          # GitHub's own layer cache. Without it every release rebuilds the dependency layer,
-          # which is the slow one.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: say what to deploy
+      - name: build the deployment package
+        working-directory: server
         run: |
-          echo "::notice::image ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
-          echo "deploy it with:"
-          echo "  kubectl -n ddpsrun-system set image deploy/ddpsrun-gw \\"
-          echo "    server=${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
+          set -euo pipefail
+          python -m pip install --quiet --target build \
+            --platform manylinux2014_x86_64 --python-version 3.12 \
+            --only-binary=:all: \
+            fastapi mangum kubernetes pydantic
+          cp -r ddpsrun_server build/
+          # boto3 is provided by the Lambda runtime; shipping our own would add
+          # tens of megabytes to a cold start that is already dominated by
+          # reading the package.
+          rm -rf build/boto3 build/botocore build/*.dist-info/RECORD
+          cd build && zip -qr ../function.zip .
+          cd .. && python - <<'PY'
+          import os, zipfile
+          size = os.path.getsize("function.zip")
+          with zipfile.ZipFile("function.zip") as z:
+              unzipped = sum(i.file_size for i in z.infolist())
+          print(f"::notice::zip {size/1024/1024:.1f} MB, unzipped {unzipped/1024/1024:.1f} MB (limit 250 MB)")
+          if unzipped > 250 * 1024 * 1024:
+              raise SystemExit("the package is over Lambda's 250 MB unzipped limit")
+          PY
+
+      - name: publish
+        working-directory: server
+        run: |
+          aws lambda update-function-code \
+            --function-name "${{ vars.LAMBDA_FUNCTION }}" \
+            --zip-file fileb://function.zip \
+            --query '{name:FunctionName,size:CodeSize,sha:CodeSha256}' --output json
+          aws lambda wait function-updated-v2 --function-name "${{ vars.LAMBDA_FUNCTION }}"
+          echo "::notice::published ${{ github.sha }} to ${{ vars.LAMBDA_FUNCTION }}"

@@ -18,6 +18,9 @@ dependencies = [
     "pydantic>=2.7",
     "kubernetes>=29.0",
     "uvicorn[standard]>=0.30",
+    # Translates Lambda's HTTP event shape into what FastAPI expects, so the same
+    # app runs as a function and as a pod without the routes knowing which.
+    "mangum>=0.17",
 ]
 
 [project.optional-dependencies]

@@ -29,6 +29,8 @@
 //
 // Grep anchor: DDPSRUN-REGISTRY
 
+data "aws_caller_identity" "current" {}
+
 resource "aws_ecr_repository" "gateway" {
   name = var.ecr_repository_name
 
@@ -166,6 +168,26 @@ data "aws_iam_policy_document" "github_permissions" {
   // Note the ARN names its region. If the repository is ever moved to another region, this
   // policy denies every push until the ARN follows it, and the failure reads as an
   // AccessDeniedException naming an ARN that looks correct at a glance.
+  // Publishing the Lambda package. Scoped to the one function: this role is
+  // assumed by anything running in the repository, including a pull request from
+  // a fork if branch protection ever slipped, so it must not be able to replace
+  // arbitrary code in the account.
+  dynamic "statement" {
+    for_each = var.lambda_function_name == "" ? [] : [1]
+    content {
+      sid    = "PublishTheGatewayFunctionOnly"
+      effect = "Allow"
+      actions = [
+        "lambda:UpdateFunctionCode",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+      ]
+      resources = [
+        "arn:aws:lambda:${var.region}:${data.aws_caller_identity.current.account_id}:function:${var.lambda_function_name}"
+      ]
+    }
+  }
+
   statement {
     sid = "EcrPushToThisRepositoryOnly"
     actions = [
