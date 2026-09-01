@@ -55,15 +55,18 @@
 
   <!-- Shown when the server reports Cognito is configured. app.js asks
        GET /v1/login-config at startup and unhides exactly one of these two. -->
-  <div id="cognito-box" hidden style="display:flex;flex-direction:column;gap:12px">
+  <div id="cognito-box" class="stack" hidden>
     <button class="go" id="cognito-login">Sign in</button>
     <p class="dim tiny">You will be sent to the sign-in page and brought back here.</p>
   </div>
 
   <!-- The original way in. It stays because a deployment with no user pool is
        still supported, and because CI and scripts have no browser. -->
-  <div id="token-box" style="display:flex;flex-direction:column;gap:12px">
-    <label><span>Server</span>
+  <div id="token-box" class="stack">
+    <!-- Hidden once the page knows the address from config.json. It stays for
+         a deployment that ships no config.json, and for pointing the page at a
+         different gateway by hand. -->
+    <label id="server-row"><span>Server</span>
       <input id="in-server" placeholder="https://....lambda-url.us-west-2.on.aws" autocomplete="off"></label>
     <label><span>Token</span>
       <input id="in-token" type="password" placeholder="ddpsrun-..." autocomplete="off"></label>

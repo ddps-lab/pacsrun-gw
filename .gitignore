@@ -17,3 +17,6 @@ terraform.tfvars
 *.tfstate
 *.tfstate.backup
 .terraform.lock.hcl
+
+# Written by the release workflow with this environment's API address.
+ui/config.json

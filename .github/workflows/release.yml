@@ -122,7 +122,7 @@ jobs:
     # this guard an unset UI_BUCKET expands to an empty string and the job dies
     # on `Invalid bucket name ""`, which reads as a broken pipeline rather than
     # as configuration that has not been done yet. Measured on run 33488695173.
-    if: vars.UI_BUCKET != '' && vars.UI_DISTRIBUTION != ''
+    if: vars.UI_BUCKET != '' && vars.UI_DISTRIBUTION != '' && vars.API_BASE != ''
     steps:
       - uses: actions/checkout@v4
 
@@ -133,8 +133,22 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: upload
+        env:
+          API_BASE: ${{ vars.API_BASE }}
         run: |
           set -euo pipefail
+          # DDPSRUN-UI-CONFIG. The page and the API are on different hosts, so
+          # the page cannot work the API address out from its own origin. It is
+          # written here rather than committed because it is an environment
+          # identifier, and this repository is meant to be opened later.
+          #
+          # Nothing in this file is a secret. It is one address, and it is the
+          # address every request from this page goes to anyway.
+          python - <<'PYEOF' > ui/config.json
+          import json, os
+          print(json.dumps({"api_base": os.environ["API_BASE"].rstrip("/")}, indent=2))
+          PYEOF
+          cat ui/config.json
           # --delete so a file removed from the repo disappears from the bucket
           # too; otherwise a deleted page keeps being served forever.
           aws s3 sync ui/ "s3://${{ vars.UI_BUCKET }}/" --delete

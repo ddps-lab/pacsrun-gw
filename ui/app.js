@@ -907,22 +907,60 @@ window.addEventListener("hashchange", route);
      2. if we came back from Cognito, finish that before anything else;
      3. show the app when we now hold a credential. */
 (async function start() {
+  // Where the API lives. The page and the API are on DIFFERENT hosts in the
+  // deployed setup — the page is a CloudFront distribution over an S3 bucket,
+  // the API is a Lambda Function URL — so `location.origin` is NOT the server.
+  // Assuming it was is what broke sign-in on 2026-09-02: CloudFront answered
+  // the login-config request with S3's own 403 AccessDenied.
+  //
+  // The address is not committed, because it is an environment identifier and
+  // this repository is meant to be opened later. Instead the release workflow
+  // writes `config.json` next to these files at upload time. Fetching it is
+  // always same-origin, so it always works, whatever host is serving the page.
+  //
+  // Two fallbacks, in order: a server the user typed in before, then this
+  // page's own origin, which is correct for a same-origin deployment (the
+  // server running as a pod behind one address).
+  let apiBase = store.server;
   try {
-    // The page is served from the same origin as the API in a pod deployment and
-    // from CloudFront in the Lambda one, so the server address has to be known
-    // before this call. A stored one wins; otherwise this page's own origin.
-    const base = store.server || location.origin;
-    const response = await fetch(base + "/v1/login-config");
+    const response = await fetch("config.json", { cache: "no-store" });
+    if (response.ok) {
+      const deployed = await response.json();
+      if (deployed.api_base) apiBase = deployed.api_base.replace(/\/+$/, "");
+    }
+  } catch { /* no config.json: a pod deployment, or a local file. */ }
+  if (!apiBase) apiBase = location.origin;
+
+  try {
+    const response = await fetch(apiBase + "/v1/login-config");
     loginConfig = response.ok ? await response.json() : { enabled: false };
-    if (loginConfig.enabled && !store.server) store.set(base, store.token || "");
   } catch {
     loginConfig = { enabled: false };
   }
 
-  const cognitoOn = Boolean(loginConfig && loginConfig.enabled);
+  // A config that is on but incomplete is worse than one that is off: the
+  // button would be live with nothing behind it, which is exactly the failure
+  // this check exists to prevent.
+  const cognitoOn = Boolean(
+    loginConfig.enabled && loginConfig.client_id && loginConfig.login_domain
+  );
+  if (loginConfig.enabled && !cognitoOn) {
+    $("login-err").innerHTML = note("err",
+      "The server offers browser sign-in but did not say where its login page is.",
+      "Ask an operator to check DDPSRUN_COGNITO_LOGIN_DOMAIN on the server.");
+  }
+  loginConfig.scopes = loginConfig.scopes || ["openid", "email"];
+
+  // Remember the address so `call` has it, and so the token box does not have
+  // to ask for something the page already knows.
+  if (apiBase) store.set(apiBase, store.token || "");
+
   $("cognito-box").hidden = !cognitoOn;
-  $("token-box").hidden = cognitoOn && !location.hash.includes("token");
+  $("token-box").hidden = cognitoOn;
   $("token-toggle").hidden = !cognitoOn;
+  // With the address known, the field is one less thing to get wrong.
+  $("server-row").hidden = Boolean(apiBase);
+  $("in-server").value = apiBase;
 
   const arrived = await finishCognitoLogin();
   showApp(arrived || Boolean(store.server && store.token));

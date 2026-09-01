@@ -69,6 +69,16 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute works by way of a UA rule of `display: none`, which
+   any element-level display beats. An inline `display:flex` on a hidden box
+   therefore leaves it on screen, and on 2026-09-02 that put a live Sign-in
+   button in front of a user with nothing behind it. !important makes the
+   attribute mean what it says wherever it is used. */
+[hidden] { display: none !important; }
+
+/* Use this instead of an inline display on anything that also toggles. */
+.stack { display: flex; flex-direction: column; gap: 12px; }
+
 body {
   margin: 0;
   /* Through the variable. A literal white here would paint a white ground in
