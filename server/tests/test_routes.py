@@ -50,14 +50,19 @@ class FakeCluster:
             raise k8s.NotFound(job_name)
         return lines
 
-    def job_logs(self, namespace, job_name, follow, tail_lines):
+    def job_log_window(self, namespace, job_name, since_seconds, tail_lines):
         lines = self.logs.get((namespace, job_name))
         if lines is None:
             raise k8s.NotFound(job_name)
+        # The real one asks the apiserver for timestamps and keeps them; the
+        # fixture's lines already carry one.
+        out = []
         for line in lines:
-            cleaned = k8s.redact(line)
+            stamp, _, body = line.partition(" ")
+            cleaned = k8s.redact(body)
             if cleaned is not None:
-                yield cleaned + "\n"
+                out.append(f"{stamp} {cleaned}")
+        return out
 
 
 @pytest.fixture
@@ -202,14 +207,59 @@ def test_a_malformed_id_never_reaches_the_cluster(client, cluster, bad, monkeypa
 def test_logs_come_back_redacted(client, cluster):
     job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
     cluster.logs[("lab-alice", naming.object_name(job_id))] = [
-        "{'loss': 0.42}",
-        "PACSRUN_KEEPALIVE",
-        "PACSRUN_EXIT=0",
+        "2026-09-01T00:00:01.000Z {'loss': 0.42}",
+        "2026-09-01T00:00:02.000Z PACSRUN_KEEPALIVE",
+        "2026-09-01T00:00:03.000Z PACSRUN_EXIT=0",
     ]
-    body = as_alice(client, "GET", f"/v1/jobs/{job_id}/logs").text
-    assert "{'loss': 0.42}" in body
-    assert "KEEPALIVE" not in body
-    assert "<internal>=0" in body
+    result = as_alice(client, "GET", f"/v1/jobs/{job_id}/logs").json()
+    joined = " ".join(result["lines"])
+    assert "{'loss': 0.42}" in joined
+    assert "KEEPALIVE" not in joined
+    assert "<internal>=0" in joined
+
+
+def test_a_second_poll_returns_only_what_is_new(client, cluster):
+    # This is the whole reason the response carries last_timestamp: a Lambda
+    # remembers nothing between calls, so the caller has to.
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    cluster.logs[("lab-alice", naming.object_name(job_id))] = [
+        "2026-09-01T00:00:01.000Z line 1",
+        "2026-09-01T00:00:02.000Z line 2",
+        "2026-09-01T00:00:03.000Z line 3",
+    ]
+    first = as_alice(client, "GET", f"/v1/jobs/{job_id}/logs").json()
+    assert len(first["lines"]) == 3
+    assert first["last_timestamp"] == "2026-09-01T00:00:03.000Z"
+
+    second = as_alice(
+        client, "GET", f"/v1/jobs/{job_id}/logs?since={first['last_timestamp']}"
+    ).json()
+    assert second["lines"] == []
+    assert second["last_timestamp"] is None
+
+
+def test_a_poll_from_the_middle_returns_the_tail(client, cluster):
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    cluster.logs[("lab-alice", naming.object_name(job_id))] = [
+        "2026-09-01T00:00:01.000Z line 1",
+        "2026-09-01T00:00:02.000Z line 2",
+        "2026-09-01T00:00:03.000Z line 3",
+    ]
+    result = as_alice(
+        client, "GET", f"/v1/jobs/{job_id}/logs?since=2026-09-01T00:00:01.000Z"
+    ).json()
+    assert [l.split(" ", 1)[1] for l in result["lines"]] == ["line 2", "line 3"]
+
+
+def test_the_window_is_bounded_at_both_ends(client, cluster):
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    # Unbounded would let one request read a thirty-hour log every few seconds.
+    assert as_alice(
+        client, "GET", f"/v1/jobs/{job_id}/logs?window_seconds=999999"
+    ).status_code == 422
+    assert as_alice(
+        client, "GET", f"/v1/jobs/{job_id}/logs?max_lines=0"
+    ).status_code == 422
 
 
 def test_logs_before_the_container_exists_say_so(client):
@@ -401,13 +451,13 @@ def test_the_two_endpoints_read_the_same_line_and_want_opposite_things(client, c
     # is why the redaction is at the point of use rather than in the reader.
     job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
     cluster.logs[("lab-alice", naming.object_name(job_id))] = [
-        "PACSRUN_GPU=94,38200,45440,71,298.5",
-        "{'loss': 0.42}",
+        "2026-09-01T00:00:01.000Z PACSRUN_GPU=94,38200,45440,71,298.5",
+        "2026-09-01T00:00:02.000Z {'loss': 0.42}",
     ]
     metrics = as_alice(client, "GET", f"/v1/jobs/{job_id}/metrics").json()
     assert metrics["latest_gpu"]["memory_used_mib"] == 38200
 
-    log = as_alice(client, "GET", f"/v1/jobs/{job_id}/logs").text
+    log = " ".join(as_alice(client, "GET", f"/v1/jobs/{job_id}/logs").json()["lines"])
     assert "38200" not in log
     assert "{'loss': 0.42}" in log
 

@@ -109,26 +109,31 @@ def test_an_unreachable_server_names_the_address_that_failed():
         client_with(session).status("job-a8acdef80a07")
 
 
-def test_logs_yields_line_by_line():
-    session = FakeSession(FakeResponse(200, lines=["one", "two", "three"]))
-    assert list(client_with(session).logs("job-a8acdef80a07")) == ["one", "two", "three"]
+def test_a_log_window_comes_back_whole():
+    session = FakeSession(FakeResponse(200, {
+        "lines": ["2026-09-01T00:00:01.000Z one", "2026-09-01T00:00:02.000Z two"],
+        "last_timestamp": "2026-09-01T00:00:02.000Z", "window_seconds": 30,
+    }))
+    result = client_with(session).log_window("job-a8acdef80a07")
+    assert len(result["lines"]) == 2
+    assert result["last_timestamp"] == "2026-09-01T00:00:02.000Z"
 
 
-def test_following_asks_for_it_and_lifts_the_read_timeout():
-    # A training run can be minutes between lines. A read timeout would cut the
-    # stream every time the model was busy, which looks exactly like a crash.
-    session = FakeSession(FakeResponse(200, lines=[]))
-    list(client_with(session).logs("job-a8acdef80a07", follow=True))
-    call = session.calls[0]
-    assert call["url"].endswith("/logs?follow=true")
-    assert call["timeout"][1] is None
-    assert call["stream"] is True
+def test_the_since_value_is_url_escaped():
+    # An RFC 3339 timestamp contains a colon and a plus, both of which mean
+    # something else in a query string.
+    session = FakeSession(FakeResponse(200, {"lines": [], "last_timestamp": None,
+                                             "window_seconds": 30}))
+    client_with(session).log_window("job-a8acdef80a07", since="2026-09-01T00:00:02+00:00")
+    url = session.calls[0]["url"]
+    assert "since=2026-09-01T00%3A00%3A02%2B00%3A00" in url
 
 
-def test_not_following_keeps_a_read_timeout():
-    session = FakeSession(FakeResponse(200, lines=[]))
-    list(client_with(session).logs("job-a8acdef80a07"))
-    assert isinstance(session.calls[0]["timeout"], int)
+def test_the_window_is_sent():
+    session = FakeSession(FakeResponse(200, {"lines": [], "last_timestamp": None,
+                                             "window_seconds": 60}))
+    client_with(session).log_window("job-a8acdef80a07", window_seconds=60)
+    assert "window_seconds=60" in session.calls[0]["url"]
 
 
 def test_a_submit_is_given_more_patience_than_a_read():

@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import time
 import sys
 from typing import Any
 
@@ -225,7 +226,13 @@ def build_parser() -> argparse.ArgumentParser:
     logs = sub.add_parser("logs", help="a job's output")
     logs.add_argument("job_id")
     logs.add_argument(
-        "-f", "--follow", action="store_true", help="keep printing as new lines arrive"
+        "-f", "--follow", action="store_true",
+        help="keep printing as new lines arrive. The server cannot stream, so this "
+        "asks again every few seconds and prints what is new.",
+    )
+    logs.add_argument(
+        "--interval", type=float, default=6.0, metavar="SECONDS",
+        help="how often to ask, with --follow (default 6)",
     )
 
     return parser
@@ -622,10 +629,33 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 
 def cmd_logs(args: argparse.Namespace) -> int:
-    """Print a job's output."""
-    for line in client_from_config().logs(args.job_id, follow=args.follow):
-        print(line)
-    return EXIT_OK
+    """Print a job's output, once or repeatedly.
+
+    WHY THIS POLLS INSTEAD OF STREAMING. The server runs as a Lambda function
+    and one execution is capped at 15 minutes, while a training run is thirty
+    hours. So a window is read, printed, and asked for again.
+
+    The only state kept is `since`, the timestamp of the last line printed.
+    The server remembers nothing, which is what lets a fresh execution answer
+    every request.
+    """
+    client = client_from_config()
+    # A window several times the interval, so one slow round trip does not lose
+    # lines. Capped at the server's own limit.
+    window = min(3600, max(5, int(args.interval * 5)))
+    since: str | None = None
+
+    while True:
+        result = client.log_window(args.job_id, since=since, window_seconds=window)
+        for line in result["lines"]:
+            # The timestamp is bookkeeping for the next request, not something a
+            # user asked to read, so it is dropped on the way to the terminal.
+            print(line.split(" ", 1)[1] if " " in line else line)
+        if result.get("last_timestamp"):
+            since = result["last_timestamp"]
+        if not args.follow:
+            return EXIT_OK
+        time.sleep(args.interval)
 
 
 COMMANDS = {

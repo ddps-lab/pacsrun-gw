@@ -350,13 +350,48 @@ kube-system/karpenter    replicas=1  requests={}
 ## 만드는 순서
 
 ```
-1. Lambda 함수와 Function URL       mangum 어댑터, zip 배포, CORS 설정
-2. 실행 role 을 access entry 에      kubernetesGroups 로 기존 ClusterRole 재사용
-3. token 을 Secrets Manager 로
-4. CLI 의 logs 를 polling 으로
+1. ~~CLI 의 logs 를 polling 으로~~   2026-09-01 완료.  아래 참고
+2. Lambda 함수와 Function URL       mangum 어댑터, zip 배포, CORS 설정
+3. 실행 role 을 access entry 에      kubernetesGroups 로 기존 ClusterRole 재사용
+4. token 을 Secrets Manager 로
 5. 정적 화면을 S3 에, CloudFront 배포
 6. karpenter requests 를 채우고 t3.small 로
 ```
+
+### 1 번은 끝났습니다 (2026-09-01)
+
+`GET /v1/jobs/{id}/logs` 가 stream 이 아니라 **창 하나를 JSON 으로** 돌려줍니다.
+
+```
+GET /v1/jobs/<id>/logs?since=<지난번 last_timestamp>&window_seconds=30&max_lines=2000
+
+{ "lines": ["2026-09-01T00:00:01.000Z {'loss': 0.85}", ...],
+  "last_timestamp": "2026-09-01T00:00:06.000Z",
+  "window_seconds": 30 }
+```
+
+- `since` 보다 뒤엣것만 돌아옵니다. **서버는 그것을 기억하지 않습니다.** 요청에 실려 옵니다.
+- 비교는 그냥 문자열 비교입니다. apiserver 가 찍는 RFC 3339 는 소수 자리가 고정이라 **문자열
+  순서가 곧 시간 순서**입니다.
+- `window_seconds` 와 `max_lines` 에 상한이 있습니다. 없으면 요청 하나가 서른 시간짜리 로그를
+  몇 초마다 읽습니다.
+
+CLI 는 `--interval` 마다 다시 묻고, 창은 그 다섯 배로 잡습니다. 왕복이 한 번 느려도 놓치지
+않기 위해서입니다. 실제로 돌려 보면 이렇습니다.
+
+```
+$ ddpsrun logs job-0a2f9c2fc625 --follow --interval 6
+  (3회 요청 뒤 Ctrl-C)
+{'loss': 0.85}
+{'loss': 0.80}
+{'loss': 0.75}
+{'loss': 0.70}
+{'loss': 0.65}
+{'loss': 0.60}
+```
+
+**여섯 줄이 한 번씩만 나옵니다.** 세 번 다 15 줄짜리 창을 받았는데 중복이 없고,
+`PACSRUN_KEEPALIVE` 도 걸러졌습니다. 시각은 다음 요청용 기록이라 화면에는 안 찍습니다.
 
 1, 4 는 이 저장소 안의 코드이고 2, 3, 5, 6 은 terraform 입니다. CI 는 이미지를 굽는 대신
 zip 을 만들어 올리는 형태로 바꿉니다.
@@ -433,7 +468,7 @@ An error occurred (InvalidParameterException) ... invalid principal.
 
 ## 확인 안 된 것
 
-1. **polling 으로 바꾼 `logs` 를 긴 job 에 붙여 본 적이 없습니다.** 위 실측은 40 줄짜리
-   pod 입니다.
+1. **polling 으로 바꾼 `logs` 를 긴 job 에 붙여 본 적이 없습니다.** 확인은 40 줄짜리 pod 과
+   가짜 cluster 로 했습니다. 서른 시간짜리 job 에서 창 크기와 간격이 맞는지는 안 봤습니다.
 2. **cold start 를 줄이는 쪽은 재기만 했습니다.** `kubernetes` client 를 빼면 1.5 초가 되는
    것은 확인했지만, 그것 없이 apiserver 를 부르는 코드는 아직 없습니다.

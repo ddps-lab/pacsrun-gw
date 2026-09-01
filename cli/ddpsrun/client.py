@@ -24,7 +24,8 @@ Grep anchor: DDPSRUN-CLI-CLIENT
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -133,32 +134,29 @@ class Client:
             "GET", f"/v1/jobs/{job_id}/metrics?window_seconds={window_seconds}"
         ).json()
 
-    def logs(self, job_id: str, follow: bool = False) -> Iterator[str]:
-        """Yield a job's output line by line.
+    def log_window(
+        self, job_id: str, since: str | None = None, window_seconds: int = 30
+    ) -> dict[str, Any]:
+        """Read one window of a job's output.
+
+        NOT A STREAM. The server cannot hold a connection open for a
+        thirty-hour job — a Lambda execution is capped at 15 minutes — so
+        `cmd_logs` calls this repeatedly and uses `last_timestamp` to skip what
+        it has already printed.
 
         Args:
             job_id: the id `submit` returned.
-            follow: hold the connection open until the job ends.
+            since: the previous call's `last_timestamp`, or None on the first.
+            window_seconds: how far back to read. Several times the interval
+                between calls, so a slow round trip does not lose lines.
 
-        Yields:
-            Lines without a trailing newline.
-
-        Raises:
-            ServerError: including the "the job has not started a container"
-                404, which is the normal answer for the first several minutes
-                while a large image is pulled.
+        Returns:
+            `{lines, last_timestamp, window_seconds}`.
         """
-        query = "?follow=true" if follow else ""
-        # No read timeout while following: the gap between two lines of a
-        # training run is minutes, and a timeout would cut the stream every time
-        # the model was busy. The connect timeout still applies.
-        timeout = (READ_TIMEOUT, None) if follow else READ_TIMEOUT
-        response = self._call(
-            "GET", f"/v1/jobs/{job_id}/logs{query}", timeout=timeout, stream=True
-        )
-        for line in response.iter_lines(decode_unicode=True):
-            if line is not None:
-                yield line
+        query = f"?window_seconds={window_seconds}"
+        if since:
+            query += f"&since={quote(since)}"
+        return self._call("GET", f"/v1/jobs/{job_id}/logs{query}").json()
 
 
 def _detail(response: requests.Response) -> str:

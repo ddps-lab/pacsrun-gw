@@ -19,7 +19,7 @@ Authorization: Bearer <your token>
 | GET | `/v1/explain` | Say what this service is and how to use it, in prose. |
 | POST | `/v1/jobs` | Submit a job. |
 | GET | `/v1/jobs/{job_id}` | Report one job's state. |
-| GET | `/v1/jobs/{job_id}/logs` | Stream a job's output. |
+| GET | `/v1/jobs/{job_id}/logs` | One window of a job's output. Ask again for more. |
 | GET | `/v1/jobs/{job_id}/metrics` | GPU usage and training progress, read out of the job's own log. |
 | GET | `/v1/schema` | Return the JSON Schema of a request. |
 | GET | `/v1/stats` | What this caller's team has spent. |
@@ -148,6 +148,16 @@ A submit request plus the facts needed to judge it.
 | `script` |  | The text of your run.sh. Optional, and four checks are skipped without it. It is read and thrown away, never stored. |
 | `secrets` |  | Names of secrets to inject. The value never travels through this API; the server resolves the name to a Kubernetes Secret. |
 | `training` |  |  |
+
+### LogsResponse
+
+One window of a job's output.
+
+| field | required | description |
+|---|---|---|
+| `last_timestamp` |  | The timestamp of the last line here, or null when the window was empty. Send it back as `since` next time and only newer lines return. |
+| `lines` |  | Oldest first, each prefixed with an RFC 3339 timestamp. The runner's own bookkeeping lines are removed. |
+| `window_seconds` | yes | How far back this window reached. Make it several times your polling interval: too narrow and a pause loses lines, too wide and every request re-sends what it already sent. |
 
 ### MemberTotalsView
 

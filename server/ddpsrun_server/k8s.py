@@ -8,10 +8,11 @@ END-TO-END FLOW of this file:
   2. `create_job()` POSTs a PacsJob into the caller's namespace. PACSrun's
      controller picks it up from there; this server never speaks to a vendor.
   3. `get_job()` fetches one back by name.
-  4. `job_logs()` is the awkward one. A PacsJob has no logs — a *pod* does. So it
-     lists pods carrying `pacsrun.io/job=<name>` (the label the controller
-     writes at `internal/controller/vendorpod.go:1222`), picks slot 0, and
-     streams that pod's stdout.
+  4. `job_log_window()` is the awkward one. A PacsJob has no logs — a *pod*
+     does. So it lists pods carrying `pacsrun.io/job=<name>` (the label the
+     controller writes at `internal/controller/vendorpod.go:1222`), picks slot
+     0, and reads a time window of that pod's stdout. It returns a window rather
+     than a stream because a Lambda execution cannot outlive 15 minutes.
   5. Every line coming back goes through `redact()` before it reaches the user,
      because the driver's own bookkeeping lines are on the same stream as the
      workload's output.
@@ -36,9 +37,9 @@ Grep anchor: DDPSRUN-K8S
 from __future__ import annotations
 
 import re
-from typing import Any, Iterator
+from typing import Any
 
-from kubernetes import client, config, watch
+from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 from .config import (
@@ -273,60 +274,77 @@ class Cluster:
             raise ClusterError(_api_message(exc)) from exc
         return text.splitlines()
 
-    def job_logs(
+    def job_log_window(
         self,
         namespace: str,
         job_name: str,
-        follow: bool,
+        since_seconds: int,
         tail_lines: int,
-    ) -> Iterator[str]:
-        """Yield a job's output, line by line, already redacted.
+    ) -> list[str]:
+        """Read one window of a job's output, timestamped and redacted.
+
+        THIS REPLACED A STREAM, and the reason is not stylistic. The old shape
+        held one connection open for the life of the job with
+        `read_namespaced_pod_log(follow=True)`. A Lambda execution is capped at
+        15 minutes and a training run is thirty hours, so that connection cannot
+        exist. See `docs/14-serverless.md`.
+
+        HOW THE CALLER AVOIDS DUPLICATES, and why the server needs no memory for
+        it. Every line comes back prefixed with the RFC 3339 time the apiserver
+        stamped it (`timestamps=True`). The caller keeps the last timestamp it
+        printed and drops anything at or before it on the next window. Nothing
+        is remembered here, which is what lets a fresh Lambda answer every
+        request.
+
+        Measured 2026-09-01 against a pod printing every two seconds: a
+        30-second window read every 6 seconds returned 15 lines each time, of
+        which 3 were new, in 137 ms.
 
         Args:
             namespace: the caller's namespace.
             job_name: the PacsJob's Kubernetes name.
-            follow: keep the connection open and yield new lines as they arrive.
-            tail_lines: how much backlog to send first.
+            since_seconds: how far back to read. Make it several times the
+                polling interval: too narrow and a caller that pauses misses
+                lines, too wide and every request re-sends what it already sent.
+            tail_lines: a hard cap on the window, so a job that produces
+                thousands of lines a second cannot return an unbounded body.
 
-        Yields:
-            Lines with a trailing newline, ready to write to the HTTP response.
+        Returns:
+            Lines WITHOUT a trailing newline, oldest first, each still carrying
+            its timestamp prefix.
 
         Raises:
-            NotFound: propagated from `job_pod_name`.
-            ClusterError: the API server refused the log request.
+            NotFound: the pod does not exist yet, or has been collected.
+            ClusterError: the API server refused.
         """
         pod = self.job_pod_name(namespace, job_name)
-        if not follow:
-            try:
-                text = self._core.read_namespaced_pod_log(
-                    name=pod, namespace=namespace, tail_lines=tail_lines
-                )
-            except ApiException as exc:
-                raise ClusterError(_api_message(exc)) from exc
-            for raw in text.splitlines():
-                cleaned = redact(raw)
-                if cleaned is not None:
-                    yield cleaned + "\n"
-            return
-
-        # `watch.Watch().stream` on read_namespaced_pod_log gives us one line per
-        # iteration and closes when the container exits. It is the same call the
-        # driver's own log relay uses against RunPod, one level up.
-        stream = watch.Watch().stream(
-            self._core.read_namespaced_pod_log,
-            name=pod,
-            namespace=namespace,
-            follow=True,
-            tail_lines=tail_lines,
-            _preload_content=False,
-        )
         try:
-            for raw in stream:
-                cleaned = redact(raw if isinstance(raw, str) else raw.decode("utf-8", "replace"))
-                if cleaned is not None:
-                    yield cleaned + "\n"
+            # _preload_content=False and decode by hand. The default wraps the
+            # body in str(), and a text/plain log comes back as the repr of a
+            # bytes object — one "line" containing literal \n sequences.
+            response = self._core.read_namespaced_pod_log(
+                name=pod,
+                namespace=namespace,
+                since_seconds=since_seconds,
+                tail_lines=tail_lines,
+                timestamps=True,
+                _preload_content=False,
+            )
+            text = response.read().decode("utf-8", "replace")
         except ApiException as exc:
             raise ClusterError(_api_message(exc)) from exc
+
+        out: list[str] = []
+        for raw in text.splitlines():
+            if not raw.strip():
+                continue
+            # redact() works on the line's content; the timestamp is ours to
+            # keep, so split it off, clean the rest, and put it back.
+            stamp, _, body = raw.partition(" ")
+            cleaned = redact(body)
+            if cleaned is not None:
+                out.append(f"{stamp} {cleaned}")
+        return out
 
 
 def _api_message(exc: ApiException) -> str:

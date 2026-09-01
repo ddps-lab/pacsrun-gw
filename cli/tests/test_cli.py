@@ -31,7 +31,8 @@ class FakeClient:
             "result_path": "s3://bucket/pacsrun/lab-alice/bank-exp2-a8acdef80a07/",
         }
         self.status_result = {"job_id": "job-a8acdef80a07", "name": "bank-exp2", "phase": "Running"}
-        self.log_lines = ["line one", "line two"]
+        self.log_lines = ["2026-09-01T00:00:01.000Z line one",
+                          "2026-09-01T00:00:02.000Z line two"]
         self.estimate_result = {}
         self.validate_result = {"ok": True, "findings": [], "not_checked": []}
         self.metrics_result = {"window_seconds": 3600, "gpu_series": [], "note": ""}
@@ -57,8 +58,13 @@ class FakeClient:
     def status(self, job_id):
         return self.status_result
 
-    def logs(self, job_id, follow=False):
-        return iter(self.log_lines)
+    def log_window(self, job_id, since=None, window_seconds=30):
+        # The fixture behaves like the server: it drops what the caller says it
+        # has already seen.
+        lines = [l for l in self.log_lines if since is None or l.split(" ", 1)[0] > since]
+        return {"lines": lines,
+                "last_timestamp": lines[-1].split(" ", 1)[0] if lines else None,
+                "window_seconds": window_seconds}
 
     def explain(self):
         return "ddpsrun — submit a batch job.\n"
@@ -221,9 +227,43 @@ def test_status_calls_a_restart_what_it_is(fake, capsys):
     assert "the machine was reclaimed" in printed
 
 
-def test_logs_prints_every_line(fake, capsys):
+def test_logs_prints_every_line_without_its_timestamp(fake, capsys):
+    # The timestamp is bookkeeping for the next request, not something the user
+    # asked to read.
     assert run(["logs", "job-a8acdef80a07"]) == cli.EXIT_OK
     assert capsys.readouterr().out == "line one\nline two\n"
+
+
+def test_logs_without_follow_asks_once(fake, capsys, monkeypatch):
+    calls = []
+    original = fake.log_window
+    monkeypatch.setattr(fake, "log_window",
+                        lambda *a, **k: (calls.append(k), original(*a, **k))[1])
+    run(["logs", "job-a8acdef80a07"])
+    assert len(calls) == 1
+
+
+def test_follow_asks_again_and_prints_only_what_is_new(fake, capsys, monkeypatch):
+    # The server cannot stream, so this is what --follow actually does.
+    monkeypatch.setattr(cli.time, "sleep", lambda _: None)
+    rounds = {"n": 0}
+    original = fake.log_window
+
+    def growing(job_id, since=None, window_seconds=30):
+        rounds["n"] += 1
+        if rounds["n"] == 2:
+            fake.log_lines.append("2026-09-01T00:00:03.000Z line three")
+        if rounds["n"] > 2:
+            raise KeyboardInterrupt
+        return original(job_id, since=since, window_seconds=window_seconds)
+
+    monkeypatch.setattr(fake, "log_window", growing)
+    assert run(["logs", "job-a8acdef80a07", "--follow"]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    # Three lines total, and none of them twice.
+    assert printed.count("line one") == 1
+    assert printed.count("line two") == 1
+    assert printed.count("line three") == 1
 
 
 def test_a_server_refusal_becomes_exit_1_and_its_own_message(fake, capsys, monkeypatch):
@@ -243,10 +283,11 @@ def test_no_credentials_is_exit_2_and_names_the_login_command(capsys, monkeypatc
 
 
 def test_ctrl_c_while_following_is_not_a_failure(fake, capsys, monkeypatch):
-    def interrupted(job_id, follow=False):
+    # Stopping the watch does not touch the job, which keeps running.
+    def interrupted(job_id, since=None, window_seconds=30):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(fake, "logs", interrupted)
+    monkeypatch.setattr(fake, "log_window", interrupted)
     assert run(["logs", "job-a8acdef80a07", "--follow"]) == cli.EXIT_OK
 
 

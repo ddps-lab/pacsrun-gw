@@ -158,7 +158,8 @@ Aggregate only. Being on a team does not let you read a member's jobs.
 | argument | required | what it does |
 |---|---|---|
 | `job_id` | yes |  |
-| `-f`, `--follow` |  | keep printing as new lines arrive |
+| `-f`, `--follow` |  | keep printing as new lines arrive. The server cannot stream, so this asks again every few seconds and prints what is new. |
+| `--interval SECONDS` |  | how often to ask, with --follow (default 6) (default `6.0`) |
 
 ## Exit codes
 

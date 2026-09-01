@@ -42,7 +42,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import PlainTextResponse
 
 from . import naming
 from .auth import AuthError, Principal, TokenStore, bearer_token
@@ -62,6 +62,7 @@ from .models import (
     JobView,
     GpuSampleView,
     JudgementRequest,
+    LogsResponse,
     MemberTotalsView,
     MetricsResponse,
     ProgressView,
@@ -465,42 +466,54 @@ def _gpu_view(sample: metrics_reader.GpuSample | None) -> GpuSampleView | None:
     )
 
 
-@app.get("/v1/jobs/{job_id}/logs")
+@app.get("/v1/jobs/{job_id}/logs", response_model=LogsResponse)
 def get_logs(
     request: Request,
     job_id: str,
     principal: PrincipalDep,
-    follow: bool = Query(default=False, description="Keep streaming as new lines arrive."),
-) -> StreamingResponse:
-    """Stream a job's output.
+    since: str | None = Query(
+        default=None,
+        description="The `last_timestamp` from your previous call. Lines at or "
+        "before it are dropped, so you get only what you have not seen.",
+    ),
+    window_seconds: int = Query(
+        default=30, ge=5, le=3600,
+        description="How far back to read. Several times your polling interval.",
+    ),
+    max_lines: int = Query(
+        default=2000, ge=1, le=10000,
+        description="Hard cap, so a job printing thousands of lines a second "
+        "cannot return an unbounded body.",
+    ),
+) -> LogsResponse:
+    """One window of a job's output. Ask again for more.
+
+    THIS IS NOT A STREAM AND CANNOT BE. A Lambda execution is capped at 15
+    minutes; a training run is thirty hours. The caller polls, and
+    `last_timestamp` is what lets it drop lines it has already printed without
+    the server remembering anything about it.
 
     Args:
         job_id: an id this server issued.
-        follow: when true the response stays open for the life of the job.
-
-    Returns:
-        `text/plain` lines. The runner's own `PACSRUN_*` bookkeeping is masked
-        and its 30-second keepalive lines are dropped (`k8s.redact`).
+        since: the previous call's `last_timestamp`.
+        window_seconds: how far back to read.
+        max_lines: cap on the window.
 
     Raises:
-        HTTPException: 404 for an unknown id or a job whose pod does not exist
-            yet — the latter is the normal state for the first few seconds, so
-            the detail says so; 502 on a cluster error.
+        HTTPException: 404 for an unknown id or a job with no container yet —
+            the latter is the normal state for the first few minutes while a
+            large image is pulled; 502 on a cluster error.
     """
     cluster: Cluster = request.app.state.cluster
-    settings: Settings = request.app.state.settings
     try:
         name = naming.object_name(job_id)
     except naming.NamingError as exc:
         raise HTTPException(status_code=404, detail="no such job") from exc
 
     try:
-        # Consuming the first line here rather than inside the response body is
-        # what makes a missing pod a 404. Once StreamingResponse has begun the
-        # status line is already on the wire and an error can only appear as
-        # text in the middle of the log.
-        lines = cluster.job_logs(principal.namespace, name, follow, settings.log_tail_lines)
-        first = next(lines, None)
+        lines = cluster.job_log_window(
+            principal.namespace, name, window_seconds, max_lines
+        )
     except NotFound as exc:
         raise HTTPException(
             status_code=404,
@@ -509,9 +522,14 @@ def get_logs(
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    def body():
-        if first is not None:
-            yield first
-            yield from lines
+    # The comparison is a plain string compare, which is correct because RFC 3339
+    # with a fixed number of fraction digits sorts the same way it orders in
+    # time. The apiserver emits exactly that shape.
+    if since:
+        lines = [line for line in lines if line.split(" ", 1)[0] > since]
 
-    return StreamingResponse(body(), media_type="text/plain; charset=utf-8")
+    return LogsResponse(
+        lines=lines,
+        last_timestamp=lines[-1].split(" ", 1)[0] if lines else None,
+        window_seconds=window_seconds,
+    )

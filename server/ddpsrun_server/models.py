@@ -717,3 +717,29 @@ class StatsResponse(BaseModel):
         default="",
         description="Why the figures are incomplete, in words. Empty when they are not.",
     )
+
+
+class LogsResponse(BaseModel):
+    """One window of a job's output.
+
+    NOT A STREAM. A Lambda execution is capped at 15 minutes and a training run
+    is thirty hours, so the caller asks repeatedly instead of holding a
+    connection. Every line keeps the timestamp the apiserver stamped it with, so
+    the caller can drop what it has already printed by remembering one value.
+    """
+
+    lines: list[str] = Field(
+        default_factory=list,
+        description="Oldest first, each prefixed with an RFC 3339 timestamp. The "
+        "runner's own bookkeeping lines are removed.",
+    )
+    last_timestamp: str | None = Field(
+        default=None,
+        description="The timestamp of the last line here, or null when the window "
+        "was empty. Send it back as `since` next time and only newer lines return.",
+    )
+    window_seconds: int = Field(
+        description="How far back this window reached. Make it several times your "
+        "polling interval: too narrow and a pause loses lines, too wide and every "
+        "request re-sends what it already sent."
+    )
