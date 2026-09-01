@@ -47,9 +47,15 @@ cluster 에 아직 안 올렸다. 확인 못 한 것 셋은 `09-server.md` 끝�
 CI 가 매 push 마다 생성본이 코드와 어긋나지 않았는지 검사한다 — 실제로 4단계에서 라우트를
 더했을 때 그 검사가 막았다.
 
-### 6단계 — UI
+### 6단계 — serverless 로 옮기기
 
-목록, 제출 form, monitoring 화면 넷, 결과 내려받기. **서버가 이미 다 하므로 화면만 붙인다.**
+**2026-09-01 에 5단계와 6단계 사이에 끼워 넣었다.** pod 으로 둔 서버를 Lambda 로 옮기고 화면을
+S3 와 CloudFront 에 둔다. 미결 8, 12, 14 를 한꺼번에 닫는다. `14-serverless.md`
+
+### 7단계 — UI
+
+목록, 제출 form, monitoring 화면 넷, 결과 내려받기. **정적 HTML 이 `fetch()` 로 Lambda 를
+부른다.** 서버가 판단을 다 하므로 화면은 받아 그리기만 한다.
 
 ### 그리고 병행해야 하는 것 — 다중 사용자
 
@@ -69,13 +75,15 @@ CI 가 매 push 마다 생성본이 코드와 어긋나지 않았는지 검사�
 | ~~5~~ | ~~namespace 이름 규칙~~ | **정함: `<team>-<user>`, 사람마다 하나.** 격리는 kubernetes 가 하고 팀은 label 이다. 팀 수치는 서버가 자기 token 파일로 모은다. `13-tenancy.md` |
 | ~~6~~ | ~~bucket 을 나눌 것인가 prefix 로 둘 것인가~~ | **정함: prefix, namespace 단위.** 팀 단위로 나누려다 되돌렸다 — 팀 수치가 S3 key 가 아니라 PacsJob 에서 나오므로 그 분할이 사는 곳이 없었고, controller 자물쇠가 팀을 dash 로 잘라 내야 했다 |
 | ~~7~~ | ~~`/estimate` 가 어디까지 답하는가~~ | **정함: `measured` / `interpolated` / `unknown` 셋.** 잰 범위 밖으로 20% 넘게 나가면 `unknown` 이고 이유를 붙인다 |
-| ~~8~~ | ~~UI 기술~~ | **정함: 서버가 Jinja2 로 HTML 을 그리고 HTMX 로 갱신한다.** 빌드 단계도 별도 배포 대상도 없고, 인증이 서버와 같아서 CORS 가 없다. 그래프는 서버가 SVG 로 그린다 |
+| ~~8~~ | ~~UI 기술~~ | **다시 정함 2026-09-01: S3 에 정적 파일, CloudFront 로 배포.** 서버가 Lambda 로 가면서 HTML 을 그릴 프로세스가 없어졌다. 연구실이 이미 쓰는 방식이고 대가는 CORS 설정 하나다. `14-serverless.md` |
 | 9 | **`--resume-from-checkpoint`** | 학습 script 소유자에게 요청해 둔 상태. 긴 학습의 복구가 여기 걸려 있다 |
 | 10 | **shell 접근** | VM 경우에 한해 나중에. 보안 설계가 필요 |
 | 11 | **Lightning Thunder** | 아직 안 씀. 쓰면 측정표에 컴파일러 열 추가 |
-| 12 | **서버 앞에 무엇을 두는가** | TLS 를 끝내고 8080 으로 넘길 것. Ingress 인지 ALB 인지 tunnel 인지. 그전까지는 `kubectl port-forward` |
-| ~~13~~ | ~~image 를 어느 registry 로~~ | **정함: us-west-2 의 `ddpsrun/gateway` 하나.** cluster 가 us-west-2 이고 이미지를 당기는 것은 서버 pod 하나뿐이라 두 번째 사본은 값만 든다. `terraform/registry/` 가 ECR 과 전용 IAM role 을 만들고 `release.yml` 이 push 한다. 2026-08-31 apply 함 |
-| 14 | **로그 `follow` 가 몇 시간을 버티는가** | 앞단의 idle timeout 이 끊으면 CLI 가 재연결해야 한다. driver 가 RunPod 상대로 이미 겪은 문제다 |
+| ~~12~~ | ~~서버 앞에 무엇을 두는가~~ | **정함: 아무것도 안 둔다.** 서버를 Lambda 로 옮기면 Function URL 이 HTTPS 주소를 준다. Gateway API CRD, load balancer controller, ACM 인증서, Route53 레코드가 전부 필요 없어진다. (`ingress-nginx` 는 2026-03-24 에 archive 되었고 Gateway API 가 대안이지만, 그 길도 결국 ALB 월 $22 이다) `14-serverless.md` |
+| ~~13~~ | ~~image 를 어느 registry 로~~ | **정함: us-west-2 의 `ddpsrun/gateway` 하나.** cluster 가 us-west-2 이고 이미지를 당기는 것은 서버 pod 하나뿐이라 두 번째 사본은 값만 든다. `terraform/registry/` 가 ECR 과 전용 IAM role 을 만들고 `release.yml` 이 push 한다. 2026-08-31 apply 함. **2026-09-01 주석: Lambda 로 가면 zip 배포라 이 저장소를 쓰지 않는다. 의존성이 92.4 MB 로 250 MB 한도 안이다. 지우지는 않는다 — pod 으로 되돌릴 판단이 남아 있고 월 $0.40 이다** |
+| 15 | **Lambda cold start** | FastAPI 와 kubernetes client import 시간. 재지 않았다. 대화형 CLI 에서 체감되는 자리 |
+| 16 | **Lambda 실행 role 로 apiserver 에 붙어 본 적이 없다** | 사람 kubectl 로는 되는 것을 확인했다. access entry 등록과 kubernetesGroups 연결이 남았다 |
+| ~~14~~ | ~~로그 `follow` 가 몇 시간을 버티는가~~ | **정함: streaming 을 버리고 polling 으로 간다.** Lambda 는 한 번 실행이 15 분이라 30 시간 연결이 성립하지 않는다. `timestamps=True` 로 받아 클라이언트가 마지막 시각 하나만 기억하면 서버는 무상태로 남는다. 6 초 간격 / 30 초 창으로 실측했다 (`14-serverless.md`) |
 
 ---
 
