@@ -176,6 +176,40 @@ class Cluster:
                 raise NotFound(name) from exc
             raise ClusterError(_api_message(exc)) from exc
 
+    def list_jobs(self, namespace: str) -> list[dict[str, Any]]:
+        """Every PacsJob in one namespace.
+
+        Used by /v1/stats, which calls it once per namespace of a team rather
+        than listing the cluster: the server's ClusterRole is bound per tenant
+        namespace, so a cluster-wide list would need a permission it does not
+        have and should not be given.
+
+        Args:
+            namespace: the namespace to list.
+
+        Returns:
+            The objects. An empty list for a namespace with no jobs, and also
+            for one this server cannot see — a team whose member namespace was
+            never bound is a configuration gap, not an error worth failing the
+            whole request over.
+
+        Raises:
+            ClusterError: the API server refused for a reason other than not
+                finding the namespace.
+        """
+        try:
+            response = self._custom.list_namespaced_custom_object(
+                group=PACSJOB_GROUP,
+                version=PACSJOB_VERSION,
+                namespace=namespace,
+                plural=PACSJOB_PLURAL,
+            )
+        except ApiException as exc:
+            if exc.status in (403, 404):
+                return []
+            raise ClusterError(_api_message(exc)) from exc
+        return list(response.get("items") or [])
+
     def job_pod_name(self, namespace: str, job_name: str, slot: int = 0) -> str:
         """Find the pod carrying one slot of a job.
 

@@ -22,6 +22,7 @@ ddpsrun <command> [options]
 | `ddpsrun submit` | submit a job |
 | `ddpsrun status` | how a job is doing |
 | `ddpsrun watch` | GPU usage and training progress |
+| `ddpsrun stats` | what your team has spent |
 | `ddpsrun logs` | a job's output |
 
 ## ddpsrun login
@@ -139,6 +140,14 @@ Read out of the job's own log. Nothing is stored, so what you can see goes back 
 |---|---|---|
 | `job_id` | yes |  |
 | `--window SECONDS` |  | how far back to read (default 3600, max 86400) (default `3600`) |
+| `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
+
+## ddpsrun stats
+
+Aggregate only. Being on a team does not let you read a member's jobs.
+
+| argument | required | what it does |
+|---|---|---|
 | `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
 
 ## ddpsrun logs

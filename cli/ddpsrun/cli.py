@@ -30,6 +30,8 @@ THE COMMANDS, AND WHY EACH EXISTS
   status            phase, message, which GPU, how many restarts.
   watch             GPU usage and training progress, read out of the job's own
                     log. Nothing is stored anywhere for this.
+  stats             what your team has spent. Aggregate only: being on a team
+                    does not let you read a member's jobs.
   logs              output, optionally followed.
 
 WHAT IS NOT HERE. No `gpus`. Answering it needs a vendor API key in the server
@@ -206,6 +208,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="how far back to read (default 3600, max 86400)",
     )
     add_json_flag(watch)
+
+    team_stats = sub.add_parser(
+        "stats", help="what your team has spent",
+        description="Aggregate only. Being on a team does not let you read a member's jobs.",
+    )
+    add_json_flag(team_stats)
 
     logs = sub.add_parser("logs", help="a job's output")
     logs.add_argument("job_id")
@@ -582,6 +590,27 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_stats(args: argparse.Namespace) -> int:
+    """Print this caller's team figures."""
+    result = client_from_config().stats()
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return EXIT_OK
+
+    print(f"팀 {result['team'] or '(없음)'}")
+    if result.get("members"):
+        print(f"  {'사람':<14}{'작업':>5}{'성공':>5}{'실패':>5}{'실행중':>7}"
+              f"{'GPU 시간':>10}{'비용':>10}")
+        for m in result["members"]:
+            print(f"  {m['user']:<14}{m['jobs']:>5}{m['succeeded']:>5}{m['failed']:>5}"
+                  f"{m['running']:>7}{m['gpu_hours']:>10}{('$' + str(m['cost_usd'])):>10}")
+        print(f"  {'합계':<14}{result['jobs']:>5}{'':>5}{'':>5}{'':>7}"
+              f"{result['gpu_hours']:>10}{('$' + str(result['cost_usd'])):>10}")
+    if result.get("note"):
+        print(f"  참고        {result['note']}")
+    return EXIT_OK
+
+
 def cmd_logs(args: argparse.Namespace) -> int:
     """Print a job's output."""
     for line in client_from_config().logs(args.job_id, follow=args.follow):
@@ -599,6 +628,7 @@ COMMANDS = {
     "submit": cmd_submit,
     "status": cmd_status,
     "watch": cmd_watch,
+    "stats": cmd_stats,
     "logs": cmd_logs,
 }
 

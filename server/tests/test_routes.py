@@ -35,6 +35,9 @@ class FakeCluster:
         self.objects[(namespace, body["metadata"]["name"])] = body
         return body
 
+    def list_jobs(self, namespace):
+        return [obj for (ns, _), obj in self.objects.items() if ns == namespace]
+
     def get_job(self, namespace, name):
         try:
             return self.objects[(namespace, name)]
@@ -69,10 +72,12 @@ def client(tmp_path, monkeypatch, cluster):
         json.dumps(
             {
                 "tokens": [
-                    {"sha256": auth.hash_token("alice-token"),
-                     "user": "alice", "namespace": "lab-alice"},
-                    {"sha256": auth.hash_token("bob-token"),
-                     "user": "bob", "namespace": "lab-bob"},
+                    {"sha256": auth.hash_token("alice-token"), "user": "alice",
+                     "namespace": "lab-alice", "team": "lab"},
+                    {"sha256": auth.hash_token("bob-token"), "user": "bob",
+                     "namespace": "lab-bob", "team": "lab"},
+                    {"sha256": auth.hash_token("solo-token"), "user": "solo",
+                     "namespace": "solo-ns"},
                 ]
             }
         )
@@ -404,3 +409,45 @@ def test_the_window_is_bounded_so_a_caller_cannot_ask_for_the_whole_log(client):
     assert as_alice(
         client, "GET", f"/v1/jobs/{job_id}/metrics?window_seconds=1"
     ).status_code == 422
+
+
+# --------------------------------------------------- stage 4b: team statistics
+
+
+def test_stats_add_up_every_namespace_of_the_team(client, cluster):
+    # alice and bob are both on team "lab", so each sees the same team total
+    # even though neither can read the other's jobs.
+    as_alice(client, "POST", "/v1/jobs", json=submit_body())
+    client.post("/v1/jobs", json=submit_body(name="bob-job"),
+                headers={"Authorization": "Bearer bob-token"})
+
+    result = as_alice(client, "GET", "/v1/stats").json()
+    assert result["team"] == "lab"
+    assert result["jobs"] == 2
+    assert sorted(m["user"] for m in result["members"]) == ["alice", "bob"]
+
+
+def test_stats_are_aggregate_and_carry_no_job_names(client, cluster):
+    # Being on a team does not entitle you to read a member's jobs.
+    client.post("/v1/jobs", json=submit_body(name="bobs-secret-experiment"),
+                headers={"Authorization": "Bearer bob-token"})
+    body = as_alice(client, "GET", "/v1/stats").text
+    assert "bobs-secret-experiment" not in body
+
+
+def test_a_teammates_job_is_still_unreachable_by_id(client, cluster):
+    # The isolation is the namespace's, and /v1/stats does not weaken it.
+    job_id = client.post(
+        "/v1/jobs", json=submit_body(), headers={"Authorization": "Bearer bob-token"}
+    ).json()["job_id"]
+    assert as_alice(client, "GET", f"/v1/jobs/{job_id}").status_code == 404
+
+
+def test_a_token_with_no_team_gets_zeroes_and_an_explanation(client):
+    result = client.get("/v1/stats", headers={"Authorization": "Bearer solo-token"}).json()
+    assert result["jobs"] == 0
+    assert "names no team" in result["note"]
+
+
+def test_stats_needs_a_token(client):
+    assert client.get("/v1/stats").status_code == 401

@@ -22,6 +22,7 @@ Authorization: Bearer <your token>
 | GET | `/v1/jobs/{job_id}/logs` | Stream a job's output. |
 | GET | `/v1/jobs/{job_id}/metrics` | GPU usage and training progress, read out of the job's own log. |
 | GET | `/v1/schema` | Return the JSON Schema of a request. |
+| GET | `/v1/stats` | What this caller's team has spent. |
 | POST | `/v1/validate` | Check a job without running it. |
 
 ## Request and response shapes
@@ -147,6 +148,21 @@ A submit request plus the facts needed to judge it.
 | `secrets` |  | Names of secrets to inject. The value never travels through this API; the server resolves the name to a Kubernetes Secret. |
 | `training` |  |  |
 
+### MemberTotalsView
+
+One person's figures inside a team.
+
+| field | required | description |
+|---|---|---|
+| `cost_usd` | yes |  |
+| `failed` | yes |  |
+| `gpu_hours` | yes |  |
+| `jobs` | yes |  |
+| `running` | yes |  |
+| `succeeded` | yes |  |
+| `unpriced_jobs` | yes | Jobs whose hours are counted but whose cost is not, because they ran on a machine we have no measured price for. |
+| `user` | yes |  |
+
 ### MetricsResponse
 
 What /v1/jobs/{id}/metrics returns.
@@ -173,6 +189,20 @@ Where the training run has got to, by its own reckoning.
 | `steady` | yes | False while too few steps have run for the projection to be worth quoting. One run was 32% out at step 1 and within 4% by step 50. |
 | `step` | yes |  |
 | `total_steps` | yes |  |
+
+### StatsResponse
+
+What /v1/stats returns.
+
+| field | required | description |
+|---|---|---|
+| `cost_usd` |  |  |
+| `gpu_hours` |  |  |
+| `jobs` |  |  |
+| `members` |  |  |
+| `note` |  | Why the figures are incomplete, in words. Empty when they are not. |
+| `team` | yes |  |
+| `unpriced_jobs` |  |  |
 
 ### SubmitResponse
 

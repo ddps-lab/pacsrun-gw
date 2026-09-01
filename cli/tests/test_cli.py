@@ -35,6 +35,8 @@ class FakeClient:
         self.estimate_result = {}
         self.validate_result = {"ok": True, "findings": [], "not_checked": []}
         self.metrics_result = {"window_seconds": 3600, "gpu_series": [], "note": ""}
+        self.stats_result = {"team": "", "members": [], "jobs": 0, "gpu_hours": 0.0,
+                             "cost_usd": 0.0, "unpriced_jobs": 0, "note": ""}
 
     def estimate(self, body):
         return self.estimate_result
@@ -44,6 +46,9 @@ class FakeClient:
 
     def metrics(self, job_id, window_seconds=3600):
         return self.metrics_result
+
+    def stats(self):
+        return self.stats_result
 
     def submit(self, body):
         self.submitted = body
@@ -432,3 +437,33 @@ def test_parallelism_and_gpu_count_are_different_things():
 def test_no_parallelism_flag_leaves_the_field_out():
     body = cli.build_submit_body(args_for(["submit", "--name", "x", "--image", "i"]))
     assert "parallelism" not in body
+
+
+# ------------------------------------------------------------ stage 4b: stats
+
+
+def test_stats_prints_a_row_per_member_and_a_total(fake, capsys):
+    fake.stats_result = {
+        "team": "ddps",
+        "members": [
+            {"user": "alice", "jobs": 3, "succeeded": 2, "failed": 1, "running": 0,
+             "gpu_hours": 9.54, "cost_usd": 9.44, "unpriced_jobs": 0},
+            {"user": "bob", "jobs": 1, "succeeded": 1, "failed": 0, "running": 0,
+             "gpu_hours": 2.0, "cost_usd": 1.98, "unpriced_jobs": 0},
+        ],
+        "jobs": 4, "gpu_hours": 11.54, "cost_usd": 11.42, "unpriced_jobs": 0, "note": "",
+    }
+    assert run(["stats"]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    assert "팀 ddps" in printed
+    assert "alice" in printed and "bob" in printed
+    assert "$11.42" in printed
+
+
+def test_stats_prints_the_note_when_the_total_is_incomplete(fake, capsys):
+    fake.stats_result = {
+        "team": "ddps", "members": [], "jobs": 0, "gpu_hours": 0.0, "cost_usd": 0.0,
+        "unpriced_jobs": 2, "note": "2 job(s) ran on a machine we have no measured price for",
+    }
+    run(["stats"])
+    assert "no measured price" in capsys.readouterr().out

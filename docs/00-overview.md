@@ -95,3 +95,4 @@
 | `10-cli.md` | CLI 2단계. 명령, exit code, token 저장 |
 | `11-judgement.md` | 3단계. 시간, 비용, GPU 권고, 검사 여덟 개 |
 | `12-monitoring.md` | 4단계. 로그에서 읽는 GPU 와 진행. 저장하지 않는 이유 |
+| `13-tenancy.md` | 사람 단위 격리와 팀 단위 통계. 켜는 순서 |

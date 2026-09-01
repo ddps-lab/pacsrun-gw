@@ -658,3 +658,45 @@ class MetricsResponse(BaseModel):
         default="",
         description="What is missing and why, in plain words. Empty when nothing is.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Stage 4b: /v1/stats.
+#
+# Team figures, added up from the jobs. Aggregate only: a caller asking for
+# their team's numbers is not thereby entitled to read another member's job
+# names or results, which stay namespace-scoped.
+#
+# Grep anchor: DDPSRUN-STATS-MODELS
+# ---------------------------------------------------------------------------
+
+
+class MemberTotalsView(BaseModel):
+    """One person's figures inside a team."""
+
+    user: str
+    jobs: int
+    succeeded: int
+    failed: int
+    running: int
+    gpu_hours: float
+    cost_usd: float
+    unpriced_jobs: int = Field(
+        description="Jobs whose hours are counted but whose cost is not, because they "
+        "ran on a machine we have no measured price for."
+    )
+
+
+class StatsResponse(BaseModel):
+    """What /v1/stats returns."""
+
+    team: str
+    members: list[MemberTotalsView] = Field(default_factory=list)
+    jobs: int = 0
+    gpu_hours: float = 0.0
+    cost_usd: float = 0.0
+    unpriced_jobs: int = 0
+    note: str = Field(
+        default="",
+        description="Why the figures are incomplete, in words. Empty when they are not.",
+    )

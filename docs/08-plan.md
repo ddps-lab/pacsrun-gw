@@ -66,8 +66,8 @@ CI 가 매 push 마다 생성본이 코드와 어긋나지 않았는지 검사�
 | ~~2~~ | ~~서버 위치~~ | **정함: EKS cluster 안의 pod.** 노드에 pod 가 많지 않고 별도 기계를 늘리지 않는다. 대가는 cluster 를 끄면 서버도 꺼지는 것 |
 | ~~3~~ | ~~로그인 방식~~ | **정함: Cognito.** 사용자가 수십 명이 되고 UI 를 여럿이 쓴다. 가입, 비밀번호, 재설정, MFA 를 우리가 만들지 않는다 |
 | 4 | **CLI 로그인 흐름** | Cognito 를 쓰면 브라우저를 띄우고 돌아오는 흐름이 필요하다. `aws sso login` 이 하는 것과 같다 |
-| 5 | **namespace 이름 규칙** | `lab-<사용자>` 인지 팀 단위인지 |
-| 6 | **bucket 을 나눌 것인가 prefix 로 둘 것인가** | prefix 가 간단. bucket 을 나누면 요금과 lifecycle 을 따로 봄 |
+| ~~5~~ | ~~namespace 이름 규칙~~ | **정함: `<team>-<user>`, 사람마다 하나.** 격리는 kubernetes 가 하고 팀은 label 이다. 팀 수치는 서버가 자기 token 파일로 모은다. `13-tenancy.md` |
+| ~~6~~ | ~~bucket 을 나눌 것인가 prefix 로 둘 것인가~~ | **정함: prefix, namespace 단위.** 팀 단위로 나누려다 되돌렸다 — 팀 수치가 S3 key 가 아니라 PacsJob 에서 나오므로 그 분할이 사는 곳이 없었고, controller 자물쇠가 팀을 dash 로 잘라 내야 했다 |
 | ~~7~~ | ~~`/estimate` 가 어디까지 답하는가~~ | **정함: `measured` / `interpolated` / `unknown` 셋.** 잰 범위 밖으로 20% 넘게 나가면 `unknown` 이고 이유를 붙인다 |
 | ~~8~~ | ~~UI 기술~~ | **정함: 서버가 Jinja2 로 HTML 을 그리고 HTMX 로 갱신한다.** 빌드 단계도 별도 배포 대상도 없고, 인증이 서버와 같아서 CORS 가 없다. 그래프는 서버가 SVG 로 그린다 |
 | 9 | **`--resume-from-checkpoint`** | 학습 script 소유자에게 요청해 둔 상태. 긴 학습의 복구가 여기 걸려 있다 |

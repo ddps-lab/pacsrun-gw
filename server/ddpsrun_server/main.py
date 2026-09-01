@@ -50,6 +50,7 @@ from .config import Settings
 from .k8s import Cluster, ClusterError, NotFound
 from . import estimate as estimator
 from . import metrics as metrics_reader
+from . import stats as stats_reader
 from . import validate as validator
 from .explain import EXPLAIN_TEXT
 from .models import (
@@ -61,9 +62,11 @@ from .models import (
     JobView,
     GpuSampleView,
     JudgementRequest,
+    MemberTotalsView,
     MetricsResponse,
     ProgressView,
     SubmitRequest,
+    StatsResponse,
     SubmitResponse,
     ValidateResponse,
     cap_from,
@@ -247,6 +250,52 @@ def validate_route(body: JudgementRequest, principal: PrincipalDep) -> ValidateR
             for f in result.findings
         ],
         not_checked=result.not_checked,
+    )
+
+
+@app.get("/v1/stats", response_model=StatsResponse)
+def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
+    """What this caller's team has spent.
+
+    Aggregate only. A caller asking for their team's figures does not thereby
+    get to read another member's job names or results — those stay in each
+    member's own namespace, which is where the isolation lives.
+
+    The team's namespaces come from the server's own token file rather than from
+    a label on the namespaces, which means this route needs no cluster-wide
+    permission at all.
+
+    Raises:
+        HTTPException: 502 when the cluster could not be read. A token with no
+            team is not an error: it returns zeroes and a note saying so.
+    """
+    tokens: TokenStore = request.app.state.tokens
+    cluster: Cluster = request.app.state.cluster
+
+    namespaces = tokens.namespaces_in_team(principal.team)
+    jobs_by_namespace: dict[str, list[dict[str, Any]]] = {}
+    try:
+        for namespace in namespaces:
+            jobs_by_namespace[namespace] = cluster.list_jobs(namespace)
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    totals = stats_reader.summarise(principal.team, namespaces, jobs_by_namespace)
+    return StatsResponse(
+        team=totals.team,
+        members=[
+            MemberTotalsView(
+                user=m.user, jobs=m.jobs, succeeded=m.succeeded, failed=m.failed,
+                running=m.running, gpu_hours=m.gpu_hours, cost_usd=m.cost_usd,
+                unpriced_jobs=m.unpriced_jobs,
+            )
+            for m in totals.members
+        ],
+        jobs=totals.jobs,
+        gpu_hours=totals.gpu_hours,
+        cost_usd=totals.cost_usd,
+        unpriced_jobs=totals.unpriced_jobs,
+        note=totals.note,
     )
 
 

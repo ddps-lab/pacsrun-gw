@@ -54,10 +54,15 @@ class Principal:
         namespace: the Kubernetes namespace this caller's jobs live in. This is
             the security boundary: a caller can only create, read, and stream
             logs from objects in this one namespace.
+        team: which group this caller belongs to. NOT a security boundary — it
+            only decides which namespaces `/v1/stats` adds together. Isolation
+            is the namespace's job, and it stays that way precisely so that a
+            mistake in team bookkeeping can never show one person another's job.
     """
 
     user: str
     namespace: str
+    team: str = ""
 
 
 def hash_token(token: str) -> str:
@@ -80,9 +85,15 @@ class TokenStore:
 
         {
           "tokens": [
-            {"sha256": "<64 hex chars>", "user": "alice", "namespace": "lab-alice"}
+            {"sha256": "<64 hex chars>", "user": "alice",
+             "namespace": "ddps-alice", "team": "ddps"}
           ]
         }
+
+    The namespace is by convention "<team>-<user>", but nothing here derives one
+    from the other: splitting a namespace on a dash to find the team breaks the
+    moment a team is called "ddps-lab", and guessing wrong would put a person's
+    numbers in the wrong team's total.
     """
 
     def __init__(self, by_hash: dict[str, Principal]) -> None:
@@ -138,6 +149,28 @@ class TokenStore:
                 return principal
         raise AuthError("unknown token")
 
+    def namespaces_in_team(self, team: str) -> list[str]:
+        """Every namespace belonging to one team, sorted.
+
+        WHY THIS LIVES IN THE TOKEN STORE and not in the cluster. The server
+        already holds the mapping, so answering from here costs no Kubernetes
+        permission at all — no `list` on namespaces, no ClusterRoleBinding for
+        it, nothing new to grant. The alternative was labelling namespaces and
+        listing them, which works but widens what a compromise of this pod
+        reaches for no benefit.
+
+        Args:
+            team: the team name. Empty returns nothing rather than everything,
+                because a caller with no team must not be handed the whole
+                cluster's figures.
+
+        Returns:
+            The namespaces, sorted and deduplicated.
+        """
+        if not team:
+            return []
+        return sorted({p.namespace for p in self._by_hash.values() if p.team == team})
+
     def __len__(self) -> int:
         return len(self._by_hash)
 
@@ -168,6 +201,9 @@ def parse_token_document(document: object) -> dict[str, Principal]:
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise TokenFileError(f"tokens[{index}] is not an object")
+        # `team` is deliberately not required. A deployment with one group has no
+        # use for it, and an absent team simply means /v1/stats has nobody to add
+        # this caller to.
         missing = [field for field in ("sha256", "user", "namespace") if not entry.get(field)]
         if missing:
             raise TokenFileError(f"tokens[{index}] is missing {', '.join(missing)}")
@@ -184,6 +220,7 @@ def parse_token_document(document: object) -> dict[str, Principal]:
         by_hash[digest] = Principal(
             user=str(entry["user"]).strip(),
             namespace=str(entry["namespace"]).strip(),
+            team=str(entry.get("team", "")).strip(),
         )
 
     return by_hash
