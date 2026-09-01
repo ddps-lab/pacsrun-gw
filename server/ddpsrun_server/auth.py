@@ -238,7 +238,20 @@ class TokenStore:
         return sorted({p.namespace for p in self._by_hash.values() if p.team == team})
 
     def __len__(self) -> int:
-        return len(self._by_hash)
+        """How many people this store can recognise.
+
+        Counts distinct principals, not keys. Someone with both a static token
+        and a Cognito email is one person and appears in both maps; counting
+        keys would report them twice, and counting only `_by_hash` would miss
+        anyone who signs in through the browser and has no static token at all.
+        """
+        return len(set(self._by_hash.values()) | set(self._by_email.values()))
+
+    @property
+    def counts(self) -> tuple[int, int]:
+        """(static tokens, registered emails). For the startup log line, where
+        one number cannot say which kind of credential is missing."""
+        return len(self._by_hash), len(self._by_email)
 
 
 def parse_token_document(document: object) -> tuple[dict[str, Principal], dict[str, Principal]]:

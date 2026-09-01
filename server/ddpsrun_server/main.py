@@ -106,9 +106,11 @@ async def lifespan(app: FastAPI):
             client_id=settings.cognito_client_id,
         )
 
-    logger.info(
-        "ready: %d token(s), results under %s%s, cognito %s",
-        len(tokens),
+    static_tokens, registered_emails = tokens.counts
+    logger.warning(
+        "ready: %d static token(s), %d registered email(s), results under %s%s, cognito %s",
+        static_tokens,
+        registered_emails,
         settings.result_bucket,
         settings.result_prefix,
         settings.cognito_pool_id or "not configured",
