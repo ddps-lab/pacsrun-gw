@@ -125,3 +125,22 @@ variable "lambda_function_name" {
   default     = ""
 }
 
+variable "ui_bucket_name" {
+  description = <<-EOT
+    The S3 bucket holding the screen's files, or "" to grant nothing.
+
+    Named by string rather than by reference for the same reason as
+    lambda_function_name: the bucket belongs to terraform/ui and this permission
+    belongs to the GitHub Actions role, and neither module should have to be
+    applied before the other.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "ui_distribution_id" {
+  description = "The CloudFront distribution CI invalidates after uploading, or \"\" to grant nothing."
+  type        = string
+  default     = ""
+}
+

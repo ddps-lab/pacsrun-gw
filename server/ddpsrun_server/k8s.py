@@ -62,8 +62,9 @@ _KEEPALIVE_LINE = re.compile(r"^\s*PACSRUN_KEEPALIVE\s*$")
 # which is exactly the noise the keepalive rule exists to prevent. Found
 # 2026-08-31 running the two endpoints against the same log.
 _GPU_LINE = re.compile(r"^\s*PACSRUN_GPU=")
-# Any other PACSRUN_* token is an internal name (`docs/03-api.md`, 응답 규칙
-# 첫째). The line around it may be the user's own output, so the token is masked
+# Any other PACSRUN_* token is an internal name (`docs/03-api.md`, first rule
+# of the "응답 규칙" / response-rules section). The line around it may be the
+# user's own output, so the token is masked
 # and the line kept, rather than the line being dropped.
 _INTERNAL_TOKEN = re.compile(r"\bPACSRUN_[A-Z0-9_]+\b")
 

@@ -19,7 +19,8 @@ output and in backups. A hash cannot be replayed against the API. It costs one
 `hashlib.sha256` call per request.
 
 WHY THIS IS A STATIC FILE AND NOT COGNITO. Stage 1 of `docs/08-plan.md` says
-"인증은 token 한 종류". Cognito is the decided end state (open item 3 in that
+"인증은 token 한 종류" — one kind of token, and only one. Cognito is the decided
+end state (open item 3 in that
 file, resolved) but it needs a browser round trip that no CLI exists to perform
 yet (open item 4, unresolved). This module is the seam: when Cognito lands,
 `principal_for` gains a second branch that validates a JWT, and nothing above it

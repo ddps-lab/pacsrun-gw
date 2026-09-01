@@ -1,0 +1,375 @@
+/*
+ * DDPSRUN-UI-STYLE
+ *
+ * The values settled in `docs/15-screens.md` 15.9, transcribed. Colour, spacing
+ * and type size are defined here and nowhere else; every rule below reads a
+ * variable rather than naming a colour.
+ *
+ * END-TO-END FLOW:
+ *   1. :root defines the light palette. That is the default.
+ *   2. prefers-color-scheme: dark redefines the same variable names.
+ *   3. Every rule after that reads the variables and never writes a colour.
+ *
+ * Step 3 is the rule that matters: a colour written inside only one of those
+ * blocks disappears into the background in the other theme. Going through the
+ * variables is what lets both themes share one structure.
+ */
+
+/* ------------------------------------------------------------------ tokens */
+
+:root {
+  --bg: #f6f7f8;
+  --panel: #ffffff;
+  --ink: #1a1d21;
+  --ink-dim: #6b7280;
+  --line: #e3e6e8;
+  --accent: #116466;
+  --accent-ink: #ffffff;
+  --accent-soft: #e6f0f0;
+
+  --ok: #15803d;
+  --run: #b45309;
+  --bad: #b91c1c;
+  --wait: #6b7280;
+  --ok-soft: #e7f4ec;
+  --run-soft: #fbf0e0;
+  --bad-soft: #fbeaea;
+  --wait-soft: #eef0f2;
+
+  --sans: "IBM Plex Sans KR", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+          "Malgun Gothic", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --r: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a;
+    --panel: #1c2024;
+    --ink: #e8eaed;
+    --ink-dim: #9aa0a6;
+    --line: #2c3136;
+    --accent: #3fa6a8;
+    --accent-ink: #0d1f20;
+    --accent-soft: #16302f;
+
+    --ok: #4ade80;
+    --run: #fbbf24;
+    --bad: #f87171;
+    --wait: #9aa0a6;
+    --ok-soft: #14281c;
+    --run-soft: #2e2413;
+    --bad-soft: #2e1717;
+    --wait-soft: #23272b;
+  }
+}
+
+/* ------------------------------------------------------------------ ground */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  /* Through the variable. A literal white here would paint a white ground in
+     the dark theme, with the dark theme's light text on top of it. */
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
+h1 { font-size: 28px; letter-spacing: -0.01em; }
+h2 { font-size: 20px; }
+h3 { font-size: 15px; }
+p { margin: 0; }
+a { color: var(--accent); }
+
+/* Anywhere digits line up in a column gets the fixed-width face. */
+.num, td.num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.dim { color: var(--ink-dim); }
+.small { font-size: 13px; }
+.tiny { font-size: 12px; }
+
+/* ------------------------------------------------------------------ header */
+
+header {
+  height: 56px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.brand {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+.brand span { color: var(--accent); }
+
+nav { display: flex; gap: 4px; }
+
+nav button {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink-dim);
+  padding: 6px 12px;
+  border-radius: var(--r);
+  cursor: pointer;
+}
+nav button:hover { background: var(--bg); color: var(--ink); }
+nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+.spacer { flex: 1; }
+
+.who {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ------------------------------------------------------------------ body */
+
+main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 64px; }
+
+section { display: flex; flex-direction: column; gap: 24px; }
+section[hidden] { display: none; }
+
+.head { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.head .spacer { flex: 1; min-width: 0; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.panel > header {
+  all: unset;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+/* ------------------------------------------------------------------ buttons */
+
+button.go, button.flat {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: var(--r);
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* The primary action. Exactly one per screen (15.10). */
+button.go { background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); }
+button.go:hover { filter: brightness(1.1); }
+/* Secondary actions. Outline only. */
+button.flat { background: var(--panel); color: var(--ink); border: 1px solid var(--line); }
+button.flat:hover { background: var(--bg); }
+
+button.go:disabled, button.flat:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: none;
+}
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------------ tabs */
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tabs button {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink-dim);
+  padding: 8px 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+/* ------------------------------------------------------------------ cards */
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.card .label { font-size: 12px; color: var(--ink-dim); letter-spacing: 0.03em; text-transform: uppercase; }
+.card .value { font-family: var(--mono); font-size: 28px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.card .value.ok { color: var(--ok); }
+.card .value.bad { color: var(--bad); }
+.card .value.run { color: var(--run); }
+
+/* ------------------------------------------------------------------ tables */
+
+.scroll { overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-dim);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0 12px 8px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+td { padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+
+tbody tr.click { cursor: pointer; }
+tbody tr.click:hover td { background: var(--bg); }
+
+/* Only a failed row carries the left stripe, so the state is visible as shape
+   and not only as colour. */
+tbody tr.failed td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+
+td .name { font-weight: 500; }
+
+/* ------------------------------------------------------------------ badges */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.badge.ok   { color: var(--ok);   background: var(--ok-soft); }
+.badge.run  { color: var(--run);  background: var(--run-soft); }
+.badge.bad  { color: var(--bad);  background: var(--bad-soft); }
+.badge.wait { color: var(--wait); background: var(--wait-soft); }
+
+/* ------------------------------------------------------------------ progress */
+
+.bar { height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; min-width: 80px; }
+.bar > i { display: block; height: 100%; background: var(--run); border-radius: 999px; transition: width 0.4s; }
+.bar.done > i { background: var(--ok); }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px 24px; }
+.fact { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fact .k { font-size: 12px; color: var(--ink-dim); }
+.fact .v { font-family: var(--mono); font-size: 15px; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ logs */
+
+pre.log, pre.spec {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 12px;
+  overflow: auto;
+  max-height: 420px;
+  white-space: pre;
+}
+
+/* ------------------------------------------------------------------ charts */
+
+.chart { width: 100%; height: 140px; display: block; }
+.legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-dim); }
+.legend i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 5px; }
+
+/* ------------------------------------------------------------------ forms */
+
+label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-dim); }
+label > span b { color: var(--ink); font-weight: 600; }
+
+input, select, textarea {
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 8px 10px;
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+textarea { font-family: var(--mono); font-size: 13px; resize: vertical; min-height: 76px; }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+
+.steps { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink-dim); }
+.steps b { color: var(--accent); font-weight: 600; }
+
+/* ------------------------------------------------------------------ notices */
+
+.note {
+  border-radius: var(--r);
+  padding: 10px 14px;
+  font-size: 13px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.note.err  { background: var(--bad-soft); color: var(--bad); }
+.note.warn { background: var(--run-soft); color: var(--run); }
+.note.info { background: var(--wait-soft); color: var(--ink-dim); }
+.note .fix { color: var(--ink-dim); }
+
+/* The empty state. Rather than an empty table, it carries the next action
+   (15.10) — this is the first screen a new user sees. */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 24px;
+  color: var(--ink-dim);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ sign in */
+
+#login {
+  max-width: 380px;
+  margin: 96px auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

@@ -17,10 +17,12 @@ Authorization: Bearer <your token>
 |---|---|---|
 | POST | `/v1/estimate` | How long, how much, and on which GPU. Submits nothing. |
 | GET | `/v1/explain` | Say what this service is and how to use it, in prose. |
+| GET | `/v1/jobs` | This caller's own jobs, newest first. |
 | POST | `/v1/jobs` | Submit a job. |
 | GET | `/v1/jobs/{job_id}` | Report one job's state. |
 | GET | `/v1/jobs/{job_id}/logs` | One window of a job's output. Ask again for more. |
 | GET | `/v1/jobs/{job_id}/metrics` | GPU usage and training progress, read out of the job's own log. |
+| GET | `/v1/jobs/{job_id}/spec` | The submission this job was created from, with secrets removed. |
 | GET | `/v1/schema` | Return the JSON Schema of a request. |
 | GET | `/v1/stats` | What this caller's team has spent. |
 | POST | `/v1/validate` | Check a job without running it. |
@@ -112,6 +114,26 @@ A runtime answer. Both ends are None when we will not guess.
 | `high` |  |  |
 | `low` |  |  |
 
+### JobListResponse
+
+What GET /v1/jobs returns: this caller's own jobs, newest first.
+
+| field | required | description |
+|---|---|---|
+| `jobs` |  |  |
+| `total` |  | How many jobs matched the filter before `limit` cut the list. Equal to len(jobs) when nothing was cut. The screen needs both numbers to say 'showing 200 of 512' instead of quietly hiding 312. |
+
+### JobSpecResponse
+
+What `GET /v1/jobs/{id}/spec` returns: the submission, as stored.
+
+| field | required | description |
+|---|---|---|
+| `job_id` | yes |  |
+| `name` | yes |  |
+| `redacted` |  | Names of the env entries whose source was removed. Shown to the user as 'set from a secret' rather than silently vanishing, because an env var that disappears from the screen reads as a bug. |
+| `spec` | yes | The PacsJob spec with the two removals above applied. |
+
 ### JobView
 
 What `GET /v1/jobs/{id}` returns.
@@ -119,6 +141,7 @@ What `GET /v1/jobs/{id}` returns.
 | field | required | description |
 |---|---|---|
 | `created_at` |  |  |
+| `finished_at` |  | When the job reached Succeeded or Failed, from status.finishedAt. Absent while it is still running. |
 | `gpu` |  | What it is actually running on, once it is running. |
 | `job_id` | yes |  |
 | `message` |  | Detail, mostly on failure. |
@@ -126,6 +149,8 @@ What `GET /v1/jobs/{id}` returns.
 | `phase` | yes | Pending, Starting, Running, Recovering, Succeeded, or Failed. Empty until the controller has looked at the job once. |
 | `recovery_count` |  | How many times the job lost its machine and was restarted. |
 | `result_path` |  | Where the output is. This is the one place a namespace name crosses the API boundary, because it is part of the S3 key and a stage-1 caller has no other way to collect their results. It goes away when /v1/jobs/{id}/artifacts starts handing out download URLs. |
+| `started_at` |  | When the job's pod first ran, from status.startedAt (PACSRUN-JOB-CLOCK). Absent while the job is still waiting for a machine, which is exactly what makes queue time visible: started_at - created_at is the wait, finished_at - started_at is the run. |
+| `user` |  | Who submitted it. Read from the ddpsrun.io/owner label the server itself wrote at submit time, so it cannot be forged by editing the object: a caller can only ever see their own namespace anyway. |
 | `vendor` |  | Who it was rented from, e.g. runpod, aws. |
 
 ### JudgementRequest

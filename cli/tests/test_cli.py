@@ -351,8 +351,8 @@ def test_estimate_prints_the_range_the_basis_and_the_gpu_reason(fake, capsys):
     assert run(["estimate", "--name", "x", "--image", "i"]) == cli.EXIT_OK
     printed = capsys.readouterr().out
     assert "556" in printed
-    assert "6.52 ~ 6.87" in printed
-    assert "$6.45 ~ $6.8" in printed
+    assert "6.52 - 6.87" in printed
+    assert "$6.45 - $6.8" in printed
     assert "5 run(s) on L40S" in printed
     assert "on-demand" in printed
 
@@ -370,7 +370,7 @@ def test_an_unknown_estimate_says_so_instead_of_printing_a_blank(fake, capsys):
     }
     run(["estimate", "--name", "x", "--image", "i"])
     printed = capsys.readouterr().out
-    assert "모름" in printed
+    assert "unknown" in printed
     assert "unknown" in printed
 
 
@@ -386,7 +386,7 @@ def test_validate_exits_1_when_something_would_actually_stop_the_job(fake, capsy
     printed = capsys.readouterr().out
     assert "gpu-too-small" in printed
     assert "ask for 80 GB" in printed
-    assert "못 봄" in printed
+    assert "not checked" in printed
 
 
 def test_validate_exits_0_when_nothing_is_an_error(fake):
@@ -438,9 +438,9 @@ def test_watch_prints_progress_and_gpu(fake, capsys):
     assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
     printed = capsys.readouterr().out
     assert "350 / 556" in printed
-    assert "6.42 시간" in printed
+    assert "6.42 h" in printed
     assert "38,200 / 45,440 MiB" in printed
-    assert "120 개" in printed
+    assert "samples        120" in printed
 
 
 def test_an_unsettled_projection_is_labelled_rather_than_stated(fake, capsys):
@@ -452,7 +452,7 @@ def test_an_unsettled_projection_is_labelled_rather_than_stated(fake, capsys):
         "gpu_series": [], "window_seconds": 3600, "note": "",
     }
     run(["watch", "job-a8acdef80a07"])
-    assert "아직 안 정해짐" in capsys.readouterr().out
+    assert "rate has not settled yet" in capsys.readouterr().out
 
 
 def test_an_empty_window_prints_the_note_that_explains_it(fake, capsys):
@@ -496,7 +496,7 @@ def test_stats_prints_a_row_per_member_and_a_total(fake, capsys):
     }
     assert run(["stats"]) == cli.EXIT_OK
     printed = capsys.readouterr().out
-    assert "팀 ddps" in printed
+    assert "team ddps" in printed
     assert "alice" in printed and "bob" in printed
     assert "$11.42" in printed
 

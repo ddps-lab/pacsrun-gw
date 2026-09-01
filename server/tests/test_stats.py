@@ -50,7 +50,7 @@ def test_a_still_running_job_is_measured_up_to_now():
 
 
 def test_the_cost_of_a_job_we_have_priced_matches_what_it_actually_cost():
-    # bank 실험2': 6.54 hours on an L40S at $0.99/hour, $6.47.
+    # bank-exp2v2: 6.54 hours on an L40S at $0.99/hour, $6.47.
     assert abs(stats.job_cost(job(instance="L40S"), 6.54) - 6.47) < 0.02
 
 

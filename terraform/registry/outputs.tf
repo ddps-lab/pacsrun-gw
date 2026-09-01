@@ -34,5 +34,7 @@ output "github_repository_variables" {
     gh variable set AWS_ROLE_ARN  --repo ${var.github_owner}/${var.github_repository} --body ${aws_iam_role.github_actions.arn}
     gh variable set ECR_REPOSITORY --repo ${var.github_owner}/${var.github_repository} --body ${aws_ecr_repository.gateway.name}
     gh variable set LAMBDA_FUNCTION --repo ${var.github_owner}/${var.github_repository} --body ${var.lambda_function_name}
+    gh variable set UI_BUCKET       --repo ${var.github_owner}/${var.github_repository} --body ${var.ui_bucket_name}
+    gh variable set UI_DISTRIBUTION --repo ${var.github_owner}/${var.github_repository} --body ${var.ui_distribution_id}
   EOT
 }

@@ -357,7 +357,7 @@ def judgement_body(**overrides):
 
 
 def test_estimate_reproduces_a_job_we_actually_ran(client, cluster):
-    # bank 실험2': 556 steps, 6.54 hours, $6.47.
+    # bank-exp2v2: 556 steps, 6.54 hours, $6.47.
     result = as_alice(client, "POST", "/v1/estimate", json=judgement_body()).json()
     assert result["steps"] == 556
     assert result["hours"]["confidence"] == "measured"
@@ -530,3 +530,195 @@ def test_a_token_with_no_team_gets_zeroes_and_an_explanation(client):
 
 def test_stats_needs_a_token(client):
     assert client.get("/v1/stats").status_code == 401
+
+
+def test_the_job_list_shows_only_this_callers_jobs(client, cluster):
+    as_alice(client, "POST", "/v1/jobs", json=submit_body(name="alice-job"))
+    client.post("/v1/jobs", json=submit_body(name="bobs-job"),
+                headers={"Authorization": "Bearer bob-token"})
+
+    result = as_alice(client, "GET", "/v1/jobs").json()
+    names = [job["name"] for job in result["jobs"]]
+    assert names == ["alice-job"]
+    assert "bobs-job" not in str(result)
+
+
+def test_the_job_list_is_newest_first(client, cluster):
+    for i, stamp in enumerate(["2026-09-01T03:00:00Z", "2026-09-01T01:00:00Z",
+                               "2026-09-01T02:00:00Z"]):
+        obj = {"metadata": {"name": f"ddpsrun-00000000000{i}",
+                            "creationTimestamp": stamp,
+                            "annotations": {"ddpsrun.io/display-name": f"job-{i}"}},
+               "spec": {}, "status": {}}
+        cluster.objects[("lab-alice", obj["metadata"]["name"])] = obj
+
+    result = as_alice(client, "GET", "/v1/jobs").json()
+    assert [j["name"] for j in result["jobs"]] == ["job-0", "job-2", "job-1"]
+
+
+def test_a_job_with_no_timestamp_yet_does_not_break_the_sort(client, cluster):
+    cluster.objects[("lab-alice", "ddpsrun-000000000009")] = {
+        "metadata": {"name": "ddpsrun-000000000009"}, "spec": {}, "status": {}}
+    as_alice(client, "POST", "/v1/jobs", json=submit_body())
+    assert as_alice(client, "GET", "/v1/jobs").status_code == 200
+
+
+def test_the_job_list_needs_a_token(client):
+    assert client.get("/v1/jobs").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# DDPSRUN-SCREENS: the four additions `docs/15-screens.md` found missing when
+# the five screens were designed. Each test names the screen that needs it.
+# ---------------------------------------------------------------------------
+
+
+def _job(name, *, phase="", stamp="2026-09-01T00:00:00Z", **status):
+    """Build one raw PacsJob the way the apiserver would return it.
+
+    Args:
+        name: the object name, which also carries the job id.
+        phase: status.phase, empty for a job the controller has not seen.
+        stamp: metadata.creationTimestamp.
+        status: extra status fields, e.g. startedAt, finishedAt.
+
+    Returns:
+        A dict shaped like the real object, ready to drop into FakeCluster.
+    """
+    return {
+        "metadata": {
+            "name": name,
+            "creationTimestamp": stamp,
+            "labels": {"ddpsrun.io/job-id": name.replace("ddpsrun-", "job-"),
+                       "ddpsrun.io/owner": "alice"},
+            "annotations": {"ddpsrun.io/display-name": name},
+        },
+        "spec": {},
+        "status": {"phase": phase, **status},
+    }
+
+
+def test_the_job_list_reports_who_submitted_each_job(client, cluster):
+    """The jobs screen's 'submitted by' column (docs/15-screens.md 15.5)."""
+    cluster.objects[("lab-alice", "ddpsrun-000000000001")] = _job("ddpsrun-000000000001")
+    result = as_alice(client, "GET", "/v1/jobs").json()
+    assert result["jobs"][0]["user"] == "alice"
+
+
+def test_a_job_carries_the_two_clock_stamps(client, cluster):
+    """The elapsed column needs run time, not age (PACSRUN-JOB-CLOCK)."""
+    cluster.objects[("lab-alice", "ddpsrun-000000000002")] = _job(
+        "ddpsrun-000000000002", phase="Succeeded",
+        startedAt="2026-09-01T00:01:00Z", finishedAt="2026-09-01T02:30:00Z")
+    view = as_alice(client, "GET", "/v1/jobs/job-000000000002").json()
+    assert view["started_at"] == "2026-09-01T00:01:00Z"
+    assert view["finished_at"] == "2026-09-01T02:30:00Z"
+
+
+def test_a_waiting_job_has_no_start_stamp(client, cluster):
+    """Queue time is visible precisely because startedAt is absent until it runs."""
+    cluster.objects[("lab-alice", "ddpsrun-000000000003")] = _job(
+        "ddpsrun-000000000003", phase="Pending")
+    view = as_alice(client, "GET", "/v1/jobs/job-000000000003").json()
+    assert view["created_at"] == "2026-09-01T00:00:00Z"
+    assert view["started_at"] is None
+    assert view["finished_at"] is None
+
+
+def test_the_active_filter_drops_finished_jobs(client, cluster):
+    """The jobs screen's default tab."""
+    for i, phase in enumerate(["Running", "Succeeded", "Failed", "Pending"]):
+        name = f"ddpsrun-00000000001{i}"
+        cluster.objects[("lab-alice", name)] = _job(name, phase=phase)
+
+    active = as_alice(client, "GET", "/v1/jobs?phase=active").json()
+    assert sorted(j["phase"] for j in active["jobs"]) == ["Pending", "Running"]
+
+    finished = as_alice(client, "GET", "/v1/jobs?phase=finished").json()
+    assert sorted(j["phase"] for j in finished["jobs"]) == ["Failed", "Succeeded"]
+
+
+def test_a_job_with_no_phase_yet_counts_as_active(client, cluster):
+    """A job the controller has not looked at is still one to watch."""
+    cluster.objects[("lab-alice", "ddpsrun-000000000020")] = _job("ddpsrun-000000000020")
+    result = as_alice(client, "GET", "/v1/jobs?phase=active").json()
+    assert len(result["jobs"]) == 1
+
+
+def test_an_exact_phase_can_be_asked_for(client, cluster):
+    for i, phase in enumerate(["Failed", "Succeeded"]):
+        name = f"ddpsrun-00000000003{i}"
+        cluster.objects[("lab-alice", name)] = _job(name, phase=phase)
+    result = as_alice(client, "GET", "/v1/jobs?phase=Failed").json()
+    assert [j["phase"] for j in result["jobs"]] == ["Failed"]
+
+
+def test_the_limit_caps_the_list_but_total_still_counts_everything(client, cluster):
+    """So the screen can say 'showing 2 of 5' rather than hiding three jobs."""
+    for i in range(5):
+        name = f"ddpsrun-00000000004{i}"
+        cluster.objects[("lab-alice", name)] = _job(
+            name, stamp=f"2026-09-01T0{i}:00:00Z")
+    result = as_alice(client, "GET", "/v1/jobs?limit=2").json()
+    assert len(result["jobs"]) == 2
+    assert result["total"] == 5
+
+
+def test_a_limit_outside_the_allowed_range_is_refused(client):
+    assert as_alice(client, "GET", "/v1/jobs?limit=0").status_code == 422
+    assert as_alice(client, "GET", "/v1/jobs?limit=1001").status_code == 422
+
+
+def test_the_spec_route_returns_the_submission(client, cluster):
+    """The detail screen's 'what exactly did I run' panel."""
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    result = as_alice(client, "GET", f"/v1/jobs/{job_id}/spec").json()
+    assert result["job_id"] == job_id
+    assert result["spec"]["image"] == submit_body()["image"]
+
+
+def test_the_spec_route_removes_the_secret_source_but_keeps_the_name(client, cluster):
+    """DDPSRUN-SPEC-REDACT: the Kubernetes Secret's name and key never leave."""
+    job_id = as_alice(
+        client, "POST", "/v1/jobs", json=submit_body(secrets=["GITHUB_PAT"])
+    ).json()["job_id"]
+
+    result = as_alice(client, "GET", f"/v1/jobs/{job_id}/spec").json()
+    names = [entry["name"] for entry in result["spec"]["env"]]
+    assert "GITHUB_PAT" in names
+    assert result["redacted"] == ["GITHUB_PAT"]
+    assert "secretKeyRef" not in json.dumps(result)
+    assert "slm-rca-clone" not in json.dumps(result)
+
+
+def test_the_spec_route_removes_the_service_account_name(client, cluster):
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    result = as_alice(client, "GET", f"/v1/jobs/{job_id}/spec").json()
+    assert "serviceAccountName" not in result["spec"]
+
+
+def test_the_spec_route_hides_someone_elses_job(client, cluster):
+    job_id = client.post(
+        "/v1/jobs", json=submit_body(), headers={"Authorization": "Bearer bob-token"}
+    ).json()["job_id"]
+    assert as_alice(client, "GET", f"/v1/jobs/{job_id}/spec").status_code == 404
+
+
+def test_the_spec_route_needs_a_token(client):
+    assert client.get("/v1/jobs/job-000000000001/spec").status_code == 401
+
+
+def test_compared_counts_as_finished_not_as_still_running(client, cluster):
+    """A real defect found on 2026-09-01: 12 of 24 live jobs were Compared and
+    the active tab showed every one of them.
+
+    Compared means a mode=compare job priced every candidate offering and bought
+    nothing (`api/v1alpha1/pacsjob_types.go:85`). It is terminal and it is not a
+    failure, so it belongs under 'finished' with a label of its own.
+    """
+    cluster.objects[("lab-alice", "ddpsrun-000000000050")] = _job(
+        "ddpsrun-000000000050", phase="Compared")
+
+    assert as_alice(client, "GET", "/v1/jobs?phase=active").json()["jobs"] == []
+    finished = as_alice(client, "GET", "/v1/jobs?phase=finished").json()["jobs"]
+    assert [j["phase"] for j in finished] == ["Compared"]

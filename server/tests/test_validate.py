@@ -45,7 +45,7 @@ def message_for(result, code):
 def test_a_missing_allocator_setting_names_the_run_that_died_without_it():
     result = run(env={}, script="python train.py")
     assert "alloc-conf-missing" in codes(result)
-    assert "AIOps 실험1" in message_for(result, "alloc-conf-missing")
+    assert "aiops-exp1" in message_for(result, "alloc-conf-missing")
 
 
 def test_the_allocator_setting_counts_whether_it_is_env_or_a_command_prefix():
@@ -63,7 +63,7 @@ def test_a_missing_trl_patch_gives_the_command_that_applies_it():
 
 
 def test_48gb_without_the_mitigations_is_an_error_not_a_warning():
-    # This is exactly the AIOps 실험1 submission, and it burned four steps of
+    # This is exactly the aiops-exp1 submission, and it burned four steps of
     # rented A100 time before it failed.
     result = run(env={}, script="python train.py --max-len 12288", vram_gb=48)
     assert "gpu-too-small" in codes(result)

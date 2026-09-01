@@ -482,24 +482,24 @@ def cmd_estimate(args: argparse.Namespace) -> int:
 
     hours, cost, gpu = result["hours"], result["cost_usd"], result["gpu"]
     if result.get("steps"):
-        print(f"  스텝        {result['steps']:,}")
+        print(f"  steps          {result['steps']:,}")
     if hours.get("low") is not None:
-        print(f"  시간        {hours['low']} ~ {hours['high']} 시간  [{hours['confidence']}]")
+        print(f"  time           {hours['low']} - {hours['high']} h  [{hours['confidence']}]")
     else:
         # `unknown` is a real answer, and printing a blank instead of saying so
         # is how a user ends up assuming zero.
-        print(f"  시간        모름  [{hours['confidence']}]")
+        print(f"  time           unknown  [{hours['confidence']}]")
     if cost.get("low") is not None:
-        print(f"  비용        ${cost['low']} ~ ${cost['high']}")
-    print(f"  근거        {result['basis']}")
-    print(f"  GPU         {gpu.get('recommended') or '없음'}"
-          f" ({gpu.get('recommended_vram_gb')} GB), 최대 logits {gpu['peak_logits_gib']} GiB")
-    print(f"              {gpu['reason']}")
-    print(f"  구매 방식   {result['capacity_type']}   "
-          f"<- 제출할 때 --capacity-type {result['capacity_type']} 로 넣으십시오")
-    print(f"              {result['capacity_reason']}")
+        print(f"  cost           ${cost['low']} - ${cost['high']}")
+    print(f"  basis          {result['basis']}")
+    print(f"  GPU            {gpu.get('recommended') or 'none'}"
+          f" ({gpu.get('recommended_vram_gb')} GB), logits peak {gpu['peak_logits_gib']} GiB")
+    print(f"                 {gpu['reason']}")
+    print(f"  capacity type  {result['capacity_type']}   "
+          f"<- pass --capacity-type {result['capacity_type']} when you submit")
+    print(f"                 {result['capacity_reason']}")
     for warning in result.get("warnings", []):
-        print(f"  참고        {warning}")
+        print(f"  note           {warning}")
     return EXIT_OK
 
 
@@ -516,17 +516,17 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return EXIT_OK if result["ok"] else EXIT_SERVER
 
-    marker = {"error": "[막힘]", "warning": "[경고]", "info": "[참고]"}
+    marker = {"error": "[error]  ", "warning": "[warning]", "info": "[info]   "}
     for finding in result.get("findings", []):
-        print(f"{marker.get(finding['level'], '[    ]')} {finding['code']}")
+        print(f"{marker.get(finding['level'], '[?]      ')} {finding['code']}")
         print(f"  {finding['message']}")
         if finding.get("fix"):
-            print(f"  고치려면: {finding['fix']}")
+            print(f"  fix: {finding['fix']}")
         print()
     for line in result.get("not_checked", []):
-        print(f"[못 봄] {line}")
+        print(f"[not checked] {line}")
     print()
-    print("통과했습니다." if result["ok"] else "막히는 문제가 있습니다.")
+    print("Nothing blocking." if result["ok"] else "Something is blocking this job.")
     return EXIT_OK if result["ok"] else EXIT_SERVER
 
 
@@ -581,29 +581,29 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
     progress = result.get("progress")
     if progress:
-        print(f"  학습        {bar(progress['percent'])}  "
-              f"{progress['step']:,} / {progress['total_steps']:,} 스텝  "
+        print(f"  training       {bar(progress['percent'])}  "
+              f"{progress['step']:,} / {progress['total_steps']:,} steps  "
               f"({progress['percent']}%)")
-        print(f"              {progress['seconds_per_step']} 초/스텝, "
-              f"{progress['elapsed']} 경과, {progress['remaining']} 남음")
+        print(f"                 {progress['seconds_per_step']} s/step, "
+              f"{progress['elapsed']} elapsed, {progress['remaining']} remaining")
         # `steady` False means too few steps have run for this to be worth
         # quoting, so it is labelled rather than printed as a fact.
-        settled = "" if progress["steady"] else "  (아직 안 정해짐)"
-        print(f"  예상 총계   {progress['projected_total_hours']} 시간{settled}")
+        settled = "" if progress["steady"] else "  (rate has not settled yet)"
+        print(f"  projected      {progress['projected_total_hours']} h{settled}")
 
     gpu = result.get("latest_gpu")
     if gpu:
-        print(f"  GPU 사용률  {bar(gpu['utilization_percent'])}  "
+        print(f"  GPU util       {bar(gpu['utilization_percent'])}  "
               f"{gpu['utilization_percent']}%")
-        print(f"  메모리      {bar(gpu['memory_percent'])}  "
+        print(f"  GPU memory     {bar(gpu['memory_percent'])}  "
               f"{gpu['memory_used_mib']:,} / {gpu['memory_total_mib']:,} MiB "
               f"({gpu['memory_percent']}%)")
-        print(f"  온도, 전력  {gpu['temperature_c']} C, {gpu['power_w']} W")
-        print(f"  표본        {len(result.get('gpu_series', []))} 개, "
-              f"최근 {result['window_seconds']}초")
+        print(f"  temp, power    {gpu['temperature_c']} C, {gpu['power_w']} W")
+        print(f"  samples        {len(result.get('gpu_series', []))}, "
+              f"last {result['window_seconds']}s")
 
     if result.get("note"):
-        print(f"  참고        {result['note']}")
+        print(f"  note           {result['note']}")
     return EXIT_OK
 
 
@@ -614,17 +614,17 @@ def cmd_stats(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return EXIT_OK
 
-    print(f"팀 {result['team'] or '(없음)'}")
+    print(f"team {result['team'] or '(none)'}")
     if result.get("members"):
-        print(f"  {'사람':<14}{'작업':>5}{'성공':>5}{'실패':>5}{'실행중':>7}"
-              f"{'GPU 시간':>10}{'비용':>10}")
+        print(f"  {'member':<14}{'jobs':>6}{'ok':>5}{'failed':>8}{'running':>9}"
+              f"{'GPU h':>9}{'spend':>10}")
         for m in result["members"]:
-            print(f"  {m['user']:<14}{m['jobs']:>5}{m['succeeded']:>5}{m['failed']:>5}"
-                  f"{m['running']:>7}{m['gpu_hours']:>10}{('$' + str(m['cost_usd'])):>10}")
-        print(f"  {'합계':<14}{result['jobs']:>5}{'':>5}{'':>5}{'':>7}"
-              f"{result['gpu_hours']:>10}{('$' + str(result['cost_usd'])):>10}")
+            print(f"  {m['user']:<14}{m['jobs']:>6}{m['succeeded']:>5}{m['failed']:>8}"
+                  f"{m['running']:>9}{m['gpu_hours']:>9}{('$' + str(m['cost_usd'])):>10}")
+        print(f"  {'total':<14}{result['jobs']:>6}{'':>5}{'':>8}{'':>9}"
+              f"{result['gpu_hours']:>9}{('$' + str(result['cost_usd'])):>10}")
     if result.get("note"):
-        print(f"  참고        {result['note']}")
+        print(f"  note           {result['note']}")
     return EXIT_OK
 
 

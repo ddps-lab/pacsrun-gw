@@ -72,7 +72,7 @@ class GpuSample:
     Attributes:
         utilization_percent: how busy the GPU was. A low number for a long
             stretch means the run is waiting on data rather than computing.
-        memory_used_mib: what matters most. AIOps 실험1 died of memory, and this
+        memory_used_mib: what matters most. aiops-exp1 died of memory, and this
             curve approaching the total is the warning that never existed.
         memory_total_mib: what the card reports, which is less than the number
             printed on the box.

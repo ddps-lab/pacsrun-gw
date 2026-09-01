@@ -94,3 +94,29 @@ jobs:
             --query '{name:FunctionName,size:CodeSize,sha:CodeSha256}' --output json
           aws lambda wait function-updated-v2 --function-name "${{ vars.LAMBDA_FUNCTION }}"
           echo "::notice::published ${{ github.sha }} to ${{ vars.LAMBDA_FUNCTION }}"
+
+  screen:
+    name: upload the screen to S3
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: assume the publish role over OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: upload
+        run: |
+          set -euo pipefail
+          # --delete so a file removed from the repo disappears from the bucket
+          # too; otherwise a deleted page keeps being served forever.
+          aws s3 sync ui/ "s3://${{ vars.UI_BUCKET }}/" --delete
+          # CloudFront caches aggressively and these files change on every
+          # deploy, so the cache has to be told. Three files, so a blanket
+          # invalidation is cheaper to reason about than a per-path one.
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.UI_DISTRIBUTION }}" \
+            --paths '/*' --query 'Invalidation.Id' --output text
+

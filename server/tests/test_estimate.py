@@ -3,7 +3,7 @@
 Two kinds of test here. The first kind reproduces a number we have in a log,
 which is what makes the estimator trustworthy at all. The second kind checks
 that it REFUSES to answer where it should, which is what stops it repeating the
-market 실험2 mistake.
+market-exp2 mistake.
 """
 
 import pytest
@@ -18,14 +18,14 @@ from ddpsrun_server.measurements import THROUGHPUT
 @pytest.mark.parametrize(
     "job, pairs, epochs, logged",
     [
-        ("telecom 실험1", 564, 4, 284),
-        ("telecom 실험2", 675, 4, 340),
-        ("bank 실험1", 973, 4, 488),
-        ("bank 실험1'", 1061, 4, 532),
-        ("market 실험2", 742, 4, 372),
-        ("AIOps 실험1", 3311, 4, 1656),
-        ("bank 실험2'", 1110, 4, 556),
-        ("AIOps 실험2", 3546, 4, 1776),
+        ("telecom-exp1", 564, 4, 284),
+        ("telecom-exp2", 675, 4, 340),
+        ("bank-exp1", 973, 4, 488),
+        ("bank-exp1v2", 1061, 4, 532),
+        ("market-exp2", 742, 4, 372),
+        ("aiops-exp1", 3311, 4, 1656),
+        ("bank-exp2v2", 1110, 4, 556),
+        ("aiops-exp2", 3546, 4, 1776),
     ],
 )
 def test_the_step_formula_matches_every_log_we_have(job, pairs, epochs, logged):
@@ -85,7 +85,7 @@ def test_a_gap_between_two_runs_is_interpolated_not_claimed_as_measured():
 
 
 def test_past_the_ends_of_the_measured_range_the_answer_is_unknown():
-    # This is the market 실험2 lesson made mechanical: that job's length was
+    # This is the market-exp2 lesson made mechanical: that job's length was
     # far outside anything measured, it was estimated anyway, and the estimate
     # was 96% out.
     duration = e.seconds_per_step("L40S", 30000, 1, 8)
@@ -142,7 +142,7 @@ def test_the_logits_buffer_matches_the_allocation_that_killed_aiops():
 
 
 def test_the_cap_and_not_the_average_length_is_what_decides_memory():
-    # The longest sample grows until it meets the cap. AIOps 실험1's average
+    # The longest sample grows until it meets the cap. aiops-exp1's average
     # row was about 5,600 tokens and it died on a buffer for 11,926.
     assert e.peak_logits_gib(12288) > e.peak_logits_gib(5600) * 2
 
@@ -160,7 +160,7 @@ def test_a_bigger_vocabulary_costs_proportionally_more():
 def test_without_the_mitigations_the_answer_is_80gb_and_cites_the_incident():
     advice = e.recommend_gpu(12288, mitigations_on=False)
     assert advice.recommended_vram_gb == 80
-    assert "AIOps 실험1" in advice.reason
+    assert "aiops-exp1" in advice.reason
 
 
 def test_with_the_mitigations_48gb_is_enough_at_every_cap_we_have_run():
@@ -199,7 +199,7 @@ def test_an_unestimatable_job_is_not_bet_on_reclaimable_capacity():
 
 
 def test_a_job_we_have_run_before_is_priced_close_to_what_it_cost():
-    # bank 실험2': 1,110 pairs, 4 epochs, ~4,100 tokens, L40S, and it took
+    # bank-exp2v2: 1,110 pairs, 4 epochs, ~4,100 tokens, L40S, and it took
     # 6.54 hours at $0.99/hour, so about $6.47.
     result = e.estimate(
         gpu_name="L40S", cap=12288, pairs=1110, epochs=4, row_tokens=4100,
@@ -212,7 +212,7 @@ def test_a_job_we_have_run_before_is_priced_close_to_what_it_cost():
 
 
 def test_a_long_job_is_warned_about_drift_and_about_credentials_expiring():
-    # AIOps 실험2: 3,546 pairs, 1,776 steps, and it ran 33.5 hours.
+    # aiops-exp2: 3,546 pairs, 1,776 steps, and it ran 33.5 hours.
     result = e.estimate(
         gpu_name="L40S", cap=12288, pairs=3546, epochs=4, row_tokens=5600,
         mitigations_on=True,
@@ -280,7 +280,7 @@ def test_a_missing_cap_still_lets_the_runtime_be_estimated():
 
 def test_the_cost_uses_the_gpu_the_job_asked_for_not_the_one_we_recommend():
     # Timing an L40S run and pricing it at A100 rates overstated a job by 57%.
-    # bank 실험2' cost $6.47 on an L40S at $0.99/hour.
+    # bank-exp2v2 cost $6.47 on an L40S at $0.99/hour.
     result = e.estimate(
         gpu_name="L40S", cap=12288, pairs=1110, epochs=4, row_tokens=4100,
         mitigations_on=False,   # so the recommendation is 80 GB, not the L40S

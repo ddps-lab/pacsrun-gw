@@ -9,13 +9,14 @@ END-TO-END FLOW of this file:
      server `Settings` and returns the PacsJob object to POST to Kubernetes. The
      fields the user did not send are filled in here from identity, never from
      the request — that is the whole point (`docs/03-api.md`, the table titled
-     "서버가 채우는 것").
+     the "서버가 채우는 것" / what-the-server-fills table).
   3. `JobView.from_pacsjob()` goes the other way: it takes the object Kubernetes
      returns and produces the response, dropping every internal name on the way
-     out (`docs/03-api.md`, 응답 규칙 첫째).
+     out (`docs/03-api.md`, first rule of the response-rules section).
 
 WHAT THIS STAGE DELIBERATELY DOES NOT DO. `docs/08-plan.md` stage 1 says
-"판단은 아직 없다". So nothing here chooses a region, decides on-demand versus
+"판단은 아직 없다" — no judgement yet. So nothing here chooses a region, decides
+on-demand versus
 spot, turns fetch mode on, or estimates a duration. `placement` is left off the
 object entirely, which makes PACSrun apply its own defaults exactly as it does
 for a hand-written PacsJob today. Those decisions arrive in stage 3 with
@@ -180,7 +181,25 @@ class JobView(BaseModel):
         "Empty until the controller has looked at the job once."
     )
     message: str = Field(default="", description="Detail, mostly on failure.")
+    user: str = Field(
+        default="",
+        description="Who submitted it. Read from the ddpsrun.io/owner label the "
+        "server itself wrote at submit time, so it cannot be forged by editing "
+        "the object: a caller can only ever see their own namespace anyway.",
+    )
     created_at: str | None = None
+    started_at: str | None = Field(
+        default=None,
+        description="When the job's pod first ran, from status.startedAt "
+        "(PACSRUN-JOB-CLOCK). Absent while the job is still waiting for a "
+        "machine, which is exactly what makes queue time visible: "
+        "started_at - created_at is the wait, finished_at - started_at is the run.",
+    )
+    finished_at: str | None = Field(
+        default=None,
+        description="When the job reached Succeeded or Failed, from "
+        "status.finishedAt. Absent while it is still running.",
+    )
     gpu: str | None = Field(
         default=None, description="What it is actually running on, once it is running."
     )
@@ -243,7 +262,14 @@ class JobView(BaseModel):
             ),
             phase=status.get("phase", ""),
             message=status.get("message", ""),
+            user=labels.get(naming.OWNER_LABEL, ""),
             created_at=metadata.get("creationTimestamp"),
+            # PACSRUN-JOB-CLOCK stamps these two once each and never rewrites
+            # them, so a job that lost its machine and restarted keeps its
+            # original startedAt. That is deliberate: the screen wants elapsed
+            # wall time, and recovery_count already reports the interruptions.
+            started_at=status.get("startedAt"),
+            finished_at=status.get("finishedAt"),
             gpu=gpu,
             vendor=vendor,
             recovery_count=int(status.get("recoveryCount", 0) or 0),
@@ -424,7 +450,7 @@ class TrainingFacts(BaseModel):
     Every field here is something only the user knows: how big their dataset is,
     how long their sequences are, what their trainer's batch settings are. The
     server asks for them rather than guessing, because guessing is what made the
-    market 실험2 estimate 96% wrong.
+    market-exp2 estimate 96% wrong.
     """
 
     pairs: int | None = Field(
@@ -742,4 +768,102 @@ class LogsResponse(BaseModel):
         description="How far back this window reached. Make it several times your "
         "polling interval: too narrow and a pause loses lines, too wide and every "
         "request re-sends what it already sent."
+    )
+
+
+
+class JobSpecResponse(BaseModel):
+    """What `GET /v1/jobs/{id}/spec` returns: the submission, as stored.
+
+    The detail screen shows this so a user can answer "what exactly did I run?"
+    months later, and so "same settings again" has something to copy from. It is
+    SkyPilot's `Show SkyPilot YAML` panel (`sky/dashboard/src/pages/jobs/[job].js`)
+    with our object in place of theirs.
+
+    DDPSRUN-SPEC-REDACT: two things are removed on the way out.
+
+    1. Every `env` entry carrying a `valueFrom`. The value itself was never in
+       the object (that is the point of `secretKeyRef`), but the Kubernetes
+       Secret's name and key ARE, and they are cluster internals a caller has no
+       use for. The entry survives with its `name` only, so the screen can still
+       say "GITHUB_PAT was set", and the name goes into `redacted`.
+    2. `serviceAccountName`, for the same reason `JobView.from_pacsjob` drops it:
+       it names an identity inside our cluster.
+    """
+
+    job_id: str
+    name: str
+    spec: dict[str, Any] = Field(
+        description="The PacsJob spec with the two removals above applied."
+    )
+    redacted: list[str] = Field(
+        default_factory=list,
+        description="Names of the env entries whose source was removed. Shown to "
+        "the user as 'set from a secret' rather than silently vanishing, because "
+        "an env var that disappears from the screen reads as a bug.",
+    )
+
+    @staticmethod
+    def from_pacsjob(obj: dict[str, Any]) -> "JobSpecResponse":
+        """Build the response from the raw object.
+
+        Args:
+            obj: the PacsJob as the Kubernetes API returned it.
+
+        Returns:
+            A `JobSpecResponse`. A job with no env at all yields an empty
+            `redacted` list, not an error.
+        """
+        metadata = obj.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        annotations = metadata.get("annotations") or {}
+        spec = dict(obj.get("spec") or {})
+
+        spec.pop("serviceAccountName", None)
+
+        redacted: list[str] = []
+        env = spec.get("env")
+        if isinstance(env, list):
+            kept: list[dict[str, Any]] = []
+            for entry in env:
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("name", ""))
+                if "valueFrom" in entry:
+                    redacted.append(name)
+                    kept.append({"name": name, "fromSecret": True})
+                else:
+                    kept.append(dict(entry))
+            spec["env"] = kept
+
+        job_id = labels.get(naming.JOB_ID_LABEL) or naming.job_id_from_object_name(
+            metadata.get("name", "")
+        )
+        return JobSpecResponse(
+            job_id=job_id or "",
+            name=(
+                annotations.get(naming.DISPLAY_NAME_ANNOTATION)
+                or labels.get(naming.DISPLAY_NAME_LABEL)
+                or metadata.get("name", "")
+            ),
+            spec=spec,
+            redacted=redacted,
+        )
+
+
+class JobListResponse(BaseModel):
+    """What GET /v1/jobs returns: this caller's own jobs, newest first.
+
+    ONLY THIS CALLER'S. The list is read from the token's namespace and nowhere
+    else, so it cannot show a teammate's work — the same boundary every other
+    route uses. /v1/stats adds a team's numbers up, but it carries no job names
+    for exactly this reason.
+    """
+
+    jobs: list[JobView] = Field(default_factory=list)
+    total: int = Field(
+        default=0,
+        description="How many jobs matched the filter before `limit` cut the "
+        "list. Equal to len(jobs) when nothing was cut. The screen needs both "
+        "numbers to say 'showing 200 of 512' instead of quietly hiding 312.",
     )

@@ -25,7 +25,8 @@ no judgement either — one is static prose, the other is generated from the
 request model — but they are what lets an agent use this service without having
 read a document.
 
-WHAT IS NOT HERE, ON PURPOSE. `docs/08-plan.md` stage 1: "판단은 아직 없다."
+WHAT IS NOT HERE, ON PURPOSE. `docs/08-plan.md` stage 1: "판단은 아직 없다" —
+no judgement yet.
 No `/validate`, no `/estimate`, no upload, no cancel. Those are stage 3, and
 putting a half-formed version of them here would mean two sources of truth for
 the same judgement. `/v1/gpus` is missing for a different reason: answering it
@@ -59,6 +60,8 @@ from .models import (
     FindingView,
     GpuAdviceView,
     HoursRange,
+    JobListResponse,
+    JobSpecResponse,
     JobView,
     GpuSampleView,
     JudgementRequest,
@@ -358,6 +361,86 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
     )
 
 
+# DDPSRUN-PHASE-GROUPS: the two tabs the jobs screen offers, from
+# `docs/15-screens.md`. Borrowed from SkyPilot's `statusGroups`
+# (`sky/dashboard/src/components/jobs.jsx:97`), which splits the same way: the
+# default view is what is still moving, not everything ever submitted.
+#
+# PACSrun defines seven phases in `api/v1alpha1/pacsjob_types.go`: Pending,
+# Starting, Running, Recovering (lines 64-69) and Compared (line 85). Three of
+# them end the job and never change again.
+#
+# Compared is the one that is easy to miss. It is not a failure: a mode=compare
+# job priced every candidate offering and deliberately bought nothing
+# (`pacsjob_types.go:85`). Leaving it out of this set was a real defect —
+# measured 2026-09-01 against the live cluster, 12 of 24 jobs were Compared and
+# every one of them showed up under the "still running" tab.
+#
+# A phase we do not know about (a new one added upstream) counts as active,
+# because a job the screen cannot classify is one the user should still look at.
+FINISHED_PHASES = frozenset({"Succeeded", "Failed", "Compared"})
+
+
+@app.get("/v1/jobs", response_model=JobListResponse)
+def list_jobs(
+    request: Request,
+    principal: PrincipalDep,
+    phase: str = Query(
+        default="",
+        description="Filter. Empty means all. 'active' or 'finished' select a "
+        "group; anything else is matched against status.phase exactly, so "
+        "?phase=Failed works too.",
+    ),
+    limit: int = Query(
+        default=200,
+        ge=1,
+        le=1000,
+        description="How many to return, after sorting newest first.",
+    ),
+) -> JobListResponse:
+    """This caller's own jobs, newest first.
+
+    The screen's first view. Read from the token's namespace, so it cannot
+    contain anyone else's work.
+
+    Filtering happens here rather than in the browser because the whole list
+    crosses the network otherwise: at 1 KB per job, a namespace with 500 jobs
+    would send 500 KB on every 15-second poll, which is 120 MB an hour for one
+    open tab. The cluster list itself is not filtered — the Kubernetes API has
+    no field selector for a CRD's status.phase — so this saves bandwidth, not
+    cluster work.
+
+    Args:
+        phase: 'active', 'finished', an exact phase name, or empty for all.
+        limit: cap on the number returned. `total` reports how many matched
+            before the cap, so the screen can say "showing 200 of 512".
+
+    Raises:
+        HTTPException: 502 when the cluster could not be read.
+    """
+    cluster: Cluster = request.app.state.cluster
+    try:
+        objects = cluster.list_jobs(principal.namespace)
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    views = [JobView.from_pacsjob(obj) for obj in objects]
+
+    if phase == "active":
+        views = [v for v in views if v.phase not in FINISHED_PHASES]
+    elif phase == "finished":
+        views = [v for v in views if v.phase in FINISHED_PHASES]
+    elif phase:
+        views = [v for v in views if v.phase == phase]
+
+    # Newest first. creationTimestamp is RFC 3339 with fixed-width fields, so a
+    # string sort is a time sort; a job with no timestamp yet sorts last rather
+    # than crashing the comparison.
+    views.sort(key=lambda view: view.created_at or "", reverse=True)
+    total = len(views)
+    return JobListResponse(jobs=views[:limit], total=total)
+
+
 @app.get("/v1/jobs/{job_id}", response_model=JobView)
 def get_job(request: Request, job_id: str, principal: PrincipalDep) -> JobView:
     """Report one job's state.
@@ -385,6 +468,38 @@ def get_job(request: Request, job_id: str, principal: PrincipalDep) -> JobView:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return JobView.from_pacsjob(obj)
+
+
+@app.get("/v1/jobs/{job_id}/spec", response_model=JobSpecResponse)
+def get_job_spec(request: Request, job_id: str, principal: PrincipalDep) -> JobSpecResponse:
+    """The submission this job was created from, with secrets removed.
+
+    Two screens need it. The detail screen shows "what exactly did I run", and
+    "same settings again" copies from it. Redaction is described on
+    `JobSpecResponse` (DDPSRUN-SPEC-REDACT).
+
+    Args:
+        job_id: an id this server issued.
+        principal: the caller. The lookup is in their namespace only, so someone
+            else's job reads as 404.
+
+    Raises:
+        HTTPException: 404 for an unknown or malformed id; 502 on a cluster error.
+    """
+    cluster: Cluster = request.app.state.cluster
+    try:
+        name = naming.object_name(job_id)
+    except naming.NamingError as exc:
+        raise HTTPException(status_code=404, detail="no such job") from exc
+
+    try:
+        obj: dict[str, Any] = cluster.get_job(principal.namespace, name)
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail="no such job") from exc
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return JobSpecResponse.from_pacsjob(obj)
 
 
 @app.get("/v1/jobs/{job_id}/metrics", response_model=MetricsResponse)

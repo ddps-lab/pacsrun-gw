@@ -18,7 +18,7 @@ END-TO-END FLOW of one `/v1/estimate`:
   6. `estimate()` assembles all of it into one answer with its reasons attached.
 
 THE ONE RULE THIS FILE IS BUILT AROUND. A wrong number is worse than no number.
-market 실험2 was estimated at 9.14 hours and took 17.87 — 96% wrong — because
+market-exp2 was estimated at 9.14 hours and took 17.87 — 96% wrong — because
 nothing at that sequence length had ever been measured and the estimate was made
 anyway. So `unknown` is a first-class answer here, and extrapolating past the
 ends of the measured range produces it rather than a number.
@@ -55,7 +55,7 @@ from .measurements import (
 SIMILAR_LENGTH_BAND = 0.15
 
 # How far past the ends of the measured range we are willing to go before
-# answering `unknown`. market 실험2 is why this is small: its sequence length
+# answering `unknown`. market-exp2 is why this is small: its sequence length
 # was 2.6 times the longest we had measured, and the estimate was 96% wrong.
 EXTRAPOLATION_ALLOWANCE = 0.20
 
@@ -145,7 +145,7 @@ def steps(pairs: int, epochs: int, batch_size: int, grad_accum: int) -> int:
             meaningless rather than merely wrong.
 
     Example:
-        AIOps 실험2 had 3,546 pairs, 4 epochs, and 1 x 8, and its training log
+        aiops-exp2 had 3,546 pairs, 4 epochs, and 1 x 8, and its training log
         said 1776.
 
         >>> steps(3546, 4, 1, 8)
@@ -316,7 +316,7 @@ def peak_logits_gib(cap: int, vocab: int = QWEN3_4B_VOCAB) -> float:
 
     WHY THE CAP AND NOT THE AVERAGE LENGTH. The allocation is made for the
     LONGEST sample in the batch, and the longest sample in a dataset grows until
-    it hits `--max-len`. AIOps 실험1 died on a buffer for 11,926 tokens with a
+    it hits `--max-len`. aiops-exp1 died on a buffer for 11,926 tokens with a
     cap of 12,288: the longest sample reached 97.1% of the cap.
 
     WHY LOGITS AND NOT ATTENTION. The traceback named
@@ -333,7 +333,7 @@ def peak_logits_gib(cap: int, vocab: int = QWEN3_4B_VOCAB) -> float:
         GiB.
 
     Example:
-        AIOps 실험1's failed allocation was 6.75 GiB, for a sample 3% shorter
+        aiops-exp1's failed allocation was 6.75 GiB, for a sample 3% shorter
         than the cap.
 
         >>> round(peak_logits_gib(12288), 2)
@@ -396,7 +396,7 @@ def recommend_gpu(
             peak_logits_gib=round(peak, 2),
             reason=(
                 f"the logits buffer alone reaches {peak:.2f} GiB at cap {cap:,}, and "
-                f"without the two mitigations that is what killed AIOps 실험1 on a "
+                f"without the two mitigations that is what killed aiops-exp1 on a "
                 f"48 GB card. Either turn both on and ask again, or take 80 GB. "
                 f"{INCIDENTS['aiops-oom'].what_happened}"
             ),

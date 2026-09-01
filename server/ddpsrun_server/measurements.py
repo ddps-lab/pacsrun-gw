@@ -93,7 +93,7 @@ class Gpu:
 # Only what we have rented. A GPU absent here cannot be priced, and
 # `estimate.py` says so rather than guessing.
 GPUS: tuple[Gpu, ...] = (
-    # 44.39 GiB usable measured during the AIOps 실험1 OOM, which printed how
+    # 44.39 GiB usable measured during the aiops-exp1 OOM, which printed how
     # much was free at the moment it failed (docs/04-estimate.md section 5).
     Gpu("L40S", 48, 44.39, 0.99, "2026-08-30"),
     Gpu("A100-SXM4-80GB", 80, 79.15, 1.59, "2026-08-29"),
@@ -125,7 +125,7 @@ class Incident:
     """One thing that went wrong, kept so a check can cite it.
 
     A warning that says "this may run out of memory" is ignored. One that says
-    "AIOps 실험1 died after 4 steps asking for 6.75 GiB with 3.43 GiB free" is
+    "aiops-exp1 died after 4 steps asking for 6.75 GiB with 3.43 GiB free" is
     not. Every check in `validate.py` points at one of these.
     """
 
@@ -138,7 +138,7 @@ INCIDENTS: dict[str, Incident] = {
     for incident in (
         Incident(
             "aiops-oom",
-            "AIOps 실험1 died after 4 steps on an L40S: it asked CUDA for a "
+            "aiops-exp1 died after 4 steps on an L40S: it asked CUDA for a "
             "6.75 GiB logits buffer with 3.43 GiB free. The same job finished "
             "on the same GPU once PYTORCH_CUDA_ALLOC_CONF and the TRL patch "
             "were both on, and got 22.7% faster per step as well.",
@@ -151,7 +151,7 @@ INCIDENTS: dict[str, Incident] = {
         ),
         Incident(
             "market-mis-estimate",
-            "market 실험2 was estimated at 9.14 hours and took 17.87. The cap "
+            "market-exp2 was estimated at 9.14 hours and took 17.87. The cap "
             "was 18432 rather than 12288 and nothing at that length had been "
             "measured. 96% wrong.",
         ),

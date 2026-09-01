@@ -1,0 +1,10 @@
+// Copy to terraform.tfvars and fill in.
+//   cp terraform.tfvars.example terraform.tfvars
+// terraform.tfvars is gitignored; this .example is committed.
+//
+// bucket_name has to be globally unique across all of S3, which is why the
+// account id is the usual suffix. The account id is not a credential, but it
+// stays out of git so one clone is never mistaken for another environment.
+
+region      = "us-west-2"
+bucket_name = "ddpsrun-ui-<ACCOUNT_ID>"

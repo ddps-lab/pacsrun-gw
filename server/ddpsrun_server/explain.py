@@ -11,8 +11,9 @@ order. It does not assume the reader knows Kubernetes, PACSrun, or that a GPU is
 being rented from anybody.
 
 WHAT IT MUST NOT SAY. No namespace names, no ServiceAccount names, no bucket
-name, no `PACSRUN_*` variable. Those are internal (`docs/03-api.md`, 응답 규칙
-첫째) and this endpoint has no token, so it is the most public thing here.
+name, no `PACSRUN_*` variable. Those are internal (`docs/03-api.md`, first rule
+of the "응답 규칙" / response-rules section) and this endpoint has no token, so
+it is the most public thing here.
 
 Grep anchor: DDPSRUN-EXPLAIN
 """

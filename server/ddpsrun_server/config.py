@@ -66,7 +66,7 @@ class Settings:
     Attributes:
         result_bucket: S3 bucket every job's output goes to. The server builds
             `resultPath` from it so a user cannot write into someone else's
-            folder (`docs/03-api.md`, the "서버가 채우는 것" table).
+            folder (`docs/03-api.md`, the "서버가 채우는 것" / what-the-server-fills table).
         result_prefix: key prefix inside that bucket, e.g. `pacsrun/`. Always
             ends with a slash; `from_env` appends one if the operator forgot.
         service_account: the ServiceAccount name every job's pods run as. Fixed

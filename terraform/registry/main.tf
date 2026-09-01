@@ -188,6 +188,38 @@ data "aws_iam_policy_document" "github_permissions" {
     }
   }
 
+  // Uploading the screen. Scoped to the one bucket: this role is assumed by
+  // anything running in the repository, so it must not be able to write to
+  // arbitrary buckets in the account.
+  dynamic "statement" {
+    for_each = var.ui_bucket_name == "" ? [] : [1]
+    content {
+      sid    = "PublishTheScreenOnly"
+      effect = "Allow"
+      actions = [
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+      ]
+      resources = [
+        "arn:aws:s3:::${var.ui_bucket_name}",
+        "arn:aws:s3:::${var.ui_bucket_name}/*",
+      ]
+    }
+  }
+
+  // Telling CloudFront the files changed. Without this the old page is served
+  // until the cache expires on its own.
+  dynamic "statement" {
+    for_each = var.ui_distribution_id == "" ? [] : [1]
+    content {
+      sid       = "InvalidateTheScreensCacheOnly"
+      effect    = "Allow"
+      actions   = ["cloudfront:CreateInvalidation"]
+      resources = ["arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${var.ui_distribution_id}"]
+    }
+  }
+
   statement {
     sid = "EcrPushToThisRepositoryOnly"
     actions = [
