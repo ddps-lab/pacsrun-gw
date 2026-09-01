@@ -73,7 +73,10 @@ async function call(path, options = {}) {
       typeof detail === "string" ? detail
       : Array.isArray(detail)
         ? detail.map((d) => `${(d.loc || []).slice(1).join(".")}: ${d.msg}`).join("; ")
-        : `The server answered ${response.status}`
+        // No `detail` means the body was not this API's JSON at all, which most
+      // often means the request reached something else entirely. Naming where
+      // it went matters: a bare status code sends people to the wrong machine.
+      : `The server answered ${response.status} for ${store.server}${path}`
     );
   }
   return body;
@@ -737,6 +740,16 @@ const REFRESH_KEY = "ddpsrun.refresh"; // survives a tab close, unlike the id_to
 
 let loginConfig = null;
 
+/* Where the API is. Worked out once in `start()` and used everywhere the server
+   address gets written down.
+
+   NEVER use `location.origin` for this. The page is served from CloudFront and
+   the API is a Lambda Function URL, so they are different hosts. Putting
+   location.origin here is what produced "The server answered 403" immediately
+   after a successful sign-in on 2026-09-02: every later request went to
+   CloudFront, which handed back S3's own AccessDenied for a key it has not got. */
+let apiBase = "";
+
 /* base64url with no padding, which is what OAuth asks for everywhere. */
 function b64url(bytes) {
   return btoa(String.fromCharCode(...new Uint8Array(bytes)))
@@ -812,7 +825,7 @@ async function finishCognitoLogin() {
       redirect_uri: redirectUri(),
       code_verifier: verifier,
     });
-    store.set(location.origin, tokens.id_token);
+    store.set(apiBase || location.origin, tokens.id_token);
     if (tokens.refresh_token) localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
     return true;
   } catch (err) {
@@ -921,7 +934,7 @@ window.addEventListener("hashchange", route);
   // Two fallbacks, in order: a server the user typed in before, then this
   // page's own origin, which is correct for a same-origin deployment (the
   // server running as a pod behind one address).
-  let apiBase = store.server;
+  apiBase = store.server;
   try {
     const response = await fetch("config.json", { cache: "no-store" });
     if (response.ok) {
