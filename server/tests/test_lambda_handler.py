@@ -143,7 +143,31 @@ def test_the_subprocess_is_told_where_to_find_its_imports(handler_module):
     assert "PYTHONPATH" in names
 
 
-def test_the_minted_token_has_the_shape_the_apiserver_expects():
+@pytest.fixture
+def fake_aws_credentials(monkeypatch):
+    """Give botocore something to sign with, so no real credentials are needed.
+
+    WHY THIS EXISTS. `eks_token` calls `session.get_credentials()` and signs a
+    presigned URL with it. On a developer machine that quietly picks up
+    ~/.aws/credentials and the test passes; on CI there is nothing to pick up
+    and botocore raises NoCredentialsError. That is exactly what happened on
+    2026-09-01 (run 33482005912): two tests passed locally and failed on CI.
+
+    Fake keys are enough because these tests check the SHAPE of the token, not
+    that STS accepts it. The signature is computed the same way either way, and
+    nothing here talks to AWS.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing-not-a-real-key")
+    monkeypatch.setenv(
+        "AWS_SECRET_ACCESS_KEY", "testing-not-a-real-secret"
+    )
+    # A profile or an SSO cache on the machine running the tests would otherwise
+    # win over the two variables above.
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+
+
+def test_the_minted_token_has_the_shape_the_apiserver_expects(fake_aws_credentials):
     # Verified against the live apiserver on 2026-09-01: a token built this way
     # answered HTTP 200.
     from ddpsrun_server import eks_token
@@ -156,7 +180,7 @@ def test_the_minted_token_has_the_shape_the_apiserver_expects():
     assert "=" not in token.split(".", 1)[1]
 
 
-def test_the_cluster_name_is_signed_into_the_token():
+def test_the_cluster_name_is_signed_into_the_token(fake_aws_credentials):
     # This is what stops a token minted for one cluster being replayed against
     # another: the receiving apiserver puts its OWN name in that header before
     # calling STS, and the signature then does not match.

@@ -557,8 +557,8 @@ def test_the_job_list_is_newest_first(client, cluster):
 
 
 def test_a_job_with_no_timestamp_yet_does_not_break_the_sort(client, cluster):
-    cluster.objects[("lab-alice", "ddpsrun-000000000009")] = {
-        "metadata": {"name": "ddpsrun-000000000009"}, "spec": {}, "status": {}}
+    cluster.objects[("lab-alice", "ddpsrun-0000000000f9")] = {
+        "metadata": {"name": "ddpsrun-0000000000f9"}, "spec": {}, "status": {}}
     as_alice(client, "POST", "/v1/jobs", json=submit_body())
     assert as_alice(client, "GET", "/v1/jobs").status_code == 200
 
@@ -600,26 +600,26 @@ def _job(name, *, phase="", stamp="2026-09-01T00:00:00Z", **status):
 
 def test_the_job_list_reports_who_submitted_each_job(client, cluster):
     """The jobs screen's 'submitted by' column (docs/15-screens.md 15.5)."""
-    cluster.objects[("lab-alice", "ddpsrun-000000000001")] = _job("ddpsrun-000000000001")
+    cluster.objects[("lab-alice", "ddpsrun-0000000000a1")] = _job("ddpsrun-0000000000a1")
     result = as_alice(client, "GET", "/v1/jobs").json()
     assert result["jobs"][0]["user"] == "alice"
 
 
 def test_a_job_carries_the_two_clock_stamps(client, cluster):
     """The elapsed column needs run time, not age (PACSRUN-JOB-CLOCK)."""
-    cluster.objects[("lab-alice", "ddpsrun-000000000002")] = _job(
-        "ddpsrun-000000000002", phase="Succeeded",
+    cluster.objects[("lab-alice", "ddpsrun-0000000000a2")] = _job(
+        "ddpsrun-0000000000a2", phase="Succeeded",
         startedAt="2026-09-01T00:01:00Z", finishedAt="2026-09-01T02:30:00Z")
-    view = as_alice(client, "GET", "/v1/jobs/job-000000000002").json()
+    view = as_alice(client, "GET", "/v1/jobs/job-0000000000a2").json()
     assert view["started_at"] == "2026-09-01T00:01:00Z"
     assert view["finished_at"] == "2026-09-01T02:30:00Z"
 
 
 def test_a_waiting_job_has_no_start_stamp(client, cluster):
     """Queue time is visible precisely because startedAt is absent until it runs."""
-    cluster.objects[("lab-alice", "ddpsrun-000000000003")] = _job(
-        "ddpsrun-000000000003", phase="Pending")
-    view = as_alice(client, "GET", "/v1/jobs/job-000000000003").json()
+    cluster.objects[("lab-alice", "ddpsrun-0000000000a3")] = _job(
+        "ddpsrun-0000000000a3", phase="Pending")
+    view = as_alice(client, "GET", "/v1/jobs/job-0000000000a3").json()
     assert view["created_at"] == "2026-09-01T00:00:00Z"
     assert view["started_at"] is None
     assert view["finished_at"] is None
@@ -640,7 +640,7 @@ def test_the_active_filter_drops_finished_jobs(client, cluster):
 
 def test_a_job_with_no_phase_yet_counts_as_active(client, cluster):
     """A job the controller has not looked at is still one to watch."""
-    cluster.objects[("lab-alice", "ddpsrun-000000000020")] = _job("ddpsrun-000000000020")
+    cluster.objects[("lab-alice", "ddpsrun-0000000000b0")] = _job("ddpsrun-0000000000b0")
     result = as_alice(client, "GET", "/v1/jobs?phase=active").json()
     assert len(result["jobs"]) == 1
 
@@ -705,7 +705,7 @@ def test_the_spec_route_hides_someone_elses_job(client, cluster):
 
 
 def test_the_spec_route_needs_a_token(client):
-    assert client.get("/v1/jobs/job-000000000001/spec").status_code == 401
+    assert client.get("/v1/jobs/job-0000000000a1/spec").status_code == 401
 
 
 def test_compared_counts_as_finished_not_as_still_running(client, cluster):
@@ -716,8 +716,8 @@ def test_compared_counts_as_finished_not_as_still_running(client, cluster):
     nothing (`api/v1alpha1/pacsjob_types.go:85`). It is terminal and it is not a
     failure, so it belongs under 'finished' with a label of its own.
     """
-    cluster.objects[("lab-alice", "ddpsrun-000000000050")] = _job(
-        "ddpsrun-000000000050", phase="Compared")
+    cluster.objects[("lab-alice", "ddpsrun-0000000000c5")] = _job(
+        "ddpsrun-0000000000c5", phase="Compared")
 
     assert as_alice(client, "GET", "/v1/jobs?phase=active").json()["jobs"] == []
     finished = as_alice(client, "GET", "/v1/jobs?phase=finished").json()["jobs"]

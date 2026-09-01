@@ -98,6 +98,11 @@ jobs:
   screen:
     name: upload the screen to S3
     runs-on: ubuntu-latest
+    # Skip rather than fail when the bucket has not been created yet. Without
+    # this guard an unset UI_BUCKET expands to an empty string and the job dies
+    # on `Invalid bucket name ""`, which reads as a broken pipeline rather than
+    # as configuration that has not been done yet. Measured on run 33488695173.
+    if: vars.UI_BUCKET != '' && vars.UI_DISTRIBUTION != ''
     steps:
       - uses: actions/checkout@v4
 
