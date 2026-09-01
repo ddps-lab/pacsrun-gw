@@ -38,6 +38,7 @@ import base64
 import json
 import os
 import pathlib
+import sys
 
 TMP = pathlib.Path("/tmp")
 TOKENS_PATH = TMP / "ddpsrun-tokens.json"
@@ -76,12 +77,24 @@ def _write_token_file() -> None:
 def _write_kubeconfig() -> None:
     """Build a kubeconfig from eks:DescribeCluster and point KUBECONFIG at it.
 
-    THE `exec` STANZA IS THE WHOLE POINT. It tells the kubernetes client to run
-    `aws eks get-token` for every call, which signs an STS request with whatever
-    credentials the environment has — here, the function's execution role. That
-    role is an EKS access entry, so the apiserver recognises it. Measured
-    2026-09-01: the entry's `kubernetesGroups` value arrives in the request's
-    Groups, which is why RBAC is bound to a group rather than to a username.
+    THE `exec` STANZA IS THE WHOLE POINT. It tells the kubernetes client to mint a
+    fresh bearer token for every call, signed with whatever credentials the
+    environment has — here, the function's execution role. That role is an EKS
+    access entry, so the apiserver recognises it. Measured 2026-09-01: the
+    entry's `kubernetesGroups` value arrives in the request's Groups, which is
+    why RBAC is bound to a group rather than to a username.
+
+    IT RUNS OUR OWN PYTHON, NOT `aws eks get-token`. The first deployment did the
+    latter and every cluster call failed with
+    `[Errno 2] No such file or directory: 'aws'` — the Lambda Python runtime has
+    no AWS CLI, and shipping one would add roughly 100 MB to a cold start already
+    dominated by reading the package. `ddpsrun_server.eks_token` builds the same
+    token with botocore, which the runtime does provide.
+
+    AND IT STAYS AN `exec` RATHER THAN A TOKEN WRITTEN ONCE. EKS accepts one of
+    these for about 15 minutes; a warm execution environment lives longer than
+    that, so a token minted at cold start would go stale and later requests would
+    401.
 
     Raises:
         RuntimeError: the cluster could not be described.
@@ -115,10 +128,18 @@ def _write_kubeconfig() -> None:
                     "name": cluster_name,
                     "user": {"exec": {
                         "apiVersion": "client.authentication.k8s.io/v1beta1",
-                        "command": "aws",
-                        "args": ["eks", "get-token",
+                        # sys.executable, not "python3": the runtime's interpreter
+                        # lives at an absolute path and PATH inside a subprocess
+                        # is not something to rely on.
+                        "command": sys.executable,
+                        "args": ["-m", "ddpsrun_server.eks_token",
                                  "--cluster-name", cluster_name,
                                  "--region", region],
+                        # The subprocess needs to find both our package and the
+                        # runtime's botocore, and it does not inherit sys.path.
+                        "env": [
+                            {"name": "PYTHONPATH", "value": os.pathsep.join(sys.path)},
+                        ],
                     }},
                 }],
                 "contexts": [{
