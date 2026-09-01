@@ -65,14 +65,34 @@ jobs:
         working-directory: server
         run: |
           set -euo pipefail
+          # Read the dependency list out of pyproject.toml rather than repeating
+          # it here. It used to be repeated, and on 2026-09-01 that cost a 502:
+          # pyjwt was added to pyproject for Cognito, this list was not touched,
+          # and the deployed function died on `No module named 'jwt'`. One list
+          # cannot drift from itself.
+          #
+          # Two things are dropped, and only two, each for its own reason:
+          #   botocore  the Lambda runtime already provides it. Shipping ours
+          #             would add tens of megabytes to a cold start that is
+          #             already dominated by reading the package.
+          #   uvicorn   only ever runs the server as a process. In Lambda,
+          #             mangum is what speaks to the runtime, so uvicorn and its
+          #             [standard] extras would be several megabytes never read.
+          DEPS=$(python - <<'PY'
+          import tomllib
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          skip = ("botocore", "uvicorn")
+          print(" ".join(
+              d for d in project["dependencies"]
+              if not d.lower().startswith(skip)
+          ))
+          PY
+          )
+          echo "packaging: $DEPS"
           python -m pip install --quiet --target build \
             --platform manylinux2014_x86_64 --python-version 3.12 \
-            --only-binary=:all: \
-            fastapi mangum kubernetes pydantic
+            --only-binary=:all: $DEPS
           cp -r ddpsrun_server build/
-          # boto3 is provided by the Lambda runtime; shipping our own would add
-          # tens of megabytes to a cold start that is already dominated by
-          # reading the package.
           rm -rf build/boto3 build/botocore build/*.dist-info/RECORD
           cd build && zip -qr ../function.zip .
           cd .. && python - <<'PY'
