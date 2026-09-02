@@ -25,6 +25,8 @@ class FakeClient:
 
     def __init__(self):
         self.submitted = None
+        self.cancelled = []
+        self.cancel_error = None
         self.submit_result = {
             "job_id": "job-a8acdef80a07",
             "name": "bank-exp2",
@@ -54,6 +56,11 @@ class FakeClient:
     def submit(self, body):
         self.submitted = body
         return self.submit_result
+
+    def cancel(self, job_id):
+        if self.cancel_error:
+            raise self.cancel_error
+        self.cancelled.append(job_id)
 
     def status(self, job_id):
         return self.status_result
@@ -541,3 +548,41 @@ def test_estimate_tells_you_the_flag_to_use(fake, capsys):
     }
     run(["estimate", "--name", "x", "--image", "i"])
     assert "--capacity-type on-demand" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# DDPSRUN-CANCEL
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_asks_before_doing_it(fake, capsys, monkeypatch):
+    """It cannot be undone and a job id is twelve hex characters."""
+    monkeypatch.setattr("builtins.input", lambda *a: "n")
+    assert run(["cancel", "job-a8acdef80a07"]) == cli.EXIT_USAGE
+    assert fake.cancelled == []
+    assert "left alone" in capsys.readouterr().out
+
+
+def test_cancel_goes_ahead_on_yes(fake, capsys, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *a: "y")
+    assert run(["cancel", "job-a8acdef80a07"]) == cli.EXIT_OK
+    assert fake.cancelled == ["job-a8acdef80a07"]
+    assert "cancelled job-a8acdef80a07" in capsys.readouterr().out
+
+
+def test_the_yes_flag_skips_the_prompt(fake, monkeypatch):
+    """For scripts, which have nobody to answer it. input() must not be reached:
+    in a script with no tty it would raise EOFError, not read a default."""
+    def no_input(*a):
+        raise AssertionError("should not have prompted")
+
+    monkeypatch.setattr("builtins.input", no_input)
+    assert run(["cancel", "job-a8acdef80a07", "--yes"]) == cli.EXIT_OK
+    assert fake.cancelled == ["job-a8acdef80a07"]
+
+
+def test_cancel_reports_the_servers_refusal(fake, capsys, monkeypatch):
+    fake.cancel_error = ServerError("no such job")
+    monkeypatch.setattr("builtins.input", lambda *a: "y")
+    assert run(["cancel", "job-a8acdef80a07"]) == cli.EXIT_SERVER
+    assert "no such job" in capsys.readouterr().err

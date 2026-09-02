@@ -19,6 +19,7 @@ Authorization: Bearer <your token>
 | GET | `/v1/explain` | Say what this service is and how to use it, in prose. |
 | GET | `/v1/jobs` | This caller's own jobs, newest first. |
 | POST | `/v1/jobs` | Submit a job. |
+| DELETE | `/v1/jobs/{job_id}` | Stop a job and take it off the list. |
 | GET | `/v1/jobs/{job_id}` | Report one job's state. |
 | GET | `/v1/jobs/{job_id}/logs` | One window of a job's output. Ask again for more. |
 | GET | `/v1/jobs/{job_id}/metrics` | GPU usage and training progress, read out of the job's own log. |

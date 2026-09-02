@@ -43,6 +43,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Response
 from fastapi.responses import PlainTextResponse
 
 from . import naming
@@ -583,6 +584,54 @@ def get_job(request: Request, job_id: str, principal: PrincipalDep) -> JobView:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return JobView.from_pacsjob(obj)
+
+
+@app.delete("/v1/jobs/{job_id}", status_code=204)
+def cancel_job(request: Request, job_id: str, principal: PrincipalDep) -> Response:
+    """Stop a job and take it off the list.
+
+    DDPSRUN-CANCEL. Deleting the PacsJob is the only stop the CRD offers, and it
+    is what PACSrun's controller watches to give back whatever the job rented.
+    This server never deletes a pod or a node itself: it does not know what a
+    job took, and a partial cleanup would strand capacity nobody is tracking.
+
+    WHY THIS EXISTS. A job can sit in Pending forever with no way out. On
+    2026-09-02 one asked for an L40S on spot: RunPod does not sell spot so it was
+    refused before the catalogue was read, and no AWS row matched the ask, so the
+    controller retried the same failure every eleven minutes. There was no way to
+    stop it from the screen or the CLI, and `kubectl` is exactly what this
+    service exists so that nobody needs.
+
+    A finished job can be cancelled too. Nothing is stopped in that case; the row
+    goes away, which is the other thing people want this button for.
+
+    Args:
+        job_id: an id this server issued.
+        principal: the caller. The delete happens in their namespace only, so
+            someone else's job reads as 404 and cannot be cancelled by guessing.
+
+    Returns:
+        204 with no body. There is nothing useful to say about a thing that is
+        now gone.
+
+    Raises:
+        HTTPException: 404 for an unknown or malformed id; 502 on a cluster error.
+    """
+    cluster: Cluster = request.app.state.cluster
+    try:
+        name = naming.object_name(job_id)
+    except naming.NamingError as exc:
+        raise HTTPException(status_code=404, detail="no such job") from exc
+
+    try:
+        cluster.delete_job(principal.namespace, name)
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail="no such job") from exc
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    logger.warning("cancelled %s for %s", job_id, principal.user)
+    return Response(status_code=204)
 
 
 @app.get("/v1/jobs/{job_id}/spec", response_model=JobSpecResponse)

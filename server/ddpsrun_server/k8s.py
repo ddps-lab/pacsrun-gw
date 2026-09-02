@@ -178,6 +178,43 @@ class Cluster:
                 raise NotFound(name) from exc
             raise ClusterError(_api_message(exc)) from exc
 
+    def delete_job(self, namespace: str, name: str) -> None:
+        """Delete one PacsJob.
+
+        WHAT THIS ACTUALLY STOPS. Deleting the PacsJob is what PACSrun watches;
+        its controller owns the pods and the rented capacity, and removing the
+        object is the signal to give them back. This server does not delete pods
+        or nodes itself, and must not: it holds no knowledge of what a job
+        rented, and a half-cleanup would leave capacity nobody is tracking.
+
+        WHY THERE IS NO SEPARATE "CANCEL". A PacsJob has no field meaning "stop
+        but stay". Deleting it is the only stop the CRD offers, so a cancel that
+        left the row on screen would be a lie about what happened.
+
+        Args:
+            namespace: the caller's namespace, from their token. A job in any
+                other namespace is not reachable from here at all.
+            name: the PacsJob's Kubernetes name.
+
+        Raises:
+            NotFound: no object of that name in that namespace. Also what a
+                caller gets for someone else's job, which is why guessing an id
+                tells you nothing.
+            ClusterError: anything else.
+        """
+        try:
+            self._custom.delete_namespaced_custom_object(
+                group=PACSJOB_GROUP,
+                version=PACSJOB_VERSION,
+                plural=PACSJOB_PLURAL,
+                namespace=namespace,
+                name=name,
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                raise NotFound(name) from exc
+            raise ClusterError(f"could not delete {name}: {exc.reason}") from exc
+
     def list_jobs(self, namespace: str) -> list[dict[str, Any]]:
         """Every PacsJob in one namespace.
 

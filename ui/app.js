@@ -711,6 +711,32 @@ $("d-again").onclick = () => {
   go("submit");
 };
 
+/* DDPSRUN-CANCEL. A job can sit in Pending forever with nothing to do about it,
+   and until this existed the only way out was kubectl — the thing this service
+   exists so that nobody needs. Deleting the PacsJob is the only stop the CRD
+   offers, so the row goes away rather than staying with a "cancelled" state. */
+$("d-cancel").onclick = async () => {
+  const jobId = $("d-id").textContent.trim();
+  if (!jobId) return;
+  // A browser confirm() is the one prompt available here, and this cannot be
+  // undone. Naming the job in the question matters: the id is twelve hex
+  // characters and the screen is often open on the wrong one.
+  if (!window.confirm(`Cancel ${$("d-name").textContent}? This cannot be undone.`)) return;
+
+  $("d-cancel").disabled = true;
+  $("d-cancel").textContent = "Cancelling...";
+  try {
+    await call(`/v1/jobs/${jobId}`, { method: "DELETE" });
+    poll.stop();
+    go("jobs");
+  } catch (err) {
+    $("d-message").innerHTML = note("err", err.message);
+  } finally {
+    $("d-cancel").disabled = false;
+    $("d-cancel").textContent = "Cancel job";
+  }
+};
+
 $("d-log-save").onclick = () => {
   // A download link is inert inside a sandboxed viewer, so open the text in a
   // tab and let the browser's own save do the work.

@@ -44,6 +44,12 @@ class FakeCluster:
         except KeyError:
             raise k8s.NotFound(name) from None
 
+    def delete_job(self, namespace, name):
+        try:
+            del self.objects[(namespace, name)]
+        except KeyError:
+            raise k8s.NotFound(name) from None
+
     def recent_log_lines(self, namespace, job_name, since_seconds):
         lines = self.logs.get((namespace, job_name))
         if lines is None:
@@ -722,3 +728,57 @@ def test_compared_counts_as_finished_not_as_still_running(client, cluster):
     assert as_alice(client, "GET", "/v1/jobs?phase=active").json()["jobs"] == []
     finished = as_alice(client, "GET", "/v1/jobs?phase=finished").json()["jobs"]
     assert [j["phase"] for j in finished] == ["Compared"]
+
+
+# ---------------------------------------------------------------------------
+# DDPSRUN-CANCEL. Added 2026-09-02 after a job sat in Pending with no way out:
+# it asked for an L40S on spot, which RunPod refuses before reading the
+# catalogue and which no AWS row matched, so the controller retried the same
+# failure forever. `kubectl` was the only way to stop it, and needing kubectl is
+# the thing this service exists to remove.
+# ---------------------------------------------------------------------------
+
+
+def test_cancelling_removes_the_job(client, cluster):
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    assert as_alice(client, "GET", f"/v1/jobs/{job_id}").status_code == 200
+
+    assert as_alice(client, "DELETE", f"/v1/jobs/{job_id}").status_code == 204
+    assert as_alice(client, "GET", f"/v1/jobs/{job_id}").status_code == 404
+
+
+def test_a_cancelled_job_leaves_the_list(client, cluster):
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    as_alice(client, "DELETE", f"/v1/jobs/{job_id}")
+    assert as_alice(client, "GET", "/v1/jobs").json()["total"] == 0
+
+
+def test_a_finished_job_can_be_cancelled_too(client, cluster):
+    """Nothing is stopped; the row goes away. That is the other thing the button
+    is for, and refusing it would leave failed rows on screen forever."""
+    cluster.objects[("lab-alice", "ddpsrun-0000000000d1")] = _job(
+        "ddpsrun-0000000000d1", phase="Failed")
+    assert as_alice(client, "DELETE", "/v1/jobs/job-0000000000d1").status_code == 204
+
+
+def test_cancelling_someone_elses_job_is_404_and_leaves_it_alone(client, cluster):
+    """404 rather than 403: confirming the job exists would let anyone map
+    another namespace by guessing ids."""
+    job_id = client.post(
+        "/v1/jobs", json=submit_body(), headers={"Authorization": "Bearer bob-token"}
+    ).json()["job_id"]
+
+    assert as_alice(client, "DELETE", f"/v1/jobs/{job_id}").status_code == 404
+    # And it is still there for its owner.
+    still = client.request("GET", f"/v1/jobs/{job_id}",
+                           headers={"Authorization": "Bearer bob-token"})
+    assert still.status_code == 200
+
+
+def test_cancelling_an_unknown_id_is_404(client):
+    assert as_alice(client, "DELETE", "/v1/jobs/job-0000000000ff").status_code == 404
+    assert as_alice(client, "DELETE", "/v1/jobs/not-an-id").status_code == 404
+
+
+def test_cancelling_needs_a_token(client):
+    assert client.delete("/v1/jobs/job-0000000000a1").status_code == 401

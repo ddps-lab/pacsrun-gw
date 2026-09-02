@@ -120,6 +120,18 @@ class Client:
         """
         return self._call("POST", "/v1/jobs", json_body=body, timeout=SUBMIT_TIMEOUT).json()
 
+    def cancel(self, job_id: str) -> None:
+        """Stop a job and take it off the list.
+
+        Args:
+            job_id: an id the server issued.
+
+        Raises:
+            ServerError: 404 when there is no such job of yours, 502 when the
+                cluster could not be reached.
+        """
+        self._call("DELETE", f"/v1/jobs/{job_id}")
+
     def status(self, job_id: str) -> dict[str, Any]:
         """Read one job's state."""
         return self._call("GET", f"/v1/jobs/{job_id}").json()

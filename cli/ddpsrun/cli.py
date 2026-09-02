@@ -176,6 +176,13 @@ def build_parser() -> argparse.ArgumentParser:
         "supports that, and prompts otherwise so it stays out of shell history.",
     )
 
+    cancel = sub.add_parser("cancel", help="stop a job and take it off the list")
+    cancel.add_argument("job_id", help="the id `submit` printed")
+    cancel.add_argument(
+        "--yes", "-y", action="store_true",
+        help="skip the confirmation. For scripts, which have nobody to answer it.",
+    )
+
     sub.add_parser("logout", help="delete the stored token")
     sub.add_parser("explain", help="what this tool is and how to use it (asks the server)")
     sub.add_parser("schema", help="the exact shape of a submit request (asks the server)")
@@ -627,6 +634,37 @@ def cmd_status(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_cancel(args: argparse.Namespace) -> int:
+    """Stop a job and take it off the list.
+
+    DDPSRUN-CANCEL. A job can sit in Pending forever with nothing to do about
+    it: on 2026-09-02 one asked for an L40S on spot, which RunPod refuses before
+    reading the catalogue and which no AWS row matched, and the controller
+    retried that same failure every eleven minutes. Until this existed the only
+    way to stop it was kubectl, which is the thing this tool exists to remove.
+
+    Asks first unless --yes is given. Cancelling is not undoable and a job id is
+    twelve hex characters, which is easy enough to mistype.
+
+    Returns:
+        0 when the job is gone, 1 when the server refused, 2 when the user said
+        no at the prompt.
+    """
+    if not args.yes:
+        answer = input(f"cancel {args.job_id}? this cannot be undone [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("left alone")
+            return EXIT_USAGE
+
+    try:
+        client_from_config().cancel(args.job_id)
+    except ServerError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_SERVER
+    print(f"cancelled {args.job_id}")
+    return EXIT_OK
+
+
 def bar(percent: float, width: int = 20) -> str:
     """Draw a progress bar.
 
@@ -733,6 +771,7 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 COMMANDS = {
     "login": cmd_login,
+    "cancel": cmd_cancel,
     "logout": cmd_logout,
     "explain": cmd_explain,
     "schema": cmd_schema,
