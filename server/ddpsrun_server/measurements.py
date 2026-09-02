@@ -64,7 +64,7 @@ THROUGHPUT: tuple[Throughput, ...] = (
     Throughput("bank-exp1v2", "L40S", 12288, 4144, False, 1474),
     Throughput("bank-exp2v2", "L40S", 12288, 4100, True, 1555),
     Throughput("market-exp2", "L40S", 18432, 10619, False, 1000),
-    Throughput("aiops-exp1", "A100-SXM4-80GB", 12288, 5600, True, 1682),
+    Throughput("aiops-exp1", "A100-80GB", 12288, 5600, True, 1682),
     Throughput("aiops-exp2", "L40S", 12288, 5600, True, 1357),
 )
 
@@ -92,11 +92,33 @@ class Gpu:
 
 # Only what we have rented. A GPU absent here cannot be priced, and
 # `estimate.py` says so rather than guessing.
+# DDPSRUN-GPU-NAMES. These are the CATALOGUE's spelling, not nvidia-smi's.
+#
+# There are at least three vocabularies for the same card and they are not
+# interchangeable:
+#
+#   nvidia-smi   "NVIDIA L40S", "NVIDIA A100-SXM4-80GB"   what PACSRUN_GPU= carries
+#   catalogue    "L40S", "A100-80GB"                      what a placement ask must say
+#   RunPod       "A100 PCIe", "A100 SXM"                   RunPod's own names
+#
+# The catalogue spelling is the one that has to be right here, because this name
+# travels into a PacsJob and PACSrun compares it to the CSV's AcceleratorName with
+# an exact match (`pkg/decider/skycatalog/decider.go:607`). On 2026-09-02 a job
+# asked for "NVIDIA L40S" and sat in Pending forever: us-west-2 has 32 L40S rows,
+# and every one of them was refused on the name.
+#
+# WHAT BELONGS IN THIS TUPLE, AND WHAT DOES NOT. Only cards we have actually
+# rented. `usable_gib` is not a spec number — L40S's 44.39 came out of the CUDA
+# message when aiops-exp1 died — and `usd_per_hour` is what we were actually
+# charged. A card nobody has run has neither, and inventing them would produce a
+# confident wrong estimate, which `docs/04-estimate.md` says is worse than
+# `unknown`. The list of cards a user may CHOOSE is a different, longer list and
+# lives in `catalogue.py`.
 GPUS: tuple[Gpu, ...] = (
     # 44.39 GiB usable measured during the aiops-exp1 OOM, which printed how
     # much was free at the moment it failed (docs/04-estimate.md section 5).
     Gpu("L40S", 48, 44.39, 0.99, "2026-08-30"),
-    Gpu("A100-SXM4-80GB", 80, 79.15, 1.59, "2026-08-29"),
+    Gpu("A100-80GB", 80, 79.15, 1.59, "2026-08-29"),
 )
 
 # Qwen3-4B's vocabulary. This is the single biggest term in the memory

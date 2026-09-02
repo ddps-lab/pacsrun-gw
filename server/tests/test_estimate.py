@@ -49,7 +49,7 @@ def test_a_zero_anywhere_is_refused_rather_than_dividing():
         ("bank-exp2v2", "L40S", 1555, 4100, 42.32),
         ("aiops-exp2", "L40S", 1357, 5600, 66.44),
         ("market-exp2", "L40S", 1000, 10619, 172.9),
-        ("aiops-exp1", "A100-SXM4-80GB", 1682, 5600, 53.49),
+        ("aiops-exp1", "A100-80GB", 1682, 5600, 53.49),
     ],
 )
 def test_feeding_a_run_its_own_throughput_reproduces_its_step_time(
@@ -102,9 +102,9 @@ def test_a_gpu_we_have_never_rented_is_unknown_and_says_so():
 def test_one_measurement_cannot_be_interpolated_from():
     # We have exactly one A100 run. A line needs two points, so anything away
     # from that one length is unknown rather than a guess off a single point.
-    a100_rows = [row for row in THROUGHPUT if row.gpu == "A100-SXM4-80GB"]
+    a100_rows = [row for row in THROUGHPUT if row.gpu == "A100-80GB"]
     assert len(a100_rows) == 1, "this test's premise changed; revisit it"
-    assert e.seconds_per_step("A100-SXM4-80GB", 9000, 1, 8).confidence == e.Confidence.UNKNOWN
+    assert e.seconds_per_step("A100-80GB", 9000, 1, 8).confidence == e.Confidence.UNKNOWN
 
 
 def test_the_fit_reproduces_the_hand_worked_coefficients_on_the_same_two_points():
@@ -285,7 +285,7 @@ def test_the_cost_uses_the_gpu_the_job_asked_for_not_the_one_we_recommend():
         gpu_name="L40S", cap=12288, pairs=1110, epochs=4, row_tokens=4100,
         mitigations_on=False,   # so the recommendation is 80 GB, not the L40S
     )
-    assert result.gpu.recommended == "A100-SXM4-80GB"
+    assert result.gpu.recommended == "A100-80GB"
     assert result.cost_low_usd < 6.47 < result.cost_high_usd
 
 

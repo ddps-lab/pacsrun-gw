@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from . import catalogue
 from . import estimate as estimator
 from .measurements import INCIDENTS
 
@@ -271,6 +272,82 @@ def check_runtime(job_estimate: estimator.Estimate) -> list[Finding]:
     return findings
 
 
+def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
+                        capacity_type: str | None) -> list[Finding]:
+    """Can the GPU that was asked for actually be bought.
+
+    DDPSRUN-CATALOGUE. Three ways an ask can be unfillable, and none of them was
+    visible before submitting until this existed. On 2026-09-02 a job asked for
+    "NVIDIA L40S" on spot and sat in Pending forever, retrying the same failure
+    every eleven minutes:
+
+      1. the name is nvidia-smi's, not the catalogue's. us-west-2 has 32 L40S
+         rows and every one was refused on an exact-match name comparison.
+      2. the card is only sold as a whole eight-GPU machine, so a count of 1
+         cannot be filled however the name is spelled.
+      3. spot was asked for. RunPod does not sell spot and its decider refuses
+         before reading the catalogue, so only AWS is left.
+
+    Args:
+        gpu_name: what the caller asked for, or None for a job with no GPU.
+        gpu_count: how many.
+        capacity_type: "spot", "on-demand", or None.
+
+    Returns:
+        Findings. Nothing when no GPU was asked for.
+    """
+    if not gpu_name:
+        return []
+
+    findings: list[Finding] = []
+    choice = catalogue.choice_for(gpu_name)
+
+    if choice is None:
+        suggestion = catalogue.nvidia_smi_spelling(gpu_name)
+        if suggestion:
+            findings.append(Finding(
+                ERROR, "gpu-name-vocabulary",
+                f"{gpu_name!r} is the name nvidia-smi prints. Capacity is asked "
+                f"for by the catalogue's name, and nothing will match this one.",
+                f"Ask for {suggestion!r}. The nvidia-smi spelling is the right one "
+                f"for reading your own PACSRUN_GPU= lines, and the wrong one here.",
+            ))
+        else:
+            known = ", ".join(c.name for c in catalogue.CHOOSABLE)
+            findings.append(Finding(
+                ERROR, "gpu-name-unknown",
+                f"no GPU called {gpu_name!r} is on offer.",
+                f"Choose one of: {known}",
+            ))
+        return findings
+
+    if gpu_count == 1 and not choice.sold_singly:
+        findings.append(Finding(
+            ERROR, "gpu-not-sold-singly",
+            f"{choice.name} is not sold one at a time on AWS: {choice.note}",
+            "Ask for a card that is sold singly, or submit with "
+            "--capacity-type on-demand so RunPod becomes a candidate.",
+        ))
+
+    if capacity_type == "spot":
+        findings.append(Finding(
+            INFO, "spot-excludes-runpod",
+            "spot leaves AWS as the only vendor. RunPod does not sell spot, and "
+            "its decider refuses before it reads the catalogue.",
+            "Submit with --capacity-type on-demand to keep RunPod as a candidate.",
+        ))
+
+    if not catalogue.has_been_measured(choice.name):
+        findings.append(Finding(
+            WARNING, "gpu-never-rented",
+            f"we have never rented a {choice.name}, so any time or cost figure "
+            f"for it is a guess rather than a measurement.",
+            "Run something short on it first, or expect the estimate to say unknown.",
+        ))
+
+    return findings
+
+
 def check_secrets_as_literals(env: dict[str, str]) -> list[Finding]:
     """Is something that looks like a credential sitting in `env`.
 
@@ -322,6 +399,9 @@ def validate(
     cap: int | None,
     vram_gb: int | None,
     job_estimate: estimator.Estimate,
+    gpu_name: str | None = None,
+    gpu_count: int = 1,
+    capacity_type: str | None = None,
 ) -> Validation:
     """Run every check and sort what comes back.
 
@@ -339,6 +419,7 @@ def validate(
     alloc_on, patch_on = mitigations_from(env, script)
 
     findings: list[Finding] = []
+    findings += check_gpu_is_buyable(gpu_name, gpu_count, capacity_type)
     findings += check_secrets_as_literals(env)
     findings += check_memory(cap, vram_gb, alloc_on, patch_on)
     findings += check_caps(script, env)

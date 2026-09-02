@@ -62,7 +62,10 @@ class GpuRequest(BaseModel):
     )
     name: str | None = Field(
         default=None,
-        description="Exact GPU model as the catalog spells it, e.g. L40S, A100-SXM4-80GB.",
+        description="Exact GPU model as the CATALOGUE spells it: L40S, A100-80GB, "
+        "T4, L4, H100. NOT the name nvidia-smi prints — that one carries an "
+        "NVIDIA prefix and a board suffix, and nothing will match it. "
+        "GET /v1/schema lists every name on offer.",
     )
     count: int = Field(default=1, ge=1, le=8, description="How many GPUs per pod.")
 

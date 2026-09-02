@@ -362,6 +362,11 @@ def validate_route(body: JudgementRequest, principal: PrincipalDep) -> ValidateR
         cap=cap_from(body),
         vram_gb=vram_gb_for(body),
         job_estimate=_estimate_for(body),
+        # DDPSRUN-CATALOGUE. What the caller asked for, so the checks can say
+        # whether it can be bought at all before anything is submitted.
+        gpu_name=gpu_name_for(body),
+        gpu_count=(body.gpu.count if body.gpu else 1),
+        capacity_type=body.capacity_type,
     )
     return ValidateResponse(
         ok=result.ok,

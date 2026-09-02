@@ -84,7 +84,7 @@ Which GPU the job wants, in the two styles PACSrun's CRD accepts.
 | field | required | description |
 |---|---|---|
 | `count` |  | How many GPUs per pod. |
-| `name` |  | Exact GPU model as the catalog spells it, e.g. L40S, A100-SXM4-80GB. |
+| `name` |  | Exact GPU model as the CATALOGUE spells it: L40S, A100-80GB, T4, L4, H100. NOT the name nvidia-smi prints — that one carries an NVIDIA prefix and a board suffix, and nothing will match it. GET /v1/schema lists every name on offer. |
 | `vram_gb` |  | Minimum memory per GPU, as the vendor prints it on the card: 24 for an L4, 48 for an L40S, 80 for an H100. |
 
 ### GpuSampleView
