@@ -19,10 +19,20 @@ kind: ClusterRole
 metadata:
   name: ddpsrun-gw
 rules:
-  # Submit and read back the jobs it created.
+  # Submit, read back, and cancel the jobs it created.
+  #
+  # `delete` is what DDPSRUN-CANCEL needs. Deleting the PacsJob is the only stop
+  # the CRD offers, and PACSrun's controller watches for it to give back whatever
+  # the job rented. Without this verb the cancel route reaches the apiserver and
+  # comes back 403 — which is how it shipped on 2026-09-02: the route, the CLI
+  # command and the button were all correct, and the cluster refused them.
+  #
+  # No `update` or `patch`. A submitted job is not edited; it is cancelled and
+  # submitted again. Being able to rewrite somebody's spec after the fact is not
+  # something this server needs.
   - apiGroups: ["pacsrun.io"]
     resources: ["pacsjobs"]
-    verbs: ["create", "get", "list"]
+    verbs: ["create", "get", "list", "delete"]
   # Find the pod behind a job, so `/v1/jobs/{id}/logs` knows whose stdout to read.
   # `list` and not `get`: the server looks a pod up by label, never by name.
   - apiGroups: [""]
