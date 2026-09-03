@@ -39,9 +39,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-# What `script-contract.md` section 8 tells a run.sh to print. The five fields
-# are nvidia-smi's, in this order:
+# What PACSrun's drivers print every 30 seconds. The five fields are nvidia-smi's,
+# in this order:
 #   utilization.gpu, memory.used, memory.total, temperature.gpu, power.draw
+#
+# WHO PRINTS IT CHANGED, AND THE REGEX DELIBERATELY DID NOT. It used to be the
+# researcher's run.sh, per section 9 of script-contract.md. PACSrun's drivers now
+# prepend driver/common/gpu-watch.sh to every GPU workload on every vendor, so the
+# line arrives whether or not the script cooperates (grep PACSRUN-GPU-WATCH). The
+# format is frozen at five fields precisely so that both producers parse here and an
+# old script that still has its own loop is not broken -- two watchers print two
+# lines per interval and `scan` takes the latest.
 GPU_LINE = re.compile(
     r"PACSRUN_GPU=(\d+),(\d+),(\d+),(\d+),([\d.]+)"
 )
@@ -131,8 +139,8 @@ class Metrics:
 
     Attributes:
         latest_gpu: the most recent reading, or None when the job has not
-            printed one. A job whose run.sh does not follow section 8 of the
-            script contract never will, which is not an error.
+            printed one. A CPU job, or one whose image has no nvidia-smi, never
+            will, which is not an error.
         gpu_series: readings over the window, oldest first, downsampled.
         progress: the training run's own position, or None before the first
             progress line.
@@ -253,17 +261,26 @@ def scan(lines: object, window_seconds: int) -> Metrics:
         if found is not None:
             progress = found
 
+    # WHY THESE TWO NOTES NO LONGER BLAME THE USER'S SCRIPT. They used to send the
+    # reader to the script contract, because printing the GPU line was the script's
+    # job. It is the platform's job now (see GPU_LINE above), so "no readings" no
+    # longer means "you forgot". It means the pod has no card, the image has no
+    # nvidia-smi, or nothing has run yet -- and the watcher says WHICH, in a
+    # PACSRUN_GPU_WATCH line sitting in this same log. Pointing at that line is more
+    # useful than pointing at a document, because it is evidence about THIS run.
     note = ""
     if not samples and progress is None:
         note = (
-            "no GPU readings and no progress lines in this window. Either the job "
-            "has not started computing yet, or its run.sh does not print them. "
-            "Section 8 of the script contract has the four lines that add them."
+            "no GPU readings and no progress lines in this window. The job may not "
+            "have started computing yet. If it has, look for a PACSRUN_GPU_WATCH "
+            "line in the log: it says whether the GPU watcher started, or found no "
+            "nvidia-smi in the image."
         )
     elif not samples:
         note = (
-            "training progress is here but no GPU readings are. Add the "
-            "PACSRUN_GPU= watcher from section 8 of the script contract."
+            "training progress is here but no GPU readings are. Look for a "
+            "PACSRUN_GPU_WATCH line in the log: the usual causes are an image with "
+            "no nvidia-smi, or a job that asked for no GPU."
         )
     elif progress is None:
         note = (

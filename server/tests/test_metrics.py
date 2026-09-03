@@ -87,16 +87,24 @@ def test_a_short_series_is_not_thinned():
     assert len(m.scan(lines, 3600).gpu_series) == 10
 
 
-def test_a_window_with_nothing_in_it_says_which_of_the_two_reasons_it_is():
+def test_a_window_with_nothing_in_it_points_at_the_watcher_line_not_the_users_script():
+    # Both of these notes used to tell the reader to go and edit their run.sh, which was
+    # right while printing the GPU line was the script's job. PACSrun's drivers print it
+    # now (driver/common/gpu-watch.sh, grep PACSRUN-GPU-WATCH), so that advice would send
+    # someone to change a file that was never the cause. What IS diagnostic is the
+    # PACSRUN_GPU_WATCH line the watcher itself prints, so the notes name that instead.
     reading = m.scan(["installing packages", "downloading model"], 3600)
     assert reading.latest_gpu is None
     assert reading.progress is None
-    assert "does not print them" in reading.note
+    assert "PACSRUN_GPU_WATCH" in reading.note
+    assert "run.sh" not in reading.note
 
 
-def test_progress_without_gpu_readings_names_the_missing_watcher():
+def test_progress_without_gpu_readings_names_the_watcher_line_and_the_two_usual_causes():
     reading = m.scan([PROGRESS], 3600)
-    assert "PACSRUN_GPU= watcher" in reading.note
+    assert "PACSRUN_GPU_WATCH" in reading.note
+    assert "nvidia-smi" in reading.note
+    assert "run.sh" not in reading.note
 
 
 def test_gpu_readings_without_progress_suggests_the_run_is_still_setting_up():

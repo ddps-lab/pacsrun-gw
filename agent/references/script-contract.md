@@ -200,27 +200,33 @@ trap on_exit EXIT
 
 ---
 
-## 9. GPU 상태를 30 초마다 한 줄로 찍는다
+## 9. GPU 상태는 이제 script 가 찍지 않아도 된다
 
-원격 컨테이너에서 나오는 것은 stdout 한 줄기뿐이다. `nvidia-smi` 는 그 machine 안에서만
-실행되므로, 밖에서 보려면 **script 가 스스로 찍어 보내야 한다.**
+**이 절은 더 이상 할 일이 아니다.** PACSrun 의 driver 가 `driver/common/gpu-watch.sh` 를
+workload 의 command 앞에 붙여서 직접 찍는다. vendor 를 가리지 않는다 — VM 을 주는 쪽(AWS, GCP)
+은 k3s pod 의 command 로, container 를 주는 쪽(RunPod)은 wrapper 로 같은 파일을 쓴다.
+grep anchor 는 `PACSRUN-GPU-WATCH` 다.
 
-```bash
-watch_gpu() {
-  while true; do
-    echo "PACSRUN_GPU=$(nvidia-smi \
-      --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw \
-      --format=csv,noheader,nounits | head -1 | tr -d ' ')"
-    sleep 30
-  done
-}
-watch_gpu & GPU_PID=$!
+원격 컨테이너에서 나오는 것이 stdout 한 줄기뿐이라는 사실은 그대로다. 달라진 것은 그 줄기에
+누가 써 넣느냐이고, **연구자가 잊어버려도 지표가 나온다**는 것이 이 변경의 전부다.
+
+찍히는 줄은 그대로다.
+
+```
+PACSRUN_GPU=94,38200,45440,71,298
 ```
 
 - 형식은 `utilization,memory_used,memory_total,temperature,power` 다. 서버가 이 순서로 읽는다.
 - 30 초에 한 줄이면 25 시간짜리 job 에 3,000 줄이다. 학습 로그가 35 만 줄인 것에 비하면
   무시할 수 있다.
-- **이 프로세스도 종료할 때 죽여야 한다.** 7 번과 같은 이유다.
+- **예전 script 에 `watch_gpu` 가 남아 있어도 깨지지 않는다.** 같은 줄이 30 초에 두 번 찍히고,
+  서버는 마지막 것을 쓴다. 지우고 싶으면 지워도 되고, 그대로 둬도 된다.
+- 지표가 안 보이면 로그에서 `PACSRUN_GPU_WATCH` 로 시작하는 줄을 찾아볼 것. watcher 가 떴는지,
+  아니면 image 에 `nvidia-smi` 가 없어서 건너뛰었는지를 그 줄이 말한다.
+- 이 다섯 값은 `nvidia-smi` 가 주는 전부이고, **"카드가 얼마나 일했나"는 아니다.**
+  `utilization.gpu` 의 정의가 "kernel 이 **하나라도** 돌던 시간의 비율"이라, H100 의 SM 132 개
+  중 하나만 써도 100% 로 나온다. 그 답을 주는 값은 DCGM 의 profiling field 인데
+  `CAP_SYS_ADMIN` 이 필요하고 RunPod 의 create 요청에는 capability field 자체가 없다.
 
 ---
 
