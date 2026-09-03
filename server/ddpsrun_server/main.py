@@ -671,6 +671,52 @@ def get_job_spec(request: Request, job_id: str, principal: PrincipalDep) -> JobS
     return JobSpecResponse.from_pacsjob(obj)
 
 
+@app.get("/v1/metrics/query")
+def query_metrics(
+    request: Request,
+    principal: PrincipalDep,
+    expr: str = Query(
+        ..., min_length=1, max_length=512,
+        description="A PromQL expression. Passed to Prometheus untouched.",
+    ),
+) -> dict:
+    """Ask the in-cluster Prometheus one instant query.
+
+    DDPSRUN-PROMETHEUS-PROXY. THIS IS THE HALF OF MONITORING /v1/jobs/{id}/metrics CANNOT DO.
+    That route reads a job's own log, so it answers only while the pod exists — when the pod is
+    garbage-collected a finished job's chart is gone. Prometheus keeps the series after the pod,
+    which is the whole reason it was deployed.
+
+    THE PATH IS Lambda -> apiserver -> Service, with no public endpoint anywhere. Prometheus is
+    ClusterIP; this server already authenticates to the apiserver to read logs, so it borrows that
+    to reach the Service through `services/proxy`. The alternative was an ALB at $16.43/month and
+    a second place to get authentication wrong.
+
+    IT IS AN INSTANT QUERY AND NOT A RANGE ONE, deliberately, and not because range queries are
+    hard. A range query is where a caller can ask for a million points by accident; an instant
+    query answers about now, which is what a screen refreshing every ten seconds actually needs.
+    A range endpoint should exist when something needs history in one call, with its own bounds.
+
+    WHAT THIS DELIBERATELY DOES NOT DO IS SCOPE THE QUERY TO THE CALLER. Every principal that can
+    reach this route sees every series. Today that is honest — nothing has been pushed to
+    Prometheus yet, so there is nothing to leak — and it must be fixed before it holds more than
+    one team's readings. The fix is a label matcher forced onto `expr` from the principal's
+    namespace, and it belongs in the same change that starts pushing.
+
+    Args:
+        expr: a PromQL expression, e.g. `up` or `pacsrun_gpu_utilization`.
+
+    Raises:
+        HTTPException: 502 when the apiserver refuses or cannot reach Prometheus. A 403 underneath
+            means the ClusterRole is missing `services/proxy`.
+    """
+    cluster: Cluster = request.app.state.cluster
+    try:
+        return cluster.prometheus_query(expr)
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.get("/v1/jobs/{job_id}/metrics", response_model=MetricsResponse)
 def get_metrics(
     request: Request,

@@ -176,3 +176,13 @@ class Settings:
             ).strip(),
             cognito_login_domain=env.get("DDPSRUN_COGNITO_LOGIN_DOMAIN", "").rstrip("/"),
         )
+
+# DDPSRUN-PROMETHEUS-PROXY. Where the Prometheus this server queries lives.
+#
+# Named here rather than passed in because there is exactly ONE: it is deployed by
+# config/deploy/prometheus.yaml in the PACSrun repo, into the operator's own namespace, and a
+# second one would be a different design rather than a different value. The Service is ClusterIP
+# and stays that way — this server reaches it through the apiserver's `services/proxy`, so it
+# needs no address of its own and no ALB.
+PROMETHEUS_NAMESPACE = "pacsrun-system"
+PROMETHEUS_SERVICE = "prometheus"

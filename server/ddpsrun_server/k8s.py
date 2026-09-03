@@ -36,6 +36,7 @@ Grep anchor: DDPSRUN-K8S
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -48,6 +49,8 @@ from .config import (
     PACSJOB_VERSION,
     PACSRUN_JOB_LABEL,
     PACSRUN_SLOT_LABEL,
+    PROMETHEUS_NAMESPACE,
+    PROMETHEUS_SERVICE,
 )
 
 # The driver prints its own bookkeeping on the same stdout as the workload.
@@ -61,7 +64,12 @@ _KEEPALIVE_LINE = re.compile(r"^\s*PACSRUN_KEEPALIVE\s*$")
 # "<internal>=97,38380,45440,72,304.0" between every couple of training lines,
 # which is exactly the noise the keepalive rule exists to prevent. Found
 # 2026-08-31 running the two endpoints against the same log.
-_GPU_LINE = re.compile(r"^\s*PACSRUN_GPU=")
+# `PACSRUN_GPU=` and `PACSRUN_GPU_HEALTH=`. The optional `_HEALTH` is not tidiness: PACSrun's
+# driver started printing the second line too (driver/common/gpu-watch.sh), and the first version
+# of this pattern required "=" immediately after PACSRUN_GPU, so the health line missed the DROP
+# rule, fell through to the token mask below, and reached the user as "<internal>=0x0000...,0"
+# between their own output lines — the exact noise this rule exists to prevent.
+_GPU_LINE = re.compile(r"^\s*PACSRUN_GPU(_HEALTH)?=")
 # Any other PACSRUN_* token is an internal name (`docs/03-api.md`, first rule
 # of the "응답 규칙" / response-rules section). The line around it may be the
 # user's own output, so the token is masked
@@ -248,6 +256,77 @@ class Cluster:
                 return []
             raise ClusterError(_api_message(exc)) from exc
         return list(response.get("items") or [])
+
+    def prometheus_query(self, expr: str, timeout_seconds: int = 10) -> dict:
+        """Ask the in-cluster Prometheus one instant query, through the apiserver.
+
+        DDPSRUN-PROMETHEUS-PROXY. The route is
+        `/api/v1/namespaces/pacsrun-system/services/prometheus:9090/proxy/...` — the apiserver's
+        own `services/proxy` subresource, which forwards to the Service and returns the reply.
+
+        WHY THIS AND NOT AN ADDRESS OF ITS OWN. Prometheus holds one lab's GPU history, and a
+        public endpoint for it means an ALB at $16.43/month plus a second place to get
+        authentication wrong. This server ALREADY proves who it is to the apiserver in order to
+        read a job's logs, so proxying costs one verb on a ClusterRole — a reviewable diff rather
+        than an open port. The Service stays ClusterIP.
+
+        MEASURED 2026-09-03 AND IT DOES NOT WORK ON THIS CLUSTER YET. Both `services/proxy` and
+        `pods/proxy` to port 9090 HANG: no response, no error, the request never returns. What
+        that rules out:
+          - a pod inside the cluster reaches the same Service fine
+            (`wget http://prometheus.pacsrun-system.svc:9090/-/healthy` answers "Healthy")
+          - RBAC is right: the identical request as a group with no binding is refused at once
+            with a clear Forbidden, so authorisation is evaluated and passes
+          - the cluster security group allows all traffic from itself
+          - `pods/log` — apiserver to kubelet on 10250 — works all day
+        So it is the apiserver reaching a POD PORT specifically. This code is correct and stays;
+        what it needs is an infrastructure answer, and until there is one /v1/metrics/query will
+        time out rather than return.
+
+        WHY AN INSTANT QUERY IS ENOUGH FOR LAMBDA, when a log stream was not. A Lambda execution
+        cannot outlive 15 minutes, which is why `follow_logs` does not exist and the screen polls.
+        A Prometheus query is request/response and answers in milliseconds, so a chart that
+        refreshes is many short calls rather than one long one.
+
+        Args:
+            expr: a PromQL expression, passed through untouched.
+            timeout_seconds: how long to wait for the apiserver's reply.
+
+        Returns:
+            Prometheus' own JSON body, parsed. Its `status` field is Prometheus' verdict and is
+            handed back rather than interpreted here: a request that is valid HTTP and invalid
+            PromQL is the caller's problem, not a cluster error.
+
+        Raises:
+            ClusterError: the apiserver refused or could not reach the Service. A 403 underneath
+                means the ClusterRole is missing `services/proxy`; a timeout means the path above.
+        """
+        path = ("/api/v1/namespaces/" + PROMETHEUS_NAMESPACE + "/services/"
+                + PROMETHEUS_SERVICE + ":9090/proxy/api/v1/query")
+        try:
+            # The raw path: the generated client has no binding for a proxy subresource, and
+            # _preload_content=False stops it deserialising Prometheus' body into a Kubernetes
+            # model it will never match.
+            response = self._core.api_client.call_api(
+                path, "GET",
+                query_params=[("query", expr)],
+                header_params={"Accept": "application/json"},
+                auth_settings=["BearerToken"],
+                response_type=None,
+                _preload_content=False,
+                _request_timeout=timeout_seconds,
+            )
+        except ApiException as exc:
+            raise ClusterError(_api_message(exc)) from exc
+        body = response[0].data if isinstance(response, tuple) else response.data
+        try:
+            return json.loads(body)
+        except ValueError as exc:
+            # A body that is not JSON means something other than Prometheus answered, most likely
+            # the apiserver's own error page. Saying so beats a JSONDecodeError traceback.
+            raise ClusterError(
+                "the Prometheus proxy returned a body that is not JSON; the first 200 bytes are "
+                + repr(body[:200])) from exc
 
     def job_pod_name(self, namespace: str, job_name: str, slot: int = 0) -> str:
         """Find the pod carrying one slot of a job.

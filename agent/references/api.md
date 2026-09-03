@@ -25,6 +25,7 @@ Authorization: Bearer <your token>
 | GET | `/v1/jobs/{job_id}/metrics` | GPU usage and training progress, read out of the job's own log. |
 | GET | `/v1/jobs/{job_id}/spec` | The submission this job was created from, with secrets removed. |
 | GET | `/v1/login-config` | Where to send someone to sign in. |
+| GET | `/v1/metrics/query` | Ask the in-cluster Prometheus one instant query. |
 | GET | `/v1/schema` | Return the JSON Schema of a request. |
 | GET | `/v1/stats` | What this caller's team has spent. |
 | POST | `/v1/validate` | Check a job without running it. |
