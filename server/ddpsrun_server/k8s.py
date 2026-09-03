@@ -270,18 +270,14 @@ class Cluster:
         read a job's logs, so proxying costs one verb on a ClusterRole — a reviewable diff rather
         than an open port. The Service stays ClusterIP.
 
-        MEASURED 2026-09-03 AND IT DOES NOT WORK ON THIS CLUSTER YET. Both `services/proxy` and
-        `pods/proxy` to port 9090 HANG: no response, no error, the request never returns. What
-        that rules out:
-          - a pod inside the cluster reaches the same Service fine
-            (`wget http://prometheus.pacsrun-system.svc:9090/-/healthy` answers "Healthy")
-          - RBAC is right: the identical request as a group with no binding is refused at once
-            with a clear Forbidden, so authorisation is evaluated and passes
-          - the cluster security group allows all traffic from itself
-          - `pods/log` — apiserver to kubelet on 10250 — works all day
-        So it is the apiserver reaching a POD PORT specifically. This code is correct and stays;
-        what it needs is an infrastructure answer, and until there is one /v1/metrics/query will
-        time out rather than return.
+        IT NEEDED ONE SECURITY GROUP RULE, and the way it failed first is worth knowing. Both
+        `services/proxy` and `pods/proxy` to 9090 HUNG — no response, no error, 20 s and zero
+        bytes. The apiserver's proxy makes the CONTROL PLANE dial the pod IP, and this cluster's
+        node security group admitted that source on seven ports only (443, 4443, 6443, 8443,
+        9443, 10250, 10251). A security group has no reject action, so the SYN was dropped in
+        silence. `pods/log` had always worked because 10250 is on that list.
+        PACSRUN-APISERVER-POD-PROXY in PACSrun's terraform/cluster/main.tf is the rule that opens
+        9090; without it this method times out rather than answering, and nothing says why.
 
         WHY AN INSTANT QUERY IS ENOUGH FOR LAMBDA, when a log stream was not. A Lambda execution
         cannot outlive 15 minutes, which is why `follow_logs` does not exist and the screen polls.
