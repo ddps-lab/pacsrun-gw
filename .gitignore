@@ -1,0 +1,26 @@
+.venv/
+.idea/
+__pycache__/
+*.pyc
+.env
+node_modules/
+.next/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+
+# terraform
+terraform.tfvars
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
+# Written by the release workflow with this environment's API address.
+ui/config.json
+
+# Copied in at build time from the repository root; see cli/Makefile.
+cli/README.md
+cli/LICENSE

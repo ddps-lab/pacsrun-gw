@@ -1,0 +1,127 @@
+# Publish the `ddpsrun` client to PyPI.
+#
+# WHY IT IS A SEPARATE WORKFLOW FROM release.yml. That one deploys the SERVER -- it zips the Lambda
+# and syncs the static site -- and it fires on every push to main. This one publishes a version
+# number to the whole internet, and a version number cannot be reused: upload 0.1.0 once and PyPI
+# refuses 0.1.0 forever, even after a delete. So it fires on a TAG and nothing else. A push to main
+# must never be able to spend a version.
+#
+# ★ NO API TOKEN ANYWHERE. Publishing uses PyPI's trusted publishing: GitHub mints a short-lived
+# OIDC token for this repository, this workflow, and this environment, and PyPI trades it for an
+# upload credential that lasts minutes. Nothing long-lived is stored in a GitHub secret, so there
+# is nothing to leak or rotate. It is the same mechanism the AWS jobs in release.yml already use
+# for their role assumption, which is why `id-token: write` appears there too.
+#
+# WHAT HAS TO BE SET UP ONCE, ON pypi.org, BEFORE THE FIRST TAG. Trusted publishing is configured
+# on PyPI's side, not here, and it names four things that must match this file exactly:
+#
+#	PyPI project name   ddpsrun
+#	Owner               ddps-lab
+#	Repository name     pacsrun-gw
+#	Workflow filename   publish-pypi.yml
+#	Environment name    pypi
+#
+# THE PyPI PROJECT AND THE REPOSITORY HAVE DIFFERENT NAMES, and that is fine and worth stating so
+# nobody "fixes" it. The package a user installs is `ddpsrun`; the repository it is built from is
+# `pacsrun-gw`, which also holds the server, the terraform and the docs. PyPI's trusted publisher
+# form asks for both separately and does not require them to match.
+#
+# For a project that does not exist on PyPI yet, use the "pending publisher" form at
+# https://pypi.org/manage/account/publishing/ -- it reserves the name against this repository, and
+# the first successful upload creates the project. Get the repository name wrong and the upload is
+# rejected with a message about the publisher not being trusted, which reads like a permissions
+# problem and is a typo.
+#
+# WHY AN ENVIRONMENT CALLED `pypi`. A GitHub environment can require a human to approve the job
+# before it runs. Publishing is the one step in this repository that cannot be undone, so it is
+# the one step worth a click. Add required reviewers under Settings -> Environments -> pypi; until
+# somebody does, the environment exists and approves automatically, which is no worse than not
+# having it.
+#
+# TEST IT WITHOUT SPENDING A VERSION. Run it with workflow_dispatch and `dry_run: true`: it builds,
+# checks the metadata the way PyPI will, and stops. That path uploads nothing and needs no
+# credential at all.
+name: publish ddpsrun to PyPI
+
+on:
+  push:
+    # Only a version tag. `v*` matches the tags release.yml already uses, so one tag ships the
+    # server and the client together and their version numbers cannot drift.
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "build and check only, upload nothing"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: build the sdist and the wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: python -m pip install --upgrade build twine
+
+      # THE COPY IS PART OF THE BUILD AND CANNOT BE SKIPPED. setuptools refuses to read a readme or
+      # a licence outside the package directory -- it raises DistutilsOptionError and names the
+      # path -- and this repository keeps one of each at its root. cli/Makefile does the copy, and
+      # calling it here rather than repeating the commands means a local build and a release build
+      # take the same steps. Both copies are gitignored, so they cannot drift from the originals.
+      - name: build
+        run: make -C cli dist
+
+      # `twine check` reads the metadata the way PyPI will and fails on a description that would
+      # render broken. It runs BEFORE any upload because a version number is spent the moment it
+      # is accepted, and a broken page cannot be fixed by re-uploading the same version.
+      - name: check the metadata PyPI will read
+        run: python -m twine check cli/dist/*
+
+      # WHAT WAS ACTUALLY BUILT, printed. A wheel that quietly lost a module still uploads fine,
+      # and this list is the cheapest place to notice.
+      - name: say what is in the wheel
+        run: |
+          python - <<'PY'
+          import glob, zipfile
+          for path in sorted(glob.glob("cli/dist/*.whl")):
+              print(path)
+              for name in sorted(zipfile.ZipFile(path).namelist()):
+                  print("   ", name)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: cli/dist/
+
+  publish:
+    name: upload to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # NOT ON A DRY RUN, and not on anything but a tag. The second half of this condition is the
+    # one that matters: without it a workflow_dispatch with dry_run unchecked would publish from
+    # whatever branch the caller chose.
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+    environment:
+      name: pypi
+      url: https://pypi.org/p/ddpsrun
+    permissions:
+      # THE ONLY PERMISSION THIS JOB HAS, and it is not a secret. It lets GitHub mint the OIDC
+      # token PyPI trades for a few minutes of upload rights. `contents` is not needed: the
+      # artefact comes from the build job, so this job never reads the repository.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      # The official action. It reads the OIDC token from the environment, exchanges it, uploads,
+      # and prints the project URL. No `user`, no `password`, no secret reference -- if this step
+      # ever grows one, trusted publishing has been abandoned by accident.
+      - uses: pypa/gh-action-pypi-publish@release/v1

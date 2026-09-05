@@ -1,0 +1,11 @@
+{
+  "name": "ddpsrun",
+  "description": "DDPS lab's agent skill for ddpsrun: read the user's repository -> build run.sh -> ask the server for an estimate and a validation -> submit after the user approves -> follow the job",
+  "version": "0.1.0",
+  "author": {
+    "name": "DDPS Lab"
+  },
+  "repository": "https://github.com/ddps-lab/pacsrun-gw",
+  "license": "Apache-2.0",
+  "keywords": ["ddpsrun", "Agent Skill", "GPU", "Batch Job", "Fine-tuning", "Kubernetes"]
+}

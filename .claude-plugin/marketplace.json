@@ -1,0 +1,24 @@
+{
+  "name": "pacsrun-gw",
+  "owner": {
+    "name": "DDPS Lab"
+  },
+  "metadata": {
+    "description": "DDPS lab's ddpsrun agent skill: turn a researcher's own repository into a submitted GPU job, with the runtime and cost answered by the server rather than guessed",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "ddpsrun",
+      "source": "./agent",
+      "description": "DDPS lab's agent skill for ddpsrun: read the user's repository -> build run.sh -> ask the server for an estimate and a validation -> submit after the user approves -> follow the job",
+      "version": "0.1.0",
+      "author": {
+        "name": "DDPS Lab"
+      },
+      "repository": "https://github.com/ddps-lab/pacsrun-gw",
+      "license": "Apache-2.0",
+      "keywords": ["ddpsrun", "Agent Skill", "GPU", "Batch Job", "Fine-tuning", "Kubernetes"]
+    }
+  ]
+}

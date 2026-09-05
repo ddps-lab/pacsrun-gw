@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ddpsrun</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!--
+  DDPSRUN-UI-HTML
+
+  The skeleton of the five screens. It holds no values at all; app.js fetches
+  them from the server and fills the empty elements in by id.
+
+  END-TO-END FLOW:
+    1. With no token stored, only #login is visible and main stays hidden.
+    2. With a token, the nav in <header> shows exactly one of the five sections.
+    3. app.js fills every element that carries an id.
+
+  The screen list and what each one shows is docs/15-screens.md 15.5. The rule
+  that each screen has exactly one primary action is 15.10.
+
+  Status words are never translated: a badge says Running, Compared, Failed —
+  the same strings `kubectl get pacsjobs` prints — so a user can match what is
+  on screen against what the cluster says.
+-->
+
+<header hidden id="bar">
+  <div class="brand">ddps<span>run</span></div>
+  <nav>
+    <button data-view="home" class="on">Home</button>
+    <button data-view="jobs">Jobs</button>
+    <button data-view="submit">Submit</button>
+    <button data-view="team">Team</button>
+  </nav>
+  <div class="spacer"></div>
+  <div class="who">
+    <span id="who-team"></span>
+    <button class="flat tiny" id="logout" style="padding:4px 10px">Sign out</button>
+  </div>
+</header>
+
+<!-- ------------------------------------------------------------ Sign in -->
+
+<div id="login">
+  <div>
+    <h1 class="brand" style="font-size:24px">ddps<span>run</span></h1>
+    <p class="dim small">Sign in to submit jobs and watch them run.</p>
+  </div>
+
+  <!-- Shown when the server reports Cognito is configured. app.js asks
+       GET /v1/login-config at startup and unhides exactly one of these two. -->
+  <div id="cognito-box" class="stack" hidden>
+    <button class="go" id="cognito-login">Sign in</button>
+    <p class="dim tiny">You will be sent to the sign-in page and brought back here.</p>
+  </div>
+
+  <!-- The original way in. It stays because a deployment with no user pool is
+       still supported, and because CI and scripts have no browser. -->
+  <div id="token-box" class="stack">
+    <!-- Hidden once the page knows the address from config.json. It stays for
+         a deployment that ships no config.json, and for pointing the page at a
+         different gateway by hand. -->
+    <label id="server-row"><span>Server</span>
+      <input id="in-server" placeholder="https://....lambda-url.us-west-2.on.aws" autocomplete="off"></label>
+    <label><span>Token</span>
+      <input id="in-token" type="password" placeholder="ddpsrun-..." autocomplete="off"></label>
+    <button class="go" id="do-login">Sign in with a token</button>
+  </div>
+
+  <button class="flat tiny" id="token-toggle" hidden
+          style="align-self:center;padding:4px 10px">Use a token instead</button>
+
+  <div id="login-err"></div>
+</div>
+
+<main hidden>
+
+<!-- ------------------------------------------------------------ 1. Home -->
+
+<section id="view-home">
+  <div class="head">
+    <div class="spacer">
+      <h1>Overview</h1>
+      <p class="dim small">Refreshes every 30 seconds.</p>
+    </div>
+    <button class="go" data-goto="submit">New job</button>
+  </div>
+
+  <div class="cards" id="home-cards"></div>
+
+  <div class="panel">
+    <header><h2>Active jobs</h2><span class="dim small" id="home-running-note"></span></header>
+    <div id="home-running"></div>
+  </div>
+
+  <div class="panel">
+    <header><h2>Getting started</h2></header>
+    <div class="facts">
+      <div class="fact"><span class="k">Install the CLI</span>
+        <span class="v">pip install ddpsrun</span></div>
+      <div class="fact"><span class="k">Sign in from a terminal</span>
+        <span class="v">ddpsrun login</span></div>
+      <div class="fact"><span class="k">Use it from Claude Code</span>
+        <span class="v">/plugin marketplace add ddps-lab/pacsrun-gw</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------ 2. Jobs -->
+
+<section id="view-jobs" hidden>
+  <div class="head">
+    <div class="spacer"><h1>Jobs</h1><p class="dim small" id="jobs-count"></p></div>
+    <button class="go" data-goto="submit">New job</button>
+  </div>
+
+  <div class="tabs" id="jobs-tabs">
+    <button data-phase="active" class="on">Active</button>
+    <button data-phase="finished">Finished</button>
+    <button data-phase="">All</button>
+  </div>
+
+  <div id="jobs-body"></div>
+</section>
+
+<!-- ------------------------------------------------------------ 3. Job detail -->
+
+<section id="view-detail" hidden>
+  <div class="head">
+    <div class="spacer">
+      <div class="row">
+        <h1 id="d-name">-</h1>
+        <span id="d-badge"></span>
+      </div>
+      <p class="dim small mono" id="d-id"></p>
+    </div>
+    <button class="flat" data-goto="jobs">Back to jobs</button>
+    <!-- Not the primary action, and deliberately not red: the primary action on
+         this screen is running the job again. Cancel is a way out, not the
+         point of the screen. -->
+    <button class="flat" id="d-cancel">Cancel job</button>
+    <button class="go" id="d-again">Run again</button>
+  </div>
+
+  <div class="panel">
+    <div class="facts" id="d-facts"></div>
+    <div id="d-message"></div>
+  </div>
+
+  <div class="panel" id="d-progress-panel" hidden>
+    <header><h2>Progress</h2><span class="dim small" id="d-progress-note"></span></header>
+    <div id="d-progress"></div>
+  </div>
+
+  <div class="panel" id="d-gpu-panel" hidden>
+    <header><h2>GPU</h2><span class="dim small" id="d-gpu-note"></span></header>
+    <div id="d-gpu"></div>
+  </div>
+
+  <div class="panel">
+    <header>
+      <h2>Logs</h2>
+      <span class="dim small" id="d-log-note"></span>
+      <div class="spacer"></div>
+      <button class="flat tiny" id="d-log-save" style="padding:4px 10px">Open in a tab</button>
+    </header>
+    <pre class="log" id="d-log">Waiting for output.</pre>
+  </div>
+
+  <div class="panel">
+    <header>
+      <h2>Submitted spec</h2>
+      <div class="spacer"></div>
+      <button class="flat tiny" id="d-spec-copy" style="padding:4px 10px">Copy</button>
+    </header>
+    <div id="d-spec-note"></div>
+    <pre class="spec" id="d-spec">-</pre>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------ 4. Submit -->
+
+<section id="view-submit" hidden>
+  <div class="head">
+    <div class="spacer">
+      <h1>New job</h1>
+      <p class="steps">
+        Step <b id="s-step">1</b> of 3
+        <span class="dim" id="s-what">Describe</span>
+      </p>
+    </div>
+  </div>
+
+  <!-- Step 1 -->
+  <div class="panel" id="s1">
+    <header><h2>Describe</h2><span class="dim small">Only the starred field is required.</span></header>
+    <div class="grid2">
+      <label><span><b>Name</b></span>
+        <input id="f-name" placeholder="bank-exp3"></label>
+      <label><span><b>Image *</b></span>
+        <input id="f-image" placeholder="&lt;ACCOUNT_ID&gt;.dkr.ecr.us-west-2.amazonaws.com/your-image:tag"></label>
+    </div>
+    <label><span><b>Command</b></span>
+      <textarea id="f-command" placeholder="bash /work/run.sh"></textarea></label>
+    <div class="grid2">
+      <label><span><b>GPU</b></span>
+        <select id="f-gpu">
+          <option value="">Let the server recommend one</option>
+          <option value="T4">T4 (16 GB)</option>
+          <option value="T4g">T4g (16 GB)</option>
+          <option value="L4">L4 (24 GB)</option>
+          <option value="A10G">A10G (24 GB)</option>
+          <option value="RTX PRO 4500">RTX PRO 4500 (32 GB)</option>
+          <option value="V100-32GB">V100-32GB (32 GB) - sold only as an 8-GPU machine</option>
+          <option value="L40S">L40S (48 GB)</option>
+          <option value="RTXPRO6000">RTXPRO6000 (96 GB)</option>
+          <option value="A100">A100 (40 GB) - sold only as an 8-GPU machine</option>
+          <option value="A100-80GB">A100-80GB (80 GB) - sold only as an 8-GPU machine</option>
+          <option value="H100">H100 (80 GB)</option>
+          <option value="H200">H200 (141 GB) - sold only as an 8-GPU machine</option>
+          <option value="B200">B200 (180 GB) - sold only as an 8-GPU machine</option>
+          <option value="B300">B300 (288 GB) - sold only as an 8-GPU machine</option>
+        </select></label>
+      <label><span><b>Parallelism</b></span>
+        <input id="f-parallelism" type="number" min="1" max="256" value="1"></label>
+      <label><span><b>Capacity type</b></span>
+        <select id="f-capacity">
+          <option value="spot">spot (cheaper, can be reclaimed)</option>
+          <option value="on-demand">on-demand (dearer, never reclaimed)</option>
+        </select></label>
+      <label><span><b>Result path</b></span>
+        <input id="f-result" placeholder="Leave empty and the server picks one"></label>
+    </div>
+    <label><span><b>Environment</b> <span class="dim">one KEY=VALUE per line</span></span>
+      <textarea id="f-env" placeholder="EPOCHS=4&#10;PAIRS=train.jsonl"></textarea></label>
+    <label><span><b>Training size</b> <span class="dim">used for the cost estimate. Safe to leave empty.</span></span>
+      <div class="grid2">
+        <input id="f-pairs" type="number" min="1" placeholder="rows in the dataset">
+        <input id="f-epochs" type="number" min="1" placeholder="epochs">
+        <input id="f-cap" type="number" min="1" placeholder="max length (tokens)">
+        <input id="f-batch" type="number" min="1" placeholder="batch size">
+      </div></label>
+    <div class="row">
+      <button class="go" id="s1-next">Validate</button>
+      <button class="flat" id="s1-reset">Clear</button>
+    </div>
+    <div id="s1-err"></div>
+  </div>
+
+  <!-- Step 2 -->
+  <div class="panel" id="s2" hidden>
+    <header><h2>Validate</h2><span class="dim small">The server checks the request before anything is bought.</span></header>
+    <div id="s2-findings"></div>
+    <div class="row">
+      <button class="go" id="s2-next">See the cost</button>
+      <button class="flat" id="s2-back">Back</button>
+    </div>
+  </div>
+
+  <!-- Step 3 -->
+  <div class="panel" id="s3" hidden>
+    <header><h2>Cost</h2><span class="dim small" id="s3-basis"></span></header>
+    <div class="cards" id="s3-cards"></div>
+    <div id="s3-warnings"></div>
+    <div class="row">
+      <button class="go" id="s3-submit">Submit job</button>
+      <button class="flat" id="s3-back">Back</button>
+    </div>
+    <div id="s3-err"></div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------ 5. Team -->
+
+<section id="view-team" hidden>
+  <div class="head">
+    <div class="spacer"><h1>Team</h1><p class="dim small" id="team-note"></p></div>
+  </div>
+  <div class="cards" id="team-cards"></div>
+  <div class="panel">
+    <header><h2>Per member</h2></header>
+    <div id="team-body"></div>
+  </div>
+</section>
+
+</main>
+<script src="app.js"></script>
+</body>
+</html>

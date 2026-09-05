@@ -1,0 +1,21 @@
+# DDPSRUN-WORKLOAD-SA
+#
+# The identity every job's pods run as. `models.to_pacsjob` writes
+# `serviceAccountName: pacsrun-workload` into every PacsJob it creates, and
+# kubernetes refuses to create a pod naming a ServiceAccount that does not
+# exist — so without this, a submitted job reaches Pending and stops.
+#
+# NO IRSA ANNOTATION YET, ON PURPOSE. Adding
+# `eks.amazonaws.com/role-arn` here is what would let a job's pod call AWS and
+# write its results to S3. That needs a decision this file cannot make on its
+# own: one IAM role per tenant namespace or one shared, whether read is granted
+# alongside write, and how it lines up with fetch mode where the driver pod
+# uploads instead of the remote. Until that is settled, a job can run and stream
+# its logs but cannot upload anything.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pacsrun-workload
+  namespace: default
+  labels:
+    app.kubernetes.io/managed-by: ddpsrun

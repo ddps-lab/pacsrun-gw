@@ -1,0 +1,21 @@
+// Copy to terraform.tfvars and fill in.
+//   cp terraform.tfvars.example terraform.tfvars
+// terraform.tfvars is gitignored; this .example is committed.
+//
+// None of these is a credential. They are identifiers that appear in the trust policy AS
+// RESTRICTIONS, so knowing them grants nothing. They stay out of git only so that one clone is
+// never mistaken for another environment.
+
+region            = "us-west-2"
+github_owner      = "ddps-lab"
+github_repository = "pacsrun-gw"
+
+// REQUIRED. The account already has this provider; this module does not create one.
+//   aws iam list-open-id-connect-providers
+github_oidc_provider_arn = "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
+
+// OPTIONAL, and only needed when the organization emits ID-based OIDC subject claims.
+// PACSrun's own role carries both forms, so setting these here matches that.
+//   gh api repos/<owner>/<repo> --jq '{repo_id: .id, owner_id: .owner.id}'
+github_org_id        = "<ORG_ID>"
+github_repository_id = "<REPO_ID>"

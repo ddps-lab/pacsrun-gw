@@ -1,0 +1,23 @@
+// Copy to terraform.tfvars and fill in.
+//   cp terraform.tfvars.example terraform.tfvars
+// terraform.tfvars is gitignored.
+//
+// None of these is a credential. The token list's VALUE is written separately
+// with `aws secretsmanager put-secret-value`, precisely so it never enters state.
+
+region       = "us-west-2"
+cluster_name = "pacsrun"
+
+// MUST match the operator's PACSRUN_RESULT_PREFIX_TEMPLATE. If the two disagree,
+// the controller refuses every job at admission.
+result_bucket = "<RESULT_BUCKET>"
+result_prefix = "pacsrun/"
+
+// Names a user may write in `secrets`, and where each really is. Names only.
+secret_bindings = {
+  "GITHUB_PAT" = { name = "<SECRET_NAME>", key = "token" }
+}
+
+// Empty until the screen exists. Then the CloudFront domain, because the page and
+// the API are different origins and the browser blocks the call without this.
+cors_allow_origins = []
