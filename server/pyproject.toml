@@ -1,0 +1,42 @@
+# The gateway server. Runs as a pod in the EKS cluster (docs/08-plan.md, 미결 항목 2).
+#
+# The CLI users install is a SEPARATE distribution, also named ddpsrun, built in
+# stage 2. It shares this repository but not this package: a user's laptop must
+# not need the kubernetes client, and this server must not need a browser
+# login flow.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ddpsrun-server"
+version = "0.1.0"
+description = "Gateway between researchers with no kubectl and PACSrun's PacsJob CRD"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.7",
+    "kubernetes>=29.0",
+    "uvicorn[standard]>=0.30",
+    # Translates Lambda's HTTP event shape into what FastAPI expects, so the same
+    # app runs as a function and as a pod without the routes knowing which.
+    "mangum>=0.17",
+    # Signs the EKS bearer token. The Lambda runtime provides it, so the release
+    # workflow drops it from the package; it is declared here for local runs and
+    # tests.
+    "botocore>=1.34",
+    # Verifies Cognito id_tokens locally instead of calling Cognito on every
+    # request (DDPSRUN-COGNITO-VERIFY). The [crypto] extra pulls `cryptography`,
+    # which is what actually does RS256; measured 3.8 MB, against a package that
+    # unzips to 106.5 MB of a 250 MB limit.
+    "pyjwt[crypto]>=2.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[tool.setuptools.packages.find]
+include = ["ddpsrun_server*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

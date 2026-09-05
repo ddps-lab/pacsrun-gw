@@ -1,0 +1,120 @@
+# What the gateway server is allowed to do in the cluster.
+#
+# THE SHAPE, AND WHY. One ClusterRole holding the verbs, then ONE RoleBinding
+# PER TENANT NAMESPACE. A ClusterRoleBinding would have been one object instead
+# of N, and it would also let the server read pods in kube-system. Binding per
+# namespace means adding a tenant is a deliberate act with a reviewable diff.
+#
+# WHAT IS DELIBERATELY ABSENT: `secrets`. The server writes a `secretKeyRef`
+# into the PacsJob and lets kubelet resolve it, so it never holds a GitHub token
+# or an API key. Somebody who takes over this pod cannot read them either.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ddpsrun-gw
+  namespace: ddpsrun-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ddpsrun-gw
+rules:
+  # Submit, read back, and cancel the jobs it created.
+  #
+  # `delete` is what DDPSRUN-CANCEL needs. Deleting the PacsJob is the only stop
+  # the CRD offers, and PACSrun's controller watches for it to give back whatever
+  # the job rented. Without this verb the cancel route reaches the apiserver and
+  # comes back 403 — which is how it shipped on 2026-09-02: the route, the CLI
+  # command and the button were all correct, and the cluster refused them.
+  #
+  # No `update` or `patch`. A submitted job is not edited; it is cancelled and
+  # submitted again. Being able to rewrite somebody's spec after the fact is not
+  # something this server needs.
+  - apiGroups: ["pacsrun.io"]
+    resources: ["pacsjobs"]
+    verbs: ["create", "get", "list", "delete"]
+  # Find the pod behind a job, so `/v1/jobs/{id}/logs` knows whose stdout to read.
+  # `list` and not `get`: the server looks a pod up by label, never by name.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # DDPSRUN-PROMETHEUS-PROXY. Reach the in-cluster Prometheus through the apiserver instead of
+  # giving it an address of its own.
+  #
+  # WHY A VERB AND NOT AN INGRESS. Prometheus holds one lab's GPU history and the obvious way to
+  # query it is a public endpoint — an ALB at $16.43/month, a certificate, and a second place to
+  # get authentication wrong. This server already proves who it is to the apiserver in order to
+  # read a pod's log; `services/proxy` lets it borrow that for a Service. The Service stays
+  # ClusterIP and nothing new is exposed.
+  #
+  # `get` ALONE. The proxy subresource maps HTTP verbs onto RBAC verbs, so `get` permits GET and
+  # nothing else — this server reads Prometheus and must never be able to POST to its
+  # remote-write path, which is how a bug here could corrupt the series it exists to protect.
+  #
+  # THE BINDING IS STILL PER TENANT NAMESPACE (below), and Prometheus is in pacsrun-system, so
+  # this verb needs its own RoleBinding there — see the second binding at the end of this file.
+  # Listing the verb without that binding grants nothing, which is the failure mode to expect if
+  # /v1/metrics/query answers 502 with a 403 underneath.
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    verbs: ["get"]
+---
+# One of these per tenant namespace. `<TENANT_NAMESPACE>` is the namespace a
+# token maps to in the token file (see `docs/09-server.md`).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ddpsrun-gw
+  namespace: <TENANT_NAMESPACE>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ddpsrun-gw
+subjects:
+  - kind: ServiceAccount
+    name: ddpsrun-gw
+    namespace: ddpsrun-system
+---
+# The binding that makes the services/proxy verb above reach anything. Prometheus lives in
+# pacsrun-system, which is NOT a tenant namespace, so the per-tenant bindings never covered it.
+#
+# A SECOND ROLE, NARROWED TO ONE VERB, rather than binding the whole ClusterRole here. Binding the
+# full role would also let this server create and delete PacsJobs in pacsrun-system and read the
+# operator's own pods — neither of which it has any reason to do, and both of which would then be
+# one bug away from happening.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ddpsrun-gw-prometheus
+  namespace: pacsrun-system
+rules:
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ddpsrun-gw-prometheus
+  namespace: pacsrun-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ddpsrun-gw-prometheus
+subjects:
+  # A GROUP, NOT A ServiceAccount, and the first draft got this wrong. The gateway server does not
+  # run in this cluster — it is a Lambda. It proves who it is with an EKS access entry, which maps
+  # the IAM role `ddpsrun-gw-lambda` to username
+  # `arn:aws:sts::<ACCOUNT_ID>:assumed-role/ddpsrun-gw-lambda/{{SessionName}}` and to the
+  # kubernetesGroup `ddpsrun-gw`. RBAC sees the GROUP; the ServiceAccount of the same name is what
+  # a pod running in the cluster would use, and there is no such pod.
+  #
+  # Binding a ServiceAccount instead grants nothing and says nothing: `kubectl apply` succeeds,
+  # the binding exists, and every request is still refused. `aws eks describe-access-entry
+  # --principal-arn <the lambda role>` is what settles which subject is real.
+  - kind: Group
+    name: ddpsrun-gw
+    apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,85 @@
+# The package a user installs on their own laptop: `pip install ddpsrun`.
+#
+# WHY THIS IS A SEPARATE DISTRIBUTION FROM server/. A researcher's laptop must
+# not need the kubernetes client, and the server must not need a browser login
+# flow. They share a repository so the two halves of one API change land in one
+# commit, but nothing else.
+#
+# TWO DEPENDENCIES ON PURPOSE. `requests` to speak HTTP and `PyYAML` because the
+# job description a user writes is YAML. Every further package is one that can
+# conflict with something their research code already pins, so the line stops
+# here: no click, no rich, no pydantic.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ddpsrun"
+version = "0.1.0"
+description = "Submit a GPU job and get results back. No kubectl, no cloud account."
+requires-python = ">=3.9"
+dependencies = ["requests>=2.31", "PyYAML>=6.0"]
+
+# EVERYTHING BELOW EXISTS FOR THE PyPI PAGE AND NOTHING ELSE. It changes no behaviour; it is what
+# somebody who has never heard of this project sees before deciding to install it.
+#
+# ★ README.md AND LICENSE ARE COPIED IN AT BUILD TIME AND ARE NOT COMMITTED HERE.
+#
+# The obvious spelling, `readme = "../README.md"`, does not work: setuptools refuses any path
+# outside the package directory and says so outright --
+#
+#	DistutilsOptionError: Cannot access '.../cli/../README.md'
+#	(or anything outside '.../cli')
+#
+# and the same restriction applies to license-files. The alternative, keeping a second README
+# under cli/, means two files stating the same thing and disagreeing within a month. So the
+# repository has ONE README, and `make -C cli dist` (or the publish workflow) copies it and the
+# licence here immediately before building. Both copies are gitignored, so the duplicate cannot
+# be edited by mistake and cannot drift: it does not exist except during a build.
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "DDPS Lab" }]
+keywords = ["gpu", "kubernetes", "batch", "jobs", "machine-learning", "cloud"]
+
+# CLASSIFIERS ARE A CLOSED VOCABULARY -- PyPI refuses an upload that invents one -- so each of
+# these is copied from https://pypi.org/classifiers/ rather than written by hand.
+#
+# THERE IS NO LICENSE CLASSIFIER HERE, and its absence is required rather than an oversight.
+# PEP 639 superseded them by the `license` expression above, and setuptools now REFUSES a build
+# that has both: "License classifiers have been superseded by license expressions ... Please
+# remove: License :: OSI Approved :: Apache Software License". The expression is the licence.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/ddps-lab/pacsrun-gw"
+Repository = "https://github.com/ddps-lab/pacsrun-gw"
+Issues = "https://github.com/ddps-lab/pacsrun-gw/issues"
+
+[project.scripts]
+ddpsrun = "ddpsrun.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "responses>=0.25"]
+
+[tool.setuptools.packages.find]
+include = ["ddpsrun*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
