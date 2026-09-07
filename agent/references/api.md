@@ -124,6 +124,7 @@ One nvidia-smi reading.
 | `memory_used_mib` | yes |  |
 | `power_w` | yes |  |
 | `temperature_c` | yes |  |
+| `time` |  | When the apiserver stamped this reading, RFC 3339. The chart's x axis; empty on logs that were read without timestamps. |
 | `utilization_percent` | yes |  |
 
 ### HTTPValidationError
@@ -234,9 +235,11 @@ What /v1/jobs/{id}/metrics returns.
 
 | field | required | description |
 |---|---|---|
+| `avg_utilization_percent` |  | Mean utilisation over the window's samples. |
 | `gpu_series` |  | Readings over the window, oldest first, thinned to at most 400 points. |
 | `latest_gpu` |  |  |
 | `note` |  | What is missing and why, in plain words. Empty when nothing is. |
+| `peak_gpu` |  | The reading with the most memory in use. The headline for a finished job, whose latest_gpu is the idle card just before teardown (0%, 0 MiB) and says nothing about the run itself. |
 | `progress` |  |  |
 | `window_seconds` | yes | How far back the log was read. Older readings are still in the log; ask for a bigger window to see them. |
 

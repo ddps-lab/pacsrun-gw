@@ -93,6 +93,10 @@ class GpuSample:
     memory_total_mib: int
     temperature_c: int
     power_w: float
+    # When the apiserver stamped the log line this reading came from (RFC
+    # 3339), "" when the line carried no stamp. This is the chart's x axis:
+    # without it the screen could only say "somewhere in the last hour".
+    time: str = ""
 
     @property
     def memory_percent(self) -> float:
@@ -153,6 +157,12 @@ class Metrics:
     progress: Progress | None = None
     window_seconds: int = 0
     note: str = ""
+    # The reading with the most memory in use — the number a post-mortem asks
+    # for first, because memory is what kills runs (aiops-exp1), and because a
+    # FINISHED job's latest_gpu is the idle card just before teardown (0%,
+    # 0 MiB), which answers nothing about the run itself.
+    peak_gpu: GpuSample | None = None
+    avg_utilization_percent: float | None = None
 
 
 def parse_gpu(line: str) -> GpuSample | None:
@@ -172,12 +182,19 @@ def parse_gpu(line: str) -> GpuSample | None:
     match = GPU_LINE.search(line)
     if not match:
         return None
+    # The apiserver's timestamp prefix, when the log was read with
+    # timestamps=True: "2026-09-07T11:49:33.19Z PACSRUN_GPU=...". The search
+    # above never cared about the prefix; this only harvests it for the
+    # chart's x axis.
+    stamp = line.split(" ", 1)[0]
+    timed = stamp if len(stamp) >= 20 and stamp[:2] == "20" and "T" in stamp else ""
     return GpuSample(
         utilization_percent=int(match.group(1)),
         memory_used_mib=int(match.group(2)),
         memory_total_mib=int(match.group(3)),
         temperature_c=int(match.group(4)),
         power_w=float(match.group(5)),
+        time=timed,
     )
 
 
@@ -300,4 +317,10 @@ def scan(lines: object, window_seconds: int) -> Metrics:
         progress=progress,
         window_seconds=window_seconds,
         note=note,
+        peak_gpu=max(samples, key=lambda s: s.memory_used_mib) if samples else None,
+        avg_utilization_percent=(
+            round(sum(s.utilization_percent for s in samples) / len(samples), 1)
+            if samples
+            else None
+        ),
     )

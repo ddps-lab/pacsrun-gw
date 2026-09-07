@@ -125,9 +125,17 @@ def job_cost(job: dict[str, Any], hours: float) -> float | None:
     gpu = gpu_by_name(offering.get("instanceType") or "")
     if gpu is None:
         return None
-    # parallelism pods each hold their own machine, so the bill is that many.
-    slots = int((job.get("spec") or {}).get("parallelism", 1) or 1)
-    return hours * gpu.usd_per_hour * slots
+    spec = job.get("spec") or {}
+    # parallelism pods each hold their own machine, so the bill is that many —
+    # and each machine holds spec.gpus.count CARDS, each billed separately,
+    # because the measured usd_per_hour is PER CARD (RunPod bills 4 x
+    # A100-SXM4-80GB at $1.59/GPU/hr = $6.36/hr, read 2026-09-04). Forgetting
+    # the card count is how baseline-c (4 cards, 6.97 h) showed $11.07 on the
+    # screen while RunPod's ledger said $44.28 (facts/cost-ledger.md,
+    # 2026-09-07): the missing factor was exactly the 4.
+    slots = int(spec.get("parallelism", 1) or 1)
+    cards = int(((spec.get("gpus") or {}).get("count", 1)) or 1)
+    return hours * gpu.usd_per_hour * slots * cards
 
 
 def summarise(

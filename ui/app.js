@@ -584,43 +584,74 @@ async function drawMetrics(jobId, job) {
   $("d-gpu-panel").hidden = !series.length;
   if (series.length) {
     const last = m.latest_gpu;
-    $("d-gpu-note").textContent = `last ${m.window_seconds}s, ${series.length} samples`;
+    const peak = m.peak_gpu || last;
+    const done = job && TERMINAL.includes(job.phase);
+    const from = series[0].time, to = series[series.length - 1].time;
+    $("d-gpu-note").textContent = `${series.length} samples` +
+      (from && to ? `, ${when(from)} ~ ${when(to)}` : `, last ${m.window_seconds}s`);
+
+    // A FINISHED run's last reading is the idle card just before teardown —
+    // 0%, 0 MiB — which read as "broken" on the screen (2026-09-07). What a
+    // post-mortem actually asks for is the PEAK (memory kills runs), so a
+    // terminal job leads with peak and names the final reading for what it is.
+    const headline = done
+      ? fact("Peak memory", `${peak.memory_used_mib} / ${peak.memory_total_mib} MiB (${peak.memory_percent.toFixed(0)}%)`) +
+        fact("Utilisation at peak", peak.utilization_percent + "%") +
+        fact("Average utilisation", (m.avg_utilization_percent == null ? "-" : m.avg_utilization_percent + "%")) +
+        fact("Last reading (run ended)", `${last.utilization_percent}%, ${last.memory_used_mib} MiB`)
+      : fact("Utilisation", last.utilization_percent + "%") +
+        fact("Memory", `${last.memory_used_mib} / ${last.memory_total_mib} MiB (${last.memory_percent.toFixed(0)}%)`) +
+        fact("Temperature", last.temperature_c + " °C") +
+        fact("Power", last.power_w.toFixed(0) + " W");
+
+    const total = peak.memory_total_mib || last.memory_total_mib || 1;
     $("d-gpu").innerHTML =
-      `<div class="facts">` +
-      fact("Utilisation", last.utilization_percent + "%") +
-      fact("Memory", `${last.memory_used_mib} / ${last.memory_total_mib} MiB (${last.memory_percent.toFixed(0)}%)`) +
-      fact("Temperature", last.temperature_c + " °C") +
-      fact("Power", last.power_w.toFixed(0) + " W") +
-      `</div>` +
-      sparkline(series) +
-      `<div class="legend"><span><i style="background:var(--accent)"></i>utilisation</span>` +
-      `<span><i style="background:var(--run)"></i>memory</span></div>`;
+      `<div class="facts">` + headline + `</div>` +
+      chartBlock("Utilisation (%)", series, (s) => s.utilization_percent,
+                 100, ["0", "50", "100"], "var(--accent)", from, to) +
+      chartBlock("Memory (MiB)", series, (s) => s.memory_used_mib,
+                 total, ["0", String(Math.round(total / 2)), String(total)],
+                 "var(--run)", from, to);
   }
 }
 
-/* Two polylines drawn as SVG. No charting library, for two reasons: the page is
-   served as static files under a CSP that blocks external hosts, so a CDN is
-   not available; and one more file to ship is a poor trade for a plot this
-   small. Both values are already 0-100, so no axis scaling is needed. */
-function sparkline(series) {
-  const W = 600, H = 140, pad = 4;
-  const path = (pick, color) => {
-    const points = series.map((s, i) => {
-      const x = pad + (i / Math.max(1, series.length - 1)) * (W - pad * 2);
-      const y = H - pad - (Math.max(0, Math.min(100, pick(s))) / 100) * (H - pad * 2);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(" ");
-    return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.6" ` +
-           `stroke-linejoin="round" stroke-linecap="round"/>`;
-  };
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" ` +
-    `aria-label="GPU utilisation and memory over time">` +
-    [25, 50, 75].map((v) =>
-      `<line x1="0" y1="${H - pad - (v / 100) * (H - pad * 2)}" x2="${W}" ` +
-      `y2="${H - pad - (v / 100) * (H - pad * 2)}" stroke="var(--line)" stroke-width="1"/>`).join("") +
-    path((s) => s.utilization_percent, "var(--accent)") +
-    path((s) => s.memory_percent, "var(--run)") +
-    `</svg>`;
+/* One labelled chart per quantity, drawn as SVG. No charting library: the page
+   is served as static files under a CSP that blocks external hosts, and one
+   more file to ship is a poor trade for a plot this small.
+
+   This replaced a single sparkline that drew utilisation AND memory on one
+   unlabelled 0-100 scale — a chart with no units, no axis values and two
+   indistinguishable meanings answered nothing (user report, 2026-09-07). Each
+   chart now names its unit in the title, labels three y ticks in that unit,
+   and prints the wall-clock time of its first and last sample underneath. */
+function chartBlock(title, series, pick, yMax, yLabels, color, from, to) {
+  const W = 600, H = 120, pad = 4, left = 44;   // left: room for y tick labels
+  const yAt = (f) => H - pad - f * (H - pad * 2);
+  const points = series.map((s, i) => {
+    const x = left + (i / Math.max(1, series.length - 1)) * (W - left - pad);
+    const v = Math.max(0, Math.min(yMax, pick(s)));
+    return `${x.toFixed(1)},${yAt(v / yMax).toFixed(1)}`;
+  }).join(" ");
+  const grid = [0, 0.5, 1].map((f, i) =>
+    `<line x1="${left}" y1="${yAt(f).toFixed(1)}" x2="${W}" y2="${yAt(f).toFixed(1)}" ` +
+    `stroke="var(--line)" stroke-width="1"/>` +
+    `<text x="${left - 6}" y="${(yAt(f) + 4).toFixed(1)}" text-anchor="end" ` +
+    `font-size="11" fill="var(--ink-dim)">${esc(yLabels[i])}</text>`).join("");
+  return `<div style="margin-top:14px">` +
+    `<p class="dim small" style="margin:0 0 4px">${esc(title)}</p>` +
+    // Default preserveAspectRatio (uniform scale), NOT "none": the tick labels
+    // are text, and a non-uniform stretch would distort every glyph.
+    `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" ` +
+    `aria-label="${esc(title)} over time">` + grid +
+    `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.6" ` +
+    `stroke-linejoin="round" stroke-linecap="round"/>` +
+    `</svg>` +
+    (from && to
+      ? `<div class="row" style="justify-content:space-between">` +
+        `<span class="dim tiny num">${esc(when(from))}</span>` +
+        `<span class="dim tiny num">${esc(when(to))}</span></div>`
+      : "") +
+    `</div>`;
 }
 
 async function drawLog(jobId) {

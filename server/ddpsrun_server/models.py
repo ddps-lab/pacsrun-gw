@@ -740,6 +740,11 @@ class GpuSampleView(BaseModel):
     )
     temperature_c: int
     power_w: float
+    time: str = Field(
+        default="",
+        description="When the apiserver stamped this reading, RFC 3339. The "
+        "chart's x axis; empty on logs that were read without timestamps.",
+    )
 
 
 class ProgressView(BaseModel):
@@ -770,6 +775,16 @@ class MetricsResponse(BaseModel):
     gpu_series: list[GpuSampleView] = Field(
         default_factory=list,
         description="Readings over the window, oldest first, thinned to at most 400 points.",
+    )
+    peak_gpu: GpuSampleView | None = Field(
+        default=None,
+        description="The reading with the most memory in use. The headline for "
+        "a finished job, whose latest_gpu is the idle card just before teardown "
+        "(0%, 0 MiB) and says nothing about the run itself.",
+    )
+    avg_utilization_percent: float | None = Field(
+        default=None,
+        description="Mean utilisation over the window's samples.",
     )
     progress: ProgressView | None = None
     window_seconds: int = Field(

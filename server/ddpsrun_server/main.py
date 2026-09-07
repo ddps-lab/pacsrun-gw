@@ -965,6 +965,8 @@ def get_metrics(
         ),
         window_seconds=reading.window_seconds,
         note=reading.note,
+        peak_gpu=_gpu_view(reading.peak_gpu),
+        avg_utilization_percent=reading.avg_utilization_percent,
     )
 
 
@@ -979,6 +981,7 @@ def _gpu_view(sample: metrics_reader.GpuSample | None) -> GpuSampleView | None:
         memory_percent=sample.memory_percent,
         temperature_c=sample.temperature_c,
         power_w=sample.power_w,
+        time=sample.time,
     )
 
 
