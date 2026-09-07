@@ -170,6 +170,122 @@ def test_an_admin_reads_the_namespace_they_asked_for(client, cluster):
     assert as_root(client, "GET", "/v1/jobs").json()["total"] == 0
 
 
+# ------------------------------------------------------------------ artifacts
+
+
+class FakeS3:
+    """Answers list_objects_v2 from a fixed list and mints fake signed URLs."""
+
+    def __init__(self, contents=None, truncated=False, refuse=None):
+        self.contents = contents or []
+        self.truncated = truncated
+        self.refuse = refuse
+        self.listed: list[tuple[str, str]] = []
+
+    def list_objects_v2(self, Bucket, Prefix, MaxKeys):
+        if self.refuse is not None:
+            raise self.refuse
+        self.listed.append((Bucket, Prefix))
+        return {"Contents": self.contents, "IsTruncated": self.truncated}
+
+    def generate_presigned_url(self, operation, Params, ExpiresIn):
+        return f"https://signed.example/{Params['Bucket']}/{Params['Key']}?ttl={ExpiresIn}"
+
+
+def seed_job_with_result_path(cluster, namespace, name, result_path):
+    cluster.objects[(namespace, name)] = {
+        "metadata": {"name": name},
+        "spec": {"resultPath": result_path},
+        "status": {"phase": "Succeeded"},
+    }
+
+
+def test_artifacts_lists_files_with_download_links(client, cluster, monkeypatch):
+    from ddpsrun_server import artifacts
+
+    seed_job_with_result_path(
+        cluster, "lab-alice", OBJECT_NAME,
+        "s3://<RESULT_BUCKET>/pacsrun/lab-alice/bank-exp2/",
+    )
+    fake = FakeS3(contents=[
+        # The prefix itself can exist as a zero-byte "folder" key; it is not a
+        # file and must not appear in the answer.
+        {"Key": "pacsrun/lab-alice/bank-exp2/", "Size": 0},
+        {"Key": "pacsrun/lab-alice/bank-exp2/run.sh", "Size": 19655},
+    ])
+    monkeypatch.setattr(artifacts, "s3_client", lambda: fake)
+
+    answer = as_alice(client, "GET", f"/v1/jobs/{JOB_ID}/artifacts").json()
+    assert answer["total"] == 1
+    assert answer["files"][0]["name"] == "run.sh"
+    assert answer["files"][0]["size_bytes"] == 19655
+    assert answer["files"][0]["url"].startswith("https://signed.example/")
+    assert "ttl=600" in answer["files"][0]["url"]
+    assert fake.listed == [("<RESULT_BUCKET>", "pacsrun/lab-alice/bank-exp2/")]
+
+
+def test_artifacts_with_no_result_path_is_a_note_not_an_error(client, cluster):
+    cluster.objects[("lab-alice", OBJECT_NAME)] = {
+        "metadata": {"name": OBJECT_NAME}, "spec": {}, "status": {},
+    }
+    answer = as_alice(client, "GET", f"/v1/jobs/{JOB_ID}/artifacts")
+    assert answer.status_code == 200
+    assert answer.json()["files"] == []
+    assert "no result path" in answer.json()["note"]
+
+
+def test_artifacts_refuses_a_foreign_bucket(client, cluster, monkeypatch):
+    from ddpsrun_server import artifacts
+
+    seed_job_with_result_path(
+        cluster, "lab-alice", OBJECT_NAME, "s3://somebody-elses-bucket/loot/",
+    )
+    fake = FakeS3()
+    monkeypatch.setattr(artifacts, "s3_client", lambda: fake)
+
+    answer = as_alice(client, "GET", f"/v1/jobs/{JOB_ID}/artifacts").json()
+    assert answer["files"] == []
+    assert "outside" in answer["note"]
+    # Refused BEFORE any S3 call, not after: the fence is ours, not IAM's.
+    assert fake.listed == []
+
+
+def test_artifacts_turns_an_s3_refusal_into_502(client, cluster, monkeypatch):
+    from ddpsrun_server import artifacts
+
+    seed_job_with_result_path(
+        cluster, "lab-alice", OBJECT_NAME,
+        "s3://<RESULT_BUCKET>/pacsrun/lab-alice/bank-exp2/",
+    )
+    monkeypatch.setattr(
+        artifacts, "s3_client",
+        lambda: FakeS3(refuse=RuntimeError("AccessDenied: nobody granted ListBucket")),
+    )
+    answer = as_alice(client, "GET", f"/v1/jobs/{JOB_ID}/artifacts")
+    assert answer.status_code == 502
+    assert "S3 refused" in answer.json()["detail"]
+
+
+# --------------------------------------------------------------- jobs by name
+
+
+def test_a_kubectl_job_opens_by_its_object_name(client, cluster):
+    cluster.objects[("lab-alice", "hand-made")] = {
+        "metadata": {"name": "hand-made"}, "spec": {}, "status": {"phase": "Running"},
+    }
+    answer = as_alice(client, "GET", "/v1/jobs/hand-made")
+    assert answer.status_code == 200
+    assert answer.json()["name"] == "hand-made"
+    assert answer.json()["job_id"] == ""
+    # And it can be cancelled by the same spelling.
+    assert as_alice(client, "DELETE", "/v1/jobs/hand-made").status_code == 204
+    assert ("lab-alice", "hand-made") not in cluster.objects
+
+
+def test_a_name_that_is_not_a_kubernetes_name_is_404(client):
+    assert as_alice(client, "GET", "/v1/jobs/Not-A-Name").status_code == 404
+
+
 def test_namespaces_lists_everything_for_admin_and_self_for_others(client):
     mine = as_alice(client, "GET", "/v1/namespaces").json()
     assert mine == {"namespaces": ["lab-alice"], "own": "lab-alice",
@@ -261,8 +377,15 @@ def test_another_users_job_reads_as_absent_not_as_forbidden(client, cluster):
     assert response.status_code == 404
 
 
-@pytest.mark.parametrize("bad", ["not-an-id", "../../secrets", "job-zzzz"])
-def test_a_malformed_id_never_reaches_the_cluster(client, cluster, bad, monkeypatch):
+@pytest.mark.parametrize("bad", ["Not-A-Name", "under_score", "-dash", "dash-"])
+def test_a_string_that_is_no_kind_of_name_never_reaches_the_cluster(
+    client, cluster, bad, monkeypatch
+):
+    # Only strings that are neither a ddpsrun id nor a legal Kubernetes object
+    # name are refused before any lookup. A legal name that happens not to
+    # exist ("job-zzzz") now DOES reach the cluster — that is the by-name
+    # lookup working (DDPSRUN-JOB-BY-NAME) — and 404s from the lookup itself,
+    # which test_a_kubectl_job_opens_by_its_object_name exercises.
     def explode(namespace, name):
         raise AssertionError(f"the cluster was asked for {name!r}")
 

@@ -181,6 +181,20 @@
     <div id="d-gpu"></div>
   </div>
 
+  <!-- Result files: what the job wrote to S3, listed with a download link per
+       file. Filled by drawArtifacts once per open (plus the Refresh button),
+       not by the 5-second poll — every answer lists S3 and signs one URL per
+       file, and links stop working after 10 minutes anyway. -->
+  <div class="panel">
+    <header>
+      <h2>Result files</h2>
+      <span class="dim small" id="d-files-note"></span>
+      <div class="spacer"></div>
+      <button class="flat tiny" id="d-files-refresh" style="padding:4px 10px">Refresh</button>
+    </header>
+    <div id="d-files">-</div>
+  </div>
+
   <div class="panel">
     <header>
       <h2>Logs</h2>

@@ -39,6 +39,7 @@ Grep anchor: DDPSRUN-ROUTES
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -46,6 +47,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi import Response
 from fastapi.responses import PlainTextResponse
 
+from . import artifacts
 from . import naming
 from . import cognito
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
@@ -57,6 +59,8 @@ from . import stats as stats_reader
 from . import validate as validator
 from .explain import EXPLAIN_TEXT
 from .models import (
+    ArtifactFileView,
+    ArtifactsResponse,
     CostRange,
     EstimateResponse,
     FindingView,
@@ -256,13 +260,43 @@ def namespace_for(principal: Principal, requested: str) -> str:
     return requested
 
 
-# The one description all six ?namespace= parameters share, so the OpenAPI page
-# says the same thing in six places instead of drifting into five variants.
+# The one description all seven ?namespace= parameters share, so the OpenAPI
+# page says the same thing everywhere instead of drifting into variants.
 NAMESPACE_QUERY = Query(
     default="",
     description="Read this namespace instead of your own. Honoured only for an "
     "operator account (admin in the token file); anyone else gets 403.",
 )
+
+# A legal Kubernetes object name (DNS-1123 subdomain): what kubectl accepts as
+# a PacsJob's metadata.name, and therefore what a by-name lookup may carry.
+K8S_NAME = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")
+
+
+def resolve_object_name(job_id: str) -> str:
+    """The Kubernetes object behind a path's {job_id} — two spellings.
+
+    DDPSRUN-JOB-BY-NAME. An id this server issued ("job-<12 hex>") maps through
+    naming.object_name, exactly as before. Anything else that is a legal
+    Kubernetes object name is used AS the object name — which is what lets a
+    PacsJob applied with kubectl (no id, no label; on 2026-09-01 that was every
+    job on the cluster) be opened, read and cancelled from the screen. This
+    widens nothing: every route that calls this still looks only inside the
+    caller's own namespace (or the one an operator asked for), the same
+    boundary the job list already shows.
+
+    Raises:
+        HTTPException: 404 when the value is neither spelling — not 400,
+            because the routes deliberately do not distinguish "malformed"
+            from "absent" for things the caller cannot read anyway.
+    """
+    try:
+        return naming.object_name(job_id)
+    except naming.NamingError:
+        pass
+    if K8S_NAME.fullmatch(job_id):
+        return job_id
+    raise HTTPException(status_code=404, detail="no such job")
 
 
 @app.get("/healthz", include_in_schema=False)
@@ -645,10 +679,7 @@ def get_job(
         HTTPException: 404 for an unknown or malformed id; 502 on a cluster error.
     """
     cluster: Cluster = request.app.state.cluster
-    try:
-        name = naming.object_name(job_id)
-    except naming.NamingError as exc:
-        raise HTTPException(status_code=404, detail="no such job") from exc
+    name = resolve_object_name(job_id)
 
     try:
         obj: dict[str, Any] = cluster.get_job(namespace_for(principal, namespace), name)
@@ -697,10 +728,7 @@ def cancel_job(
         HTTPException: 404 for an unknown or malformed id; 502 on a cluster error.
     """
     cluster: Cluster = request.app.state.cluster
-    try:
-        name = naming.object_name(job_id)
-    except naming.NamingError as exc:
-        raise HTTPException(status_code=404, detail="no such job") from exc
+    name = resolve_object_name(job_id)
 
     try:
         cluster.delete_job(namespace_for(principal, namespace), name)
@@ -735,10 +763,7 @@ def get_job_spec(
         HTTPException: 404 for an unknown or malformed id; 502 on a cluster error.
     """
     cluster: Cluster = request.app.state.cluster
-    try:
-        name = naming.object_name(job_id)
-    except naming.NamingError as exc:
-        raise HTTPException(status_code=404, detail="no such job") from exc
+    name = resolve_object_name(job_id)
 
     try:
         obj: dict[str, Any] = cluster.get_job(namespace_for(principal, namespace), name)
@@ -748,6 +773,75 @@ def get_job_spec(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return JobSpecResponse.from_pacsjob(obj)
+
+
+@app.get("/v1/jobs/{job_id}/artifacts", response_model=ArtifactsResponse)
+def get_artifacts(
+    request: Request,
+    job_id: str,
+    principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
+) -> ArtifactsResponse:
+    """The job's result files, each with a link that downloads it.
+
+    DDPSRUN-ARTIFACTS-ROUTE. The prefix listed is the one on the JOB OBJECT
+    (spec.resultPath, which this server wrote at submit time), never one the
+    caller names — that is the scoping the screen relies on. The mechanics —
+    ListObjectsV2, what a presigned URL is, why downloads bypass Lambda, and
+    the fence around foreign buckets — are narrated in artifacts.py.
+
+    Raises:
+        HTTPException: 404 for an unknown job; 502 when the cluster or S3
+            refused. An S3 refusal here usually means the IAM policy
+            (DDPSRUN-ARTIFACTS-READ in terraform/lambda) is missing, and hiding
+            that behind an empty list would send the operator hunting in the
+            wrong place.
+    """
+    cluster: Cluster = request.app.state.cluster
+    name = resolve_object_name(job_id)
+    try:
+        obj: dict[str, Any] = cluster.get_job(namespace_for(principal, namespace), name)
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail="no such job") from exc
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    result_path = (obj.get("spec") or {}).get("resultPath") or ""
+    address = artifacts.split_result_path(result_path)
+    if address is None:
+        return ArtifactsResponse(
+            files=[], total=0,
+            note="This job has no result path, so there is nothing to list.",
+        )
+
+    settings: Settings = request.app.state.settings
+    try:
+        listing = artifacts.list_artifacts(
+            *address,
+            result_bucket=settings.result_bucket,
+            result_prefix=settings.result_prefix,
+        )
+    except artifacts.ForeignResultPath as exc:
+        return ArtifactsResponse(files=[], prefix=result_path, total=0, note=str(exc))
+    except Exception as exc:  # noqa: BLE001 - botocore raises several types here
+        raise HTTPException(status_code=502, detail=f"S3 refused the list: {exc}") from exc
+
+    files = [
+        ArtifactFileView(
+            name=f.name,
+            size_bytes=f.size_bytes,
+            last_modified=f.last_modified,
+            url=f.url,
+        )
+        for f in listing.files
+    ]
+    return ArtifactsResponse(
+        files=files,
+        prefix=result_path,
+        total=len(files),
+        truncated=listing.truncated,
+        note="" if files else "Nothing is uploaded here yet.",
+    )
 
 
 @app.get("/v1/metrics/query")
@@ -824,10 +918,7 @@ def get_metrics(
             502 on a cluster error.
     """
     cluster: Cluster = request.app.state.cluster
-    try:
-        name = naming.object_name(job_id)
-    except naming.NamingError as exc:
-        raise HTTPException(status_code=404, detail="no such job") from exc
+    name = resolve_object_name(job_id)
 
     try:
         lines = cluster.recent_log_lines(
@@ -918,10 +1009,7 @@ def get_logs(
             large image is pulled; 502 on a cluster error.
     """
     cluster: Cluster = request.app.state.cluster
-    try:
-        name = naming.object_name(job_id)
-    except naming.NamingError as exc:
-        raise HTTPException(status_code=404, detail="no such job") from exc
+    name = resolve_object_name(job_id)
 
     try:
         lines = cluster.job_log_window(

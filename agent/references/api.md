@@ -21,6 +21,7 @@ Authorization: Bearer <your token>
 | POST | `/v1/jobs` | Submit a job. |
 | DELETE | `/v1/jobs/{job_id}` | Stop a job and take it off the list. |
 | GET | `/v1/jobs/{job_id}` | Report one job's state. |
+| GET | `/v1/jobs/{job_id}/artifacts` | The job's result files, each with a link that downloads it. |
 | GET | `/v1/jobs/{job_id}/logs` | One window of a job's output. Ask again for more. |
 | GET | `/v1/jobs/{job_id}/metrics` | GPU usage and training progress, read out of the job's own log. |
 | GET | `/v1/jobs/{job_id}/spec` | The submission this job was created from, with secrets removed. |
@@ -32,6 +33,29 @@ Authorization: Bearer <your token>
 | POST | `/v1/validate` | Check a job without running it. |
 
 ## Request and response shapes
+
+### ArtifactFileView
+
+One result file on the artifacts screen.
+
+| field | required | description |
+|---|---|---|
+| `last_modified` | yes | When S3 last wrote it, RFC 3339. |
+| `name` | yes | Path relative to the job's own result folder. |
+| `size_bytes` | yes |  |
+| `url` | yes | A presigned GET for this one file. It downloads straight from S3 — the bytes never pass through this server — and it stops working after artifacts.EXPIRES_SECONDS; ask this route again for a fresh one. |
+
+### ArtifactsResponse
+
+What `GET /v1/jobs/{id}/artifacts` returns.
+
+| field | required | description |
+|---|---|---|
+| `files` | yes |  |
+| `note` |  | Why the list is empty when that needs saying: the job has no resultPath, nothing is uploaded yet, or the path points outside this server's bucket and was refused. |
+| `prefix` |  | The S3 address that was listed, for `aws s3 sync` by hand. |
+| `total` | yes | How many files are listed. |
+| `truncated` |  | True when the folder holds more than one page (1000 keys) and only the first page is shown. |
 
 ### CostRange
 
@@ -153,7 +177,7 @@ What `GET /v1/jobs/{id}` returns.
 | `name` | yes |  |
 | `phase` | yes | Pending, Starting, Running, Recovering, Succeeded, or Failed. Empty until the controller has looked at the job once. |
 | `recovery_count` |  | How many times the job lost its machine and was restarted. |
-| `result_path` |  | Where the output is. This is the one place a namespace name crosses the API boundary, because it is part of the S3 key and a stage-1 caller has no other way to collect their results. It goes away when /v1/jobs/{id}/artifacts starts handing out download URLs. |
+| `result_path` |  | Where the output is. This is the one place a namespace name crosses the API boundary, because it is part of the S3 key. The screen now downloads through /v1/jobs/{id}/artifacts instead, but this field stays: the CLI and scripts read results with `aws s3 sync <this>`. |
 | `started_at` |  | When the job's pod first ran, from status.startedAt (PACSRUN-JOB-CLOCK). Absent while the job is still waiting for a machine, which is exactly what makes queue time visible: started_at - created_at is the wait, finished_at - started_at is the run. |
 | `user` |  | Who submitted it. Read from the ddpsrun.io/owner label the server itself wrote at submit time, so it cannot be forged by editing the object: a caller can only ever see their own namespace anyway. |
 | `vendor` |  | Who it was rented from, e.g. runpod, aws. |
