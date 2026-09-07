@@ -56,12 +56,29 @@ class MemberTotals:
 
 
 @dataclass
+class VendorTotals:
+    """One vendor's share of the team's figures.
+
+    The vendor is status.currentOffering.vendor — "aws", "runpod", "gcp".
+    Jobs recorded before that field existed carry none and group under
+    "unknown", because inventing a vendor for them would be a guess.
+    """
+
+    vendor: str
+    jobs: int = 0
+    gpu_hours: float = 0.0
+    cost_usd: float = 0.0
+    unpriced_jobs: int = 0
+
+
+@dataclass
 class TeamTotals:
-    """The whole team, plus each member."""
+    """The whole team, plus each member and each vendor."""
 
     team: str
     namespaces: list[str] = field(default_factory=list)
     members: list[MemberTotals] = field(default_factory=list)
+    vendors: list[VendorTotals] = field(default_factory=list)
     jobs: int = 0
     gpu_hours: float = 0.0
     cost_usd: float = 0.0
@@ -191,6 +208,9 @@ def summarise(
     # the NAMESPACE instead, which put every kubectl-era job under a member
     # called "default" — a namespace pretending to be a person (2026-09-07).
     members: dict[str, MemberTotals] = {}
+    # The same jobs, added up a second way: by WHO SOLD the machine. Same loop,
+    # same hours, same prices — the two tables must never disagree about a job.
+    vendors: dict[str, VendorTotals] = {}
 
     for namespace in namespaces:
         for job in jobs_by_namespace.get(namespace, []):
@@ -198,7 +218,13 @@ def summarise(
             owner = labels.get(OWNER_LABEL) or "admin"
             member = members.setdefault(owner, MemberTotals(user=owner))
 
+            sold_by = (((job.get("status") or {}).get("currentOffering")) or {}).get(
+                "vendor"
+            ) or "unknown"
+            vendor = vendors.setdefault(sold_by, VendorTotals(vendor=sold_by))
+
             member.jobs += 1
+            vendor.jobs += 1
             phase = ((job.get("status") or {}).get("phase")) or ""
             if phase == "Succeeded":
                 member.succeeded += 1
@@ -211,11 +237,14 @@ def summarise(
             if hours is None:
                 continue
             member.gpu_hours += hours
+            vendor.gpu_hours += hours
             cost = job_cost(job, hours)
             if cost is None:
                 member.unpriced_jobs += 1
+                vendor.unpriced_jobs += 1
             else:
                 member.cost_usd += cost
+                vendor.cost_usd += cost
 
     for user in sorted(members):
         member = members[user]
@@ -227,6 +256,12 @@ def summarise(
         totals.gpu_hours += member.gpu_hours
         totals.cost_usd += member.cost_usd
         totals.unpriced_jobs += member.unpriced_jobs
+
+    for sold_by in sorted(vendors):
+        vendor = vendors[sold_by]
+        vendor.gpu_hours = round(vendor.gpu_hours, 2)
+        vendor.cost_usd = round(vendor.cost_usd, 2)
+        totals.vendors.append(vendor)
 
     totals.gpu_hours = round(totals.gpu_hours, 2)
     totals.cost_usd = round(totals.cost_usd, 2)

@@ -183,7 +183,7 @@ const poll = {
 
 /* ------------------------------------------------------------------ routing */
 
-const VIEWS = ["home", "jobs", "detail", "submit", "team"];
+const VIEWS = ["home", "jobs", "detail", "submit", "team", "vendors"];
 
 function show(view) {
   VIEWS.forEach((v) => { $("view-" + v).hidden = v !== view; });
@@ -212,6 +212,7 @@ async function route() {
     else if (head === "jobs")   { show("jobs");   drawJobs(); }
     else if (head === "submit") { show("submit"); }
     else if (head === "team")   { show("team");   drawTeam(); }
+    else if (head === "vendors") { show("vendors"); drawVendors(); }
     else                        { show("home");   drawHome(); }
   } catch (err) {
     console.error(err);
@@ -861,7 +862,11 @@ async function drawTeam() {
   $("team-cards").innerHTML = [
     card("Jobs", s.jobs),
     card("GPU hours", s.gpu_hours.toFixed(1)),
-    card("Spend", "$" + s.cost_usd.toFixed(2)),
+    // "Tracked", because this is a floor, not the bill: only jobs still in
+    // the cluster count, and only from their startedAt (SCOPE_NOTE below).
+    // On 2026-09-08 a plain "Spend" of $62 was read as the whole bill (~$103
+    // attributed on the vendor side) and cost an hour of doubt.
+    card("Tracked spend", "$" + s.cost_usd.toFixed(2)),
   ].join("");
 
   const rows = s.members || [];
@@ -890,6 +895,53 @@ async function drawTeam() {
            `not included in the spend above because no price could be worked out.`,
            s.note);
   }
+  $("team-body").innerHTML += SCOPE_NOTE;
+}
+
+/* What the money on this screen IS, stated where the money is shown. Written
+   after 2026-09-08, when a bare "$62" was read as the whole bill: the vendor
+   had charged about $103 for the same work, and every missing dollar had one
+   of these four explanations. */
+const SCOPE_NOTE = `<p class="dim tiny" style="margin-top:12px">` +
+  `These figures are a tracked floor, not the bill: only jobs still in the ` +
+  `cluster count (a job deleted, or resubmitted under the same name, takes its ` +
+  `record with it), hours start at each job's own startedAt (jobs finished ` +
+  `before 2026-08-29 carry no clock and count zero), unpriced machines add ` +
+  `hours but no dollars, and the vendor also bills image pull and idle ` +
+  `minutes outside our window. The vendor's own bill is the authority.</p>`;
+
+/* ------------------------------------------------------------- 5. Vendors */
+
+/* The same /v1/stats answer, read by WHO SOLD the machines. The server adds
+   both tables up in one pass over the same jobs, so this screen and Team can
+   never disagree about a dollar. */
+async function drawVendors() {
+  let s;
+  try { s = await call("/v1/stats"); }
+  catch (err) { $("vendors-body").innerHTML = note("err", err.message); return; }
+
+  $("vendors-note").textContent = s.team ? `team ${s.team}` : "";
+  const rows = s.vendors || [];
+  $("vendors-cards").innerHTML = [
+    card("Vendors", rows.length),
+    card("GPU hours", s.gpu_hours.toFixed(1)),
+    card("Tracked spend", "$" + s.cost_usd.toFixed(2)),
+  ].join("");
+
+  $("vendors-body").innerHTML = (rows.length
+    ? `<div class="scroll"><table><thead><tr>` +
+      ["Vendor", "Jobs", "GPU hours", "Spend", "Unpriced jobs"]
+        .map((h) => `<th>${h}</th>`).join("") +
+      `</tr></thead><tbody>` +
+      rows.map((v) => `<tr>` +
+        `<td>${esc(v.vendor)}</td>` +
+        `<td class="num">${v.jobs}</td>` +
+        `<td class="num">${v.gpu_hours.toFixed(1)}</td>` +
+        `<td class="num">$${v.cost_usd.toFixed(2)}</td>` +
+        `<td class="num"${v.unpriced_jobs ? ' style="color:var(--run)"' : ""}>${v.unpriced_jobs}</td>` +
+        `</tr>`).join("") +
+      `</tbody></table></div>`
+    : empty("No jobs to add up yet.", "New job", "submit")) + SCOPE_NOTE;
 }
 
 /* ------------------------------------------------------------------ wiring */

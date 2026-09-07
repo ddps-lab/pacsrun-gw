@@ -179,6 +179,27 @@ def test_a_token_with_no_team_gets_nothing_rather_than_everything():
     assert "names no team" in totals.note
 
 
+def test_the_same_jobs_add_up_by_vendor_too():
+    started = NOW - timedelta(hours=2)
+    aws = job(started=started, hours=1, instance="g6.2xlarge")
+    aws["status"]["currentOffering"]["vendor"] = "aws"
+    runpod = job(started=started, hours=2, instance="L40S")
+    runpod["status"]["currentOffering"]["vendor"] = "runpod"
+    ancient = job(started=None)   # pre-clock, and pre-vendor-field
+    ancient["status"]["currentOffering"].pop("vendor", None)
+
+    totals = stats.summarise(
+        "ddps", ["default"], {"default": [aws, runpod, ancient]}, now=NOW,
+    )
+    by = {v.vendor: v for v in totals.vendors}
+    assert set(by) == {"aws", "runpod", "unknown"}
+    # The AWS machine is in no price table: hours counted, dollars refused.
+    assert by["aws"].unpriced_jobs == 1 and by["aws"].gpu_hours == 1.0
+    assert abs(by["runpod"].cost_usd - 2 * 0.99) < 0.01
+    # A job with no clock contributes presence, not hours.
+    assert by["unknown"].jobs == 1 and by["unknown"].gpu_hours == 0.0
+
+
 def test_a_job_with_no_owner_label_belongs_to_admin():
     # Only an operator can apply a PacsJob with kubectl, and such a job has no
     # ddpsrun.io/owner label — so it reports under "admin", the same word the

@@ -77,6 +77,7 @@ from .models import (
     LogsResponse,
     MemberTotalsView,
     MetricsResponse,
+    VendorTotalsView,
     ProgressView,
     SubmitRequest,
     StatsResponse,
@@ -502,6 +503,13 @@ def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
                 unpriced_jobs=m.unpriced_jobs,
             )
             for m in totals.members
+        ],
+        vendors=[
+            VendorTotalsView(
+                vendor=v.vendor, jobs=v.jobs, gpu_hours=v.gpu_hours,
+                cost_usd=v.cost_usd, unpriced_jobs=v.unpriced_jobs,
+            )
+            for v in totals.vendors
         ],
         jobs=totals.jobs,
         gpu_hours=totals.gpu_hours,
