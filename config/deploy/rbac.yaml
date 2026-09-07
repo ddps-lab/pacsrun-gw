@@ -41,6 +41,15 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  # DDPSRUN-EXEC. `POST /v1/jobs/{id}/exec` runs one command in a job's driver
+  # pod (which relays it into the workload container on the rented machine).
+  # Both verbs on purpose: the exec subresource maps a WebSocket upgrade to
+  # `get` and the SPDY path to `create`, and which one a client library uses is
+  # its implementation detail — the kubernetes Python client's stream() takes
+  # the WebSocket road today and could change under an upgrade.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["get", "create"]
   # DDPSRUN-PROMETHEUS-PROXY. Reach the in-cluster Prometheus through the apiserver instead of
   # giving it an address of its own.
   #

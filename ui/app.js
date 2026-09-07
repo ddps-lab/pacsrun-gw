@@ -500,33 +500,30 @@ async function drawDetail(jobId, ns = "") {
 const fact = (k, v) =>
   `<div class="fact"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`;
 
-/* The Shell panel says what is actually possible, which is not a terminal in
-   this page: the API is a Lambda Function URL, and an interactive terminal
-   needs an inbound WebSocket that Function URLs cannot accept. What DOES work
-   (verified live 2026-09-07, exit codes relay like ssh) is exec THROUGH THE
-   DRIVER POD from a machine with cluster access, so a running job gets that
-   command ready to copy, and a finished job gets told why there is nothing
-   left to enter. AWS/GCP rentals only: a RunPod job is a rented container
-   with no machine behind it, and the shell relay refuses it by design. */
+/* The Shell panel hands the user `ddpsrun shell` — install line included — and
+   never kubectl: a researcher with kubectl would not need this product
+   (docs/00-overview.md, the founding rule). The command talks to THIS server's
+   POST /v1/jobs/{id}/exec, which relays through the job's driver pod into the
+   workload container on the rented machine (verified live 2026-09-07, exit
+   codes relay like ssh). A terminal cannot run in this PAGE — the API is a
+   Lambda Function URL, which cannot accept the inbound WebSocket a browser
+   terminal needs — so the page teaches the CLI instead of pretending. */
 function drawShell(jobId, job) {
   if (TERMINAL.includes(job.phase)) {
     $("d-shell").innerHTML =
       `<p class="dim">This job has finished — its containers are gone, so there is nothing to shell into.</p>`;
     return;
   }
-  // The driver pod's name: the Kubernetes object name plus "-pod-<slot>". A
-  // job opened by name IS the object name; a gateway id maps by the same rule
-  // the server uses (naming.py: "job-<hex>" -> "ddpsrun-<hex>").
-  const objectName = job.job_id ? "ddpsrun-" + job.job_id.replace(/^job-/, "") : jobId;
+  const key = job.job_id || jobId;
   $("d-shell").innerHTML =
-    `<p class="dim small">A terminal cannot run in this page (the API is a Lambda ` +
-    `Function URL, which cannot accept the WebSocket a terminal needs). From a machine ` +
-    `with cluster access, the driver pod relays a shell into the workload container ` +
-    `— AWS and GCP machine rentals only; a RunPod container has no machine to enter:</p>` +
-    `<pre class="spec">kubectl exec -it ${esc(objectName)}-pod-0 -- python3 /app/driver/aws/shell.py\n` +
-    `kubectl exec ${esc(objectName)}-pod-0 -- python3 /app/driver/aws/shell.py -- nvidia-smi</pre>` +
-    `<p class="dim tiny">parallelism &gt; 1: replace pod-0 with pod-&lt;slot&gt;. ` +
-    `Add --list to see machines, --slot N to pick one, --logs to tail the workload.</p>`;
+    `<p class="dim small">From any terminal — no kubectl, no cloud account. One command ` +
+    `per line (each is one HTTPS round trip, up to ~25s); AWS and GCP machine rentals ` +
+    `only, because a RunPod job is a rented container with no machine behind it:</p>` +
+    `<pre class="spec">pip install ddpsrun\n` +
+    `ddpsrun login --server ${esc(store.server)}\n` +
+    `ddpsrun shell ${esc(key)}                # a prompt: type commands, 'exit' leaves\n` +
+    `ddpsrun shell ${esc(key)} -- nvidia-smi  # run one command and exit</pre>` +
+    `<p class="dim tiny">parallelism &gt; 1: add --slot N. Not a TTY — no vim, no top.</p>`;
 }
 
 /* The Result files panel: GET /v1/jobs/{id}/artifacts, drawn as a table with

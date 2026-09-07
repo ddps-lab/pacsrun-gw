@@ -140,6 +140,34 @@ class Client:
         """Read this caller's team figures. Aggregate only."""
         return self._call("GET", "/v1/stats").json()
 
+    def exec_in_job(
+        self, job: str, command: str, slot: int = 0, timeout_seconds: int = 20
+    ) -> dict[str, Any]:
+        """Run one shell line inside a running job's workload container.
+
+        The server relays it through the job's driver pod onto the rented
+        machine and brings the exit code back like ssh would. One command per
+        request — there is no held-open terminal behind a Lambda.
+
+        Args:
+            job: the job id, or the PacsJob's Kubernetes name.
+            command: one shell line, run as `sh -lc <command>`.
+            slot: which pod of a parallel job.
+            timeout_seconds: server-side wait, capped at 25 by the server.
+        """
+        return self._call(
+            "POST",
+            f"/v1/jobs/{job}/exec",
+            json_body={
+                "command": command,
+                "slot": slot,
+                "timeout_seconds": timeout_seconds,
+            },
+            # The server may hold the request for timeout_seconds before
+            # answering; the read timeout has to outlive that on purpose.
+            timeout=timeout_seconds + 10,
+        ).json()
+
     def metrics(self, job_id: str, window_seconds: int = 3600) -> dict[str, Any]:
         """Read a job's GPU usage and training progress."""
         return self._call(

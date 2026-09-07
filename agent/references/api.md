@@ -22,6 +22,7 @@ Authorization: Bearer <your token>
 | DELETE | `/v1/jobs/{job_id}` | Stop a job and take it off the list. |
 | GET | `/v1/jobs/{job_id}` | Report one job's state. |
 | GET | `/v1/jobs/{job_id}/artifacts` | The job's result files, each with a link that downloads it. |
+| POST | `/v1/jobs/{job_id}/exec` | Run one command inside a running job's workload container. |
 | GET | `/v1/jobs/{job_id}/logs` | One window of a job's output. Ask again for more. |
 | GET | `/v1/jobs/{job_id}/metrics` | GPU usage and training progress, read out of the job's own log. |
 | GET | `/v1/jobs/{job_id}/spec` | The submission this job was created from, with secrets removed. |
@@ -80,6 +81,26 @@ What /v1/estimate returns.
 | `hours` | yes |  |
 | `steps` |  |  |
 | `warnings` |  |  |
+
+### ExecRequest
+
+What `POST /v1/jobs/{id}/exec` accepts: one command for the workload.
+
+| field | required | description |
+|---|---|---|
+| `command` | yes | Run as `sh -lc <command>` inside the workload container on the rented machine, via the driver pod's shell relay. |
+| `slot` |  | Which pod of a parallel job. |
+| `timeout_seconds` |  | How long to wait for the command. The ceiling is 25 because the Lambda serving this route dies at 30 no matter what. |
+
+### ExecResponse
+
+What `POST /v1/jobs/{id}/exec` returns.
+
+| field | required | description |
+|---|---|---|
+| `exit_code` |  | The command's exit code, relayed from the workload container like ssh would. None means it was still running when the timeout closed — never 0. |
+| `note` |  | Anything the caller should know, in words. |
+| `output` | yes | stdout and stderr, in arrival order. |
 
 ### FindingView
 

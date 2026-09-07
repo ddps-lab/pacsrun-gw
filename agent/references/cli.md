@@ -22,6 +22,7 @@ ddpsrun <command> [options]
 | `ddpsrun validate` | what is wrong with this job. Submits nothing |
 | `ddpsrun submit` | submit a job |
 | `ddpsrun status` | how a job is doing |
+| `ddpsrun shell` | run commands inside a running job's workload |
 | `ddpsrun watch` | GPU usage and training progress |
 | `ddpsrun stats` | what your team has spent |
 | `ddpsrun logs` | a job's output |
@@ -142,6 +143,16 @@ Give a YAML or JSON file, or build the request from flags, or both. Flags win ov
 |---|---|---|
 | `job_id` | yes |  |
 | `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
+
+## ddpsrun shell
+
+Each line is one HTTPS round trip: the server relays it through the job's driver pod into the workload container on the rented machine and brings the exit code back like ssh. It is NOT a TTY — no vim, no top, about 25 seconds per command — because the server is a Lambda and cannot hold a terminal open. AWS and GCP machine rentals only: a RunPod job is a rented container with no machine behind it, and the relay refuses it.
+
+| argument | required | what it does |
+|---|---|---|
+| `job` | yes | the job id, or the PacsJob's Kubernetes name |
+| `--slot SLOT` |  | which pod of a parallel job |
+| `-- COMMAND` | yes | one shell line to run and exit; leave it off for a prompt |
 
 ## ddpsrun watch
 
