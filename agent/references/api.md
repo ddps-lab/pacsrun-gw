@@ -17,6 +17,7 @@ Authorization: Bearer <your token>
 |---|---|---|
 | POST | `/v1/estimate` | How long, how much, and on which GPU. Submits nothing. |
 | GET | `/v1/explain` | Say what this service is and how to use it, in prose. |
+| GET | `/v1/images` | Every container image this lab has already built. |
 | GET | `/v1/jobs` | This caller's own jobs, newest first. |
 | POST | `/v1/jobs` | Submit a job. |
 | DELETE | `/v1/jobs/{job_id}` | Stop a job and take it off the list. |
@@ -164,6 +165,28 @@ A runtime answer. Both ends are None when we will not guess.
 | `high` |  |  |
 | `low` |  |  |
 
+### ImageView
+
+One container repository this lab has built, as the Image box offers it.
+
+| field | required | description |
+|---|---|---|
+| `addresses` |  | `registry/repository:tag` for every tag above, ready to paste into the Image field. Built here rather than in the browser so one place decides the shape. |
+| `pushed_at` |  | When the newest image was pushed, or empty for a repository with none. |
+| `registry` | yes | The host part, so the screen can build the pullable address without knowing this deployment's account id. |
+| `repository` | yes | The repository name, e.g. "pacsrun/operator". |
+| `tags` |  | The newest tags, newest first, capped at a handful per repository. Empty for a repository holding only untagged images -- a real state, shown rather than hidden, because an empty row is the answer to "why can I not find my image". |
+
+### ImagesResponse
+
+What `GET /v1/images` returns.
+
+| field | required | description |
+|---|---|---|
+| `images` |  |  |
+| `note` |  | Why the list is empty, when it is. An empty list with no note would read as 'this lab has built nothing', which is a different fact from 'the registry refused the question'. |
+| `truncated` |  | True when this account holds more repositories than one page. Said out loud rather than showing a prefix of the truth as if it were all of it. |
+
 ### JobListResponse
 
 What GET /v1/jobs returns: this caller's own jobs, newest first.
@@ -221,9 +244,11 @@ A submit request plus the facts needed to judge it.
 | `memory` |  | Memory request, e.g. "16Gi". |
 | `name` | yes | A name for your own benefit. It appears in the result path and in the job listing. It does not have to be unique. |
 | `parallelism` |  | How many pods run at once. They are INDEPENDENT workers that never talk to each other, so this is for a batch you can split, not for distributed training. The placement decides the machines: several pods may land on one multi-GPU box or on one box each. Combine with gpu.count, which is GPUs PER POD. |
+| `placement_mode` |  | What the walk does with its candidates. 'ordered' (the default when omitted) asks them in order and stops at the first that answers, comparing nothing. 'cheapest' asks every candidate and buys the cheapest answer. 'compare' asks every candidate, ranks them, and then STOPS -- nothing is bought, and the job ends in the terminal phase Compared with the winner, the runner-up and the margin in its message. 'compare' is the only mode that costs nothing to run. |
 | `script` |  | The text of your run.sh. Optional, and four checks are skipped without it. It is read and thrown away, never stored. |
 | `secrets` |  | Names of secrets to inject. The value never travels through this API; the server resolves the name to a Kubernetes Secret. |
 | `training` |  |  |
+| `vendors` |  | WHO the machines may be bought from. Empty means no restriction, which is how every job behaved before this field existed. Runnable: aws, runpod. Price-only: gcp, azure, lambda, nebius -- these are answered from catalogue CSVs and no actuator here can rent from them, so list one only together with placement_mode 'compare', which stops after the ranking. |
 
 ### LogsResponse
 

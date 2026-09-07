@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 
 from . import catalogue
 from . import estimate as estimator
+from . import models          # DDPSRUN-VENDOR-CHOICE: the two vendor lists live there
 from .measurements import INCIDENTS
 
 ERROR = "error"
@@ -272,6 +273,100 @@ def check_runtime(job_estimate: estimator.Estimate) -> list[Finding]:
     return findings
 
 
+def check_vendors_can_run(vendors: list[str], placement_mode: str | None) -> list[Finding]:
+    """Can the vendors that were named actually rent a machine.
+
+    DDPSRUN-VENDOR-CHOICE. Six vendor names are accepted and only two of them can
+    run anything. aws and runpod have an execution path; gcp, azure, lambda and
+    nebius are answered from the SkyPilot catalogue CSVs, which is enough to
+    state a price and nothing like enough to rent a machine -- no actuator in
+    PACSrun understands their machine names.
+
+    SO THE MODE DECIDES WHETHER NAMING ONE IS SENSIBLE OR WASTEFUL.
+
+      compare   ranks every candidate and STOPS. Nothing is bought, so a
+                price-only vendor is exactly what this mode is for.
+      cheapest  buys the cheapest answer. A price-only vendor that WINS reaches
+                the actuator and fails there, and the comparison is thrown away
+                with it.
+      ordered   stops at the first candidate that answers. A price-only vendor
+                that answers first fails the same way, and sooner.
+
+    THIS WARNS AND DOES NOT REFUSE, which is deliberate. PACSrun's CRD documents
+    the same trap and still allows it (`spec.placement.vendors`: "Listing one
+    under mode: cheapest and having it WIN reaches the actuator and fails there,
+    which is the right answer to 'buy me a thing nobody can buy'"). Refusing here
+    would make this service stricter than the thing it submits to, over a
+    judgement the layer below has already made. Saying so before the money is
+    spent is the part that was missing.
+
+    Args:
+        vendors: the names the caller listed. Empty means no restriction.
+        placement_mode: "ordered", "cheapest", "compare", or None for the
+            default, which is "ordered".
+
+    Returns:
+        Findings. Nothing when no vendor was named.
+    """
+    if not vendors:
+        return []
+
+    findings: list[Finding] = []
+    mode = placement_mode or "ordered"
+    priced_only = [v for v in vendors if v in models.PRICE_ONLY_VENDORS]
+
+    if priced_only and mode != "compare":
+        findings.append(
+            Finding(
+                level=WARNING,
+                code="vendor-cannot-run",
+                message=(
+                    f"{', '.join(priced_only)} can be PRICED but not rented: "
+                    f"the answer comes from a catalogue CSV and no actuator here "
+                    f"understands those machine names. Under mode {mode!r} one of "
+                    f"them can win the walk, and then the job fails at the "
+                    f"actuator with the comparison thrown away."
+                ),
+                fix=(
+                    "Either set placement_mode to 'compare', which ranks every "
+                    "candidate and stops without buying anything, or list only "
+                    f"{' and '.join(models.RUNNABLE_VENDORS)}."
+                ),
+            )
+        )
+
+    if mode == "compare":
+        findings.append(
+            Finding(
+                level=INFO,
+                code="compare-buys-nothing",
+                message=(
+                    "mode 'compare' prices every candidate and then stops. No "
+                    "machine is rented, no pod is created and the workload does "
+                    "not run: the job ends in the terminal phase Compared with "
+                    "the winner, the runner-up and the margin in its message."
+                ),
+                fix="Submit again with 'cheapest' or 'ordered' when you want it to run.",
+            )
+        )
+
+    if len(vendors) == 1 and mode in ("cheapest", "compare"):
+        findings.append(
+            Finding(
+                level=INFO,
+                code="nothing-to-compare",
+                message=(
+                    f"mode {mode!r} ranks the candidates against each other, and "
+                    f"only {vendors[0]} was named. There is one answer, so the "
+                    f"ranking has nothing to rank it against."
+                ),
+                fix="Name a second vendor, or use 'ordered'.",
+            )
+        )
+
+    return findings
+
+
 def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
                         capacity_type: str | None) -> list[Finding]:
     """Can the GPU that was asked for actually be bought.
@@ -402,6 +497,8 @@ def validate(
     gpu_name: str | None = None,
     gpu_count: int = 1,
     capacity_type: str | None = None,
+    vendors: list[str] | None = None,
+    placement_mode: str | None = None,
 ) -> Validation:
     """Run every check and sort what comes back.
 
@@ -412,6 +509,10 @@ def validate(
         cap: `--max-len`.
         vram_gb: the memory the job asked for.
         job_estimate: the result of `estimate.estimate` for the same job.
+        vendors: the vendor names the caller listed, or None for no restriction.
+        placement_mode: "ordered", "cheapest" or "compare", or None for the
+            default. Both are needed together: whether naming a price-only
+            vendor is sensible depends entirely on the mode.
 
     Returns:
         A `Validation`. `ok` is False when any finding is an error.
@@ -419,6 +520,7 @@ def validate(
     alloc_on, patch_on = mitigations_from(env, script)
 
     findings: list[Finding] = []
+    findings += check_vendors_can_run(vendors or [], placement_mode)
     findings += check_gpu_is_buyable(gpu_name, gpu_count, capacity_type)
     findings += check_secrets_as_literals(env)
     findings += check_memory(cap, vram_gb, alloc_on, patch_on)

@@ -198,6 +198,82 @@ class FakeS3:
         return f"https://signed.example/{Params['Bucket']}/{Params['Key']}?ttl={ExpiresIn}"
 
 
+# ---------------------------------------------------------------- images
+
+
+def test_the_image_list_offers_what_this_lab_has_built(client, monkeypatch):
+    """DDPSRUN-IMAGES-ROUTE. Addresses ready to paste into the Image box.
+
+    The module's own behaviour is pinned in test_registry.py; what this asserts is the ROUTE's
+    contract -- that the addresses are built server-side, so one place decides the shape rather
+    than the browser assembling account id, region and path for itself.
+    """
+    from ddpsrun_server import registry
+
+    class FakeECR:
+        def describe_repositories(self, **_kwargs):
+            return {"repositories": [{
+                "repositoryName": "pacsrun/operator",
+                "repositoryUri": "example.dkr.ecr.us-west-2.amazonaws.com/pacsrun/operator",
+            }]}
+
+        def describe_images(self, repositoryName, **_kwargs):
+            return {"imageDetails": [
+                {"imageTags": ["fd7c9b1c84e1"], "imagePushedAt": "2026-09-06T11:00:00Z"},
+            ]}
+
+    monkeypatch.setattr(registry, "ecr_client", lambda region="": FakeECR())
+    answer = as_alice(client, "GET", "/v1/images").json()
+    assert answer["images"][0]["addresses"] == [
+        "example.dkr.ecr.us-west-2.amazonaws.com/pacsrun/operator:fd7c9b1c84e1"
+    ]
+    assert answer["truncated"] is False
+    assert answer["note"] == ""
+
+
+def test_a_registry_that_refuses_is_200_with_a_note_and_not_502(client, monkeypatch):
+    """The Image box is free text with a datalist, not a select.
+
+    So a caller who cannot see the list is inconvenienced and not blocked, and 502 would be a
+    harder answer than the situation deserves. What the note MUST do is name the refusal: an
+    empty list on its own reads as "this lab has built nothing", which would send an operator
+    hunting in the wrong place when what is missing is the IAM policy (DDPSRUN-IMAGES-READ in
+    terraform/lambda).
+    """
+    from ddpsrun_server import registry
+
+    def explode(region=""):
+        raise RuntimeError(
+            "AccessDeniedException: not authorized to perform ecr:DescribeRepositories"
+        )
+
+    monkeypatch.setattr(registry, "ecr_client", explode)
+    response = as_alice(client, "GET", "/v1/images")
+    assert response.status_code == 200
+    answer = response.json()
+    assert answer["images"] == []
+    assert "ecr:DescribeRepositories" in answer["note"]
+
+
+def test_an_account_with_no_repositories_says_so(client, monkeypatch):
+    """An empty list with no note is the one thing this route must never answer."""
+    from ddpsrun_server import registry
+
+    class Empty:
+        def describe_repositories(self, **_kwargs):
+            return {"repositories": []}
+
+    monkeypatch.setattr(registry, "ecr_client", lambda region="": Empty())
+    answer = as_alice(client, "GET", "/v1/images").json()
+    assert answer["images"] == []
+    assert "no container repositories" in answer["note"]
+
+
+def test_the_image_list_needs_a_token(client):
+    """The only access rule this route has. A shared lab account's repository names are not public."""
+    assert client.get("/v1/images").status_code == 401
+
+
 def seed_job_with_result_path(cluster, namespace, name, result_path):
     cluster.objects[(namespace, name)] = {
         "metadata": {"name": name},

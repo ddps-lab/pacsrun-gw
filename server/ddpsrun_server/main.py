@@ -49,6 +49,7 @@ from fastapi.responses import PlainTextResponse
 
 from . import artifacts
 from . import naming
+from . import registry      # DDPSRUN-IMAGES: the container images this lab has built
 from . import cognito
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
@@ -69,6 +70,8 @@ from .models import (
     GpuAdviceView,
     HoursRange,
     JobListResponse,
+    ImageView,
+    ImagesResponse,
     JobSpecResponse,
     JobView,
     NamespacesResponse,
@@ -446,6 +449,11 @@ def validate_route(body: JudgementRequest, principal: PrincipalDep) -> ValidateR
         gpu_name=gpu_name_for(body),
         gpu_count=(body.gpu.count if body.gpu else 1),
         capacity_type=body.capacity_type,
+        # DDPSRUN-VENDOR-CHOICE. Four of the six vendor names can be priced and
+        # not rented, so whether the list the caller sent is sensible depends on
+        # the mode. Both go in together.
+        vendors=body.vendors,
+        placement_mode=body.placement_mode,
     )
     return ValidateResponse(
         ok=result.ok,
@@ -792,6 +800,52 @@ def get_job_spec(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return JobSpecResponse.from_pacsjob(obj)
+
+
+@app.get("/v1/images", response_model=ImagesResponse)
+def images_route(request: Request, principal: PrincipalDep) -> ImagesResponse:
+    """Every container image this lab has already built.
+
+    DDPSRUN-IMAGES-ROUTE. The Image field on the New job screen was free text with an ECR URL in
+    its placeholder, so the one thing it could not do was offer the addresses that exist. The
+    mechanics, and why it filters nothing by owner and lists no AMIs, are in registry.py.
+
+    IT NEEDS A TOKEN LIKE EVERY OTHER ROUTE, and that is the only access rule it has: this is a
+    shared lab account whose repositories belong to several projects, and every caller here holds
+    a token this deployment issued.
+
+    Returns:
+        An `ImagesResponse`. A registry that refuses answers 200 with an empty list and a note
+        rather than 502: the Image box still accepts anything typed into it, so a caller who
+        cannot see the list is inconvenienced and not blocked. The note names the refusal so an
+        operator missing the IAM policy (DDPSRUN-IMAGES-READ in terraform/lambda) is sent to the
+        right place instead of concluding the lab has built nothing.
+    """
+    settings: Settings = request.app.state.settings
+    try:
+        catalogue = registry.list_images()
+    except Exception as exc:  # noqa: BLE001 - botocore raises several types here
+        logger.info("the registry refused the image list for %s: %s", principal.user, exc)
+        return ImagesResponse(
+            images=[],
+            note=f"The container registry refused the list ({exc}). Type the image address "
+                 f"instead; this box accepts anything.",
+        )
+
+    return ImagesResponse(
+        images=[
+            ImageView(
+                repository=row.repository,
+                registry=row.registry,
+                tags=row.tags,
+                pushed_at=row.pushed_at,
+                addresses=row.addresses(),
+            )
+            for row in catalogue.images
+        ],
+        truncated=catalogue.truncated,
+        note="" if catalogue.images else "This account holds no container repositories.",
+    )
 
 
 @app.get("/v1/jobs/{job_id}/artifacts", response_model=ArtifactsResponse)
