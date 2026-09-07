@@ -484,7 +484,7 @@ async function drawDetail(jobId, ns = "") {
       fact("Result", job.result_path || "-"),
     ].join("");
 
-    await Promise.all([drawMetrics(jobId), drawLog(jobId)]);
+    await Promise.all([drawMetrics(jobId, job), drawLog(jobId)]);
     // A finished job has nothing left to ask about. Stopping the timers here is
     // also where the billing for this screen stops.
     if (done) poll.stop();
@@ -543,9 +543,20 @@ function humanSize(n) {
   return `${v.toFixed(1)} PiB`;
 }
 
-async function drawMetrics(jobId) {
+async function drawMetrics(jobId, job) {
+  // The server's window is measured back from NOW, and a finished job's
+  // readings sit at the END of its life — possibly days ago. So for a
+  // terminal job, ask for a window that reaches back past its startedAt
+  // (plus an hour of slack); a running job keeps the default hour. Capped at
+  // the server's seven days: a pod older than that is usually collected, and
+  // the durable home for old readings is Prometheus, not this log.
+  let query = nsQuery();
+  if (job && TERMINAL.includes(job.phase) && job.started_at) {
+    const back = Math.ceil((Date.now() - Date.parse(job.started_at)) / 1000) + 3600;
+    query = `?window_seconds=${Math.min(Math.max(back, 60), 604800)}` + nsQuery("&");
+  }
   let m;
-  try { m = await call(`/v1/jobs/${jobId}/metrics` + nsQuery()); }
+  try { m = await call(`/v1/jobs/${jobId}/metrics` + query); }
   catch { return; }   // 404 while the pod does not exist yet. Normal; stay quiet.
 
   const p = m.progress;
@@ -610,8 +621,15 @@ function sparkline(series) {
 async function drawLog(jobId) {
   let r;
   try {
+    // The first read after opening asks for NO time window (0): just the last
+    // 500 lines of the whole log. Every later read is incremental from the
+    // last timestamp seen. Without the backfill, a job that has been running
+    // for hours — or finished days ago — showed "No output yet." while a
+    // 30-second live window stayed empty (baseline-c, 2026-09-07: its scoring
+    // phase printed nothing for 20+ minutes).
     r = await call(`/v1/jobs/${jobId}/logs` +
-      (logSeen ? `?since=${encodeURIComponent(logSeen)}` + nsQuery("&") : nsQuery()));
+      (logSeen ? `?since=${encodeURIComponent(logSeen)}` + nsQuery("&")
+               : `?window_seconds=0&max_lines=500` + nsQuery("&")));
   } catch { return; }
 
   const lines = r.lines || [];

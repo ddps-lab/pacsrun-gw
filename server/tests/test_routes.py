@@ -266,6 +266,32 @@ def test_artifacts_turns_an_s3_refusal_into_502(client, cluster, monkeypatch):
     assert "S3 refused" in answer.json()["detail"]
 
 
+def test_logs_first_read_may_ask_for_no_time_window(client, cluster):
+    # window_seconds=0 means "no time filter, just the newest tail_lines" —
+    # what a screen opening on a long-running or finished job sends first,
+    # because any window measured back from now misses hours-old output.
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    cluster.logs[("lab-alice", naming.object_name(job_id))] = [
+        "2026-09-01T00:00:01.000Z output from hours before this request",
+    ]
+    answer = as_alice(
+        client, "GET", f"/v1/jobs/{job_id}/logs?window_seconds=0&max_lines=500"
+    )
+    assert answer.status_code == 200
+    assert answer.json()["lines"]
+
+
+def test_metrics_window_reaches_a_week_back_and_no_further(client, cluster):
+    job_id = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()["job_id"]
+    cluster.logs[("lab-alice", naming.object_name(job_id))] = [
+        "PACSRUN_GPU=96,42389,46068,79,338.66",
+    ]
+    ok = as_alice(client, "GET", f"/v1/jobs/{job_id}/metrics?window_seconds=604800")
+    assert ok.status_code == 200
+    too_far = as_alice(client, "GET", f"/v1/jobs/{job_id}/metrics?window_seconds=604801")
+    assert too_far.status_code == 422
+
+
 # --------------------------------------------------------------- jobs by name
 
 
