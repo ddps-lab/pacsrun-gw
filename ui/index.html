@@ -18,7 +18,9 @@
   them from the server and fills the empty elements in by id.
 
   END-TO-END FLOW:
-    1. With no token stored, only #login is visible and main stays hidden.
+    1. #login opens saying "Checking sign-in…" (or "Signing you in…" on the way
+       back from Cognito) until app.js knows how this deployment signs in; only
+       then does it show exactly one way in. main stays hidden throughout.
     2. With a token, the nav in <header> shows exactly one of the five sections.
     3. app.js fills every element that carries an id.
 
@@ -53,6 +55,18 @@
     <p class="dim small">Sign in to submit jobs and watch them run.</p>
   </div>
 
+  <!-- What the card shows while app.js works out how to sign in: reading
+       config.json, asking GET /v1/login-config (about half a second warm, up
+       to ~5s against a cold Lambda), and — returning from Cognito — trading
+       the ?code= for a token. EVERY box below starts hidden and start()
+       unhides exactly one when it knows the answer; before this element
+       existed the token box was the default face of the page, and someone who
+       had just signed in with Google stared at it thinking the sign-in had
+       failed (observed 2026-09-07). -->
+  <div id="login-wait" class="stack">
+    <p class="dim" id="login-wait-text">Checking sign-in&hellip;</p>
+  </div>
+
   <!-- Shown when the server reports Cognito is configured. app.js asks
        GET /v1/login-config at startup and unhides exactly one of these two. -->
   <div id="cognito-box" class="stack" hidden>
@@ -62,7 +76,7 @@
 
   <!-- The original way in. It stays because a deployment with no user pool is
        still supported, and because CI and scripts have no browser. -->
-  <div id="token-box" class="stack">
+  <div id="token-box" class="stack" hidden>
     <!-- Hidden once the page knows the address from config.json. It stays for
          a deployment that ships no config.json, and for pointing the page at a
          different gateway by hand. -->
