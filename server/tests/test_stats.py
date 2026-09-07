@@ -88,6 +88,30 @@ def test_a_machine_we_have_never_rented_has_no_price_rather_than_zero():
     assert stats.job_cost(job(instance=None), 5.0) is None
 
 
+def test_a_group_priced_job_needs_no_price_table():
+    # PACSRUN-GROUP-PRICE: PACSrun stamps each offering group with the price
+    # its solve stated, machine count already inside. Any vendor works — this
+    # instance type appears in no local table, and the sum is still exact.
+    j = job(instance="g6.2xlarge")
+    j["status"]["currentOfferingGroups"] = [
+        {"instanceType": "g6.2xlarge", "nodes": 2, "usdPerHour": "1.9758"},
+        {"instanceType": "g6.xlarge", "nodes": 1, "usdPerHour": "0.8048"},
+    ]
+    assert abs(stats.job_cost(j, 2.0) - 2 * (1.9758 + 0.8048)) < 0.001
+
+
+def test_a_partly_priced_job_falls_back_to_the_estimate():
+    # One unpriced group (an alternates-path buy) would make the group sum
+    # understate, so the whole group path is refused and the measured-card
+    # estimate answers instead — same all-or-nothing rule as answerPrice.
+    j = job(instance="NVIDIA L40S")
+    j["status"]["currentOfferingGroups"] = [
+        {"usdPerHour": "0.9879"},
+        {"usdPerHour": ""},
+    ]
+    assert abs(stats.job_cost(j, 1.0) - 0.99) < 0.001
+
+
 def test_nvidia_smi_spellings_price_the_same_card():
     # status.currentOffering carries nvidia-smi's names, not the catalogue's.
     # Until 2026-09-07 these two returned None and every real job was unpriced:
