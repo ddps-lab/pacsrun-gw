@@ -380,9 +380,22 @@ class Cluster:
         """
         pod = self.job_pod_name(namespace, job_name)
         try:
-            text = self._core.read_namespaced_pod_log(
-                name=pod, namespace=namespace, since_seconds=since_seconds
+            # _preload_content=False and decode by hand, exactly as
+            # job_log_window below already does: the client's default path
+            # wraps the body in str(), and a text/plain log comes back as the
+            # repr of a bytes object — the WHOLE window as one "line" full of
+            # literal \n sequences. Measured 2026-09-07 on baseline-c: the
+            # default path returned 1 line for a 7200s window that kubectl put
+            # at 113 lines, so the metrics scan found one stale GPU sample and
+            # the screen's chart was a single old point. This reader shipped
+            # without the fix the log relay got on 2026-09-01; now they match.
+            response = self._core.read_namespaced_pod_log(
+                name=pod,
+                namespace=namespace,
+                since_seconds=since_seconds,
+                _preload_content=False,
             )
+            text = response.read().decode("utf-8", "replace")
         except ApiException as exc:
             raise ClusterError(_api_message(exc)) from exc
         return text.splitlines()
