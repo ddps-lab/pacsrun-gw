@@ -9,13 +9,19 @@ would be worse than useless.
 from datetime import datetime, timedelta, timezone
 
 from ddpsrun_server import auth
+from ddpsrun_server import naming
 from ddpsrun_server import stats
 
 NOW = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def job(*, phase="Succeeded", started=None, hours=None, instance="L40S", parallelism=1):
-    """Build a PacsJob the way the cluster would return it."""
+def job(*, phase="Succeeded", started=None, hours=None, instance="L40S",
+        parallelism=1, owner=None):
+    """Build a PacsJob the way the cluster would return it.
+
+    `owner` fills the ddpsrun.io/owner label the server writes at submit time;
+    None builds a kubectl-shaped job, which carries no such label.
+    """
     status = {"phase": phase}
     if started is not None:
         status["startedAt"] = started.isoformat().replace("+00:00", "Z")
@@ -24,7 +30,10 @@ def job(*, phase="Succeeded", started=None, hours=None, instance="L40S", paralle
             status["finishedAt"] = finished.isoformat().replace("+00:00", "Z")
     if instance:
         status["currentOffering"] = {"vendor": "runpod", "instanceType": instance}
-    return {"spec": {"parallelism": parallelism}, "status": status}
+    body = {"spec": {"parallelism": parallelism}, "status": status}
+    if owner:
+        body["metadata"] = {"labels": {naming.OWNER_LABEL: owner}}
+    return body
 
 
 # ------------------------------------------------------------------ duration
@@ -66,6 +75,16 @@ def test_a_machine_we_have_never_rented_has_no_price_rather_than_zero():
     assert stats.job_cost(job(instance=None), 5.0) is None
 
 
+def test_nvidia_smi_spellings_price_the_same_card():
+    # status.currentOffering carries nvidia-smi's names, not the catalogue's.
+    # Until 2026-09-07 these two returned None and every real job was unpriced:
+    # Cost "-" on each row, Team spend $0.00.
+    assert abs(stats.job_cost(job(instance="NVIDIA L40S"), 1.0) - 0.99) < 0.001
+    assert abs(
+        stats.job_cost(job(instance="NVIDIA A100-SXM4-80GB"), 1.0) - 1.59
+    ) < 0.001
+
+
 # -------------------------------------------------------------------- totals
 
 
@@ -74,8 +93,9 @@ def test_a_team_is_the_sum_of_its_members():
     totals = stats.summarise(
         "ddps", ["ddps-alice", "ddps-bob"],
         {
-            "ddps-alice": [job(started=started, hours=6.54), job(started=started, hours=1.0)],
-            "ddps-bob": [job(started=started, hours=2.0)],
+            "ddps-alice": [job(started=started, hours=6.54, owner="alice"),
+                           job(started=started, hours=1.0, owner="alice")],
+            "ddps-bob": [job(started=started, hours=2.0, owner="bob")],
         },
         now=NOW,
     )
@@ -122,16 +142,21 @@ def test_a_token_with_no_team_gets_nothing_rather_than_everything():
     assert "names no team" in totals.note
 
 
-def test_a_namespace_that_does_not_follow_the_convention_still_reports():
-    # The "<team>-<user>" split is presentation only, so an odd namespace name
-    # must not lose its jobs.
+def test_a_job_with_no_owner_label_belongs_to_admin():
+    # Only an operator can apply a PacsJob with kubectl, and such a job has no
+    # ddpsrun.io/owner label — so it reports under "admin", the same word the
+    # jobs screen prints for it, never under a namespace pretending to be a
+    # person (the member list said "default" until 2026-09-07).
     totals = stats.summarise(
-        "ddps", ["legacy-shared"],
-        {"legacy-shared": [job(started=NOW - timedelta(hours=1), hours=1)]},
+        "ddps", ["default"],
+        {"default": [
+            job(started=NOW - timedelta(hours=1), hours=1),
+            job(started=NOW - timedelta(hours=1), hours=1, owner="alice"),
+        ]},
         now=NOW,
     )
-    assert totals.members[0].user == "legacy-shared"
-    assert totals.jobs == 1
+    assert [m.user for m in totals.members] == ["admin", "alice"]
+    assert totals.jobs == 2
 
 
 def test_a_clean_team_has_nothing_to_note():

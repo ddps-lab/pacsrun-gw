@@ -81,6 +81,12 @@ class Gpu:
             share before any tensor exists.
         usd_per_hour: RunPod's on-demand price when we rented it.
         priced_on: when that price was observed. Vendor prices move.
+        aliases: OTHER SPELLINGS OF THE SAME RENTED CARD, because the vocabulary
+            table below is real: status.currentOffering carries nvidia-smi's
+            spelling ("A100-SXM4-80GB" after the maker prefix is stripped) while
+            this table keys on the catalogue's ("A100-80GB"). Until 2026-09-07
+            that mismatch left every job unpriced — Cost "-" on each row and
+            Team spend $0.00 for jobs running on the very cards priced here.
     """
 
     name: str
@@ -88,6 +94,7 @@ class Gpu:
     usable_gib: float
     usd_per_hour: float
     priced_on: str
+    aliases: tuple[str, ...] = ()
 
 
 # Only what we have rented. A GPU absent here cannot be priced, and
@@ -118,7 +125,9 @@ GPUS: tuple[Gpu, ...] = (
     # 44.39 GiB usable measured during the aiops-exp1 OOM, which printed how
     # much was free at the moment it failed (docs/04-estimate.md section 5).
     Gpu("L40S", 48, 44.39, 0.99, "2026-08-30"),
-    Gpu("A100-80GB", 80, 79.15, 1.59, "2026-08-29"),
+    # nvidia-smi reports the SXM4 spelling; it is the same card this price was
+    # observed on (RunPod's A100 80GB), so it is an alias, not a guess.
+    Gpu("A100-80GB", 80, 79.15, 1.59, "2026-08-29", aliases=("A100-SXM4-80GB",)),
 )
 
 # Qwen3-4B's vocabulary. This is the single biggest term in the memory
@@ -205,8 +214,16 @@ def gpu_by_name(name: str) -> Gpu | None:
         price it or say how much memory it really gives.
     """
     lowered = (name or "").strip().lower()
+    # status.currentOffering carries nvidia-smi's spelling, which prefixes the
+    # maker: "NVIDIA L40S" for the card this table calls "L40S". The prefix
+    # carries no information (every card here is NVIDIA's), so it is stripped
+    # before matching rather than repeated in every alias list.
+    if lowered.startswith("nvidia "):
+        lowered = lowered[len("nvidia "):]
     for gpu in GPUS:
         if gpu.name.lower() == lowered:
+            return gpu
+        if any(alias.lower() == lowered for alias in gpu.aliases):
             return gpu
     return None
 

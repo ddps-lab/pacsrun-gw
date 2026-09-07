@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from .measurements import gpu_by_name
+from .naming import OWNER_LABEL
 
 # Phases that mean the job is over. Anything else is still spending.
 TERMINAL_PHASES = {"Succeeded", "Failed", "Compared"}
@@ -151,16 +152,21 @@ def summarise(
     now = now or datetime.now(timezone.utc)
     totals = TeamTotals(team=team, namespaces=list(namespaces))
 
-    for namespace in namespaces:
-        # The convention is "<team>-<user>", so the member's name is the rest of
-        # it. This is presentation only — nothing is decided by it — which is
-        # why splitting on a dash is acceptable here and was not acceptable for
-        # the S3 prefix.
-        member = MemberTotals(
-            user=namespace[len(team) + 1:] if namespace.startswith(team + "-") else namespace
-        )
+    # A member is a PERSON, and the person is on the job itself: the
+    # ddpsrun.io/owner label the server writes at submit time — the same value
+    # the jobs screen prints under "Submitted by". A job with no owner label
+    # was applied straight to the cluster with kubectl, which only an operator
+    # can do, so those group under "admin". The name used to be derived from
+    # the NAMESPACE instead, which put every kubectl-era job under a member
+    # called "default" — a namespace pretending to be a person (2026-09-07).
+    members: dict[str, MemberTotals] = {}
 
+    for namespace in namespaces:
         for job in jobs_by_namespace.get(namespace, []):
+            labels = ((job.get("metadata") or {}).get("labels")) or {}
+            owner = labels.get(OWNER_LABEL) or "admin"
+            member = members.setdefault(owner, MemberTotals(user=owner))
+
             member.jobs += 1
             phase = ((job.get("status") or {}).get("phase")) or ""
             if phase == "Succeeded":
@@ -180,6 +186,8 @@ def summarise(
             else:
                 member.cost_usd += cost
 
+    for user in sorted(members):
+        member = members[user]
         member.gpu_hours = round(member.gpu_hours, 2)
         member.cost_usd = round(member.cost_usd, 2)
         totals.members.append(member)

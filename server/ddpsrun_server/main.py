@@ -484,6 +484,7 @@ def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
     totals = stats_reader.summarise(principal.team, namespaces, jobs_by_namespace)
     return StatsResponse(
         team=totals.team,
+        caller=principal.user,
         members=[
             MemberTotalsView(
                 user=m.user, jobs=m.jobs, succeeded=m.succeeded, failed=m.failed,

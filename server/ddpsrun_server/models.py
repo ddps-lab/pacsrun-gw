@@ -813,6 +813,12 @@ class StatsResponse(BaseModel):
     """What /v1/stats returns."""
 
     team: str
+    caller: str = Field(
+        default="",
+        description="The requesting token's own user name, so the screen can "
+        "pick 'your' row out of members without guessing. Jobs applied with "
+        "kubectl belong to the member 'admin', not to any caller.",
+    )
     members: list[MemberTotalsView] = Field(default_factory=list)
     jobs: int = 0
     gpu_hours: float = 0.0
