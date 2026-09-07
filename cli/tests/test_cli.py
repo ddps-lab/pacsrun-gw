@@ -586,3 +586,67 @@ def test_cancel_reports_the_servers_refusal(fake, capsys, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a: "y")
     assert run(["cancel", "job-a8acdef80a07"]) == cli.EXIT_SERVER
     assert "no such job" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------- DDPSRUN-VENDOR-CHOICE
+
+
+def test_vendor_repeats_and_the_mode_rides_along():
+    """PACSrun's CRD has had spec.placement.vendors and .mode all along; the CLI could say
+    neither.
+
+    `--vendor` repeats rather than taking a comma list, for the same reason `--arg` does: a
+    comma is a legal character in the values argparse hands back, and a splitter is one more
+    thing to get wrong for no gain.
+    """
+    body = cli.build_submit_body(args_for([
+        "submit", "--name", "x", "--image", "img",
+        "--vendor", "aws", "--vendor", "runpod", "--placement-mode", "cheapest",
+    ]))
+    assert body["vendors"] == ["aws", "runpod"]
+    assert body["placement_mode"] == "cheapest"
+
+
+def test_the_same_vendor_twice_on_one_line_is_collapsed():
+    """The server refuses a duplicate, and a repeated flag is the easiest way to produce one.
+
+    dict.fromkeys rather than a set, because the ORDER is the failover walk's order and a set
+    would hand the server a different list on different runs of the same command.
+    """
+    body = cli.build_submit_body(args_for([
+        "submit", "--name", "x", "--image", "img",
+        "--vendor", "runpod", "--vendor", "aws", "--vendor", "runpod",
+    ]))
+    assert body["vendors"] == ["runpod", "aws"]
+
+
+def test_no_vendor_flag_sends_no_vendor_field():
+    """Absent is not the same as empty: absent means "no restriction", which is what every job
+    did before this flag existed."""
+    body = cli.build_submit_body(args_for(["submit", "--name", "x", "--image", "img"]))
+    assert "vendors" not in body
+    assert "placement_mode" not in body
+
+
+def test_the_flag_replaces_the_file_list_rather_than_widening_it(tmp_path):
+    """The opposite of how --secret behaves, and the difference is in what the field MEANS.
+
+    A secret is one more thing to inject, so a union is the obvious reading. A vendor list is a
+    RESTRICTION, so a union would silently WIDEN what the file allowed: `--vendor runpod`
+    against a file saying [aws] would run on either, which is not what anybody typing that
+    means.
+    """
+    path = tmp_path / "job.json"
+    path.write_text('{"name": "x", "image": "img", "vendors": ["aws"]}')
+    body = cli.build_submit_body(args_for(["submit", "-f", str(path), "--vendor", "runpod"]))
+    assert body["vendors"] == ["runpod"]
+
+    untouched = cli.build_submit_body(args_for(["submit", "-f", str(path)]))
+    assert untouched["vendors"] == ["aws"]
+
+
+def test_an_unknown_mode_is_refused_by_argparse():
+    """A typo in the mode is the one that would otherwise be silently downgraded to the default,
+    and a job that ran the old failover walk while its owner believed it compared prices."""
+    with pytest.raises(SystemExit):
+        args_for(["submit", "--name", "x", "--image", "img", "--placement-mode", "cheapets"])

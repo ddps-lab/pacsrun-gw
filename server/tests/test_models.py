@@ -10,7 +10,12 @@ from pydantic import ValidationError
 from ddpsrun_server import naming
 from ddpsrun_server.auth import Principal
 from ddpsrun_server.config import SecretBinding, Settings
-from ddpsrun_server.models import JobView, SubmitRequest, to_pacsjob
+from ddpsrun_server.models import (
+    KNOWN_VENDORS,
+    JobView,
+    SubmitRequest,
+    to_pacsjob,
+)
 
 ALICE = Principal(user="alice", namespace="lab-alice")
 
@@ -231,3 +236,79 @@ def test_parallelism_is_capped_at_what_the_crd_can_record():
         minimal(parallelism=257)
     with pytest.raises(ValidationError):
         minimal(parallelism=0)
+
+
+# ---------------------------------------------------------------- DDPSRUN-VENDOR-CHOICE
+
+
+def test_the_caller_may_name_the_vendors_and_the_mode():
+    """PACSrun's CRD has had spec.placement.vendors and .mode all along; this gateway wrote
+    neither.
+
+    It sent `placement: {capacityType}` and nothing else, so "run this on RunPod" and "price
+    every vendor and buy nothing" could not be said through this API at all -- even though the
+    CRD documents both, and one of them (mode: compare) is the only way to reach the four
+    vendors that can be priced and never rented.
+    """
+    request = SubmitRequest(
+        name="n", image="img", vendors=["aws", "runpod"], placement_mode="cheapest"
+    )
+    obj = to_pacsjob(request, ALICE, SETTINGS, JOB_ID, capacity_type="spot")
+    assert obj["spec"]["placement"] == {
+        "capacityType": "spot",
+        "vendors": ["aws", "runpod"],
+        "mode": "cheapest",
+    }
+
+
+def test_vendors_alone_still_produce_a_placement_block():
+    """Before this change the block existed ONLY when a capacity type did.
+
+    So the three fields cannot be three separate `if`s appending to a dict that may not have
+    been created -- which is why to_pacsjob builds one dict and writes it once.
+    """
+    request = SubmitRequest(name="n", image="img", vendors=["runpod"])
+    obj = to_pacsjob(request, ALICE, SETTINGS, JOB_ID, capacity_type=None)
+    assert obj["spec"]["placement"] == {"vendors": ["runpod"]}
+
+
+def test_a_job_naming_nothing_has_no_placement_at_all():
+    """Byte-for-byte the old behaviour, which is what every job written before today did."""
+    request = SubmitRequest(name="n", image="img")
+    obj = to_pacsjob(request, ALICE, SETTINGS, JOB_ID, capacity_type=None)
+    assert "placement" not in obj["spec"]
+
+
+def test_an_unrecognised_vendor_is_refused_and_the_message_lists_the_real_ones():
+    """A typo must be an error and not a skip, for the reason PACSrun's own validateVendors gives.
+
+    An unrecognised word matches no placement candidate, so ignoring it would leave the walk
+    with nothing that vendor covers -- and the job would then run somewhere the user did not
+    name, silently. Refusing here turns a Kubernetes enum violation at submit time into a 400
+    that says which field to fix.
+    """
+    with pytest.raises(ValidationError) as caught:
+        SubmitRequest(name="n", image="img", vendors=["oracle"])
+    message = str(caught.value)
+    assert "oracle" in message
+    for name in KNOWN_VENDORS:
+        assert name in message
+
+
+def test_a_vendor_named_twice_is_refused():
+    """A list that says aws twice is a user who edited it and lost track, not an intent."""
+    with pytest.raises(ValidationError) as caught:
+        SubmitRequest(name="n", image="img", vendors=["aws", "runpod", "aws"])
+    assert "aws" in str(caught.value)
+
+
+def test_an_unrecognised_mode_is_refused_rather_than_defaulted():
+    """The mirror of the vendor rule, and the stronger case of the two.
+
+    An unrecognised vendor eventually kills the job. An unrecognised MODE has a perfectly good
+    default sitting behind it, so reading "cheapets" as "ordered" produces a job that runs,
+    succeeds, and never compared anything -- the user gets the old failover walk while believing
+    they bought the cheapest answer.
+    """
+    with pytest.raises(ValidationError):
+        SubmitRequest(name="n", image="img", placement_mode="cheapets")

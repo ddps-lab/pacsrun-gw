@@ -210,7 +210,7 @@ async function route() {
       show("detail"); await drawDetail(jobId, jobNs || "");
     }
     else if (head === "jobs")   { show("jobs");   drawJobs(); }
-    else if (head === "submit") { show("submit"); }
+    else if (head === "submit") { show("submit"); drawImages(); }
     else if (head === "team")   { show("team");   drawTeam(); }
     else if (head === "vendors") { show("vendors"); drawVendors(); }
     else                        { show("home");   drawHome(); }
@@ -490,6 +490,7 @@ async function drawDetail(jobId, ns = "") {
       fact("Result", job.result_path || "-"),
     ].join("");
 
+    drawCompare(job);
     drawShell(jobId, job);
     await Promise.all([drawMetrics(jobId, job), drawLog(jobId)]);
     // A finished job has nothing left to ask about. Stopping the timers here is
@@ -709,6 +710,75 @@ async function drawLog(jobId) {
   $("d-log-note").textContent = `${n} ${n === 1 ? "line" : "lines"}`;
 }
 
+/* DDPSRUN-COMPARE-PANEL. Pull the ranking out of the one sentence the operator writes.
+
+   THE SENTENCE IS BUILT IN internal/controller/placement.go, the `mode == placementModeCompare`
+   return, and it looks like this:
+
+     winner runpod $1.590/hr buys 1 machine; runner-up aws $2.160/hr; margin 26.4%; \
+     2 of 3 candidate(s) answered (mode=compare: ...)
+
+   It reaches status.message through truncateMsg, which CUTS AT 300 CHARACTERS -- so a long
+   sentence can lose its tail, and every part below is therefore optional. A part that is missing
+   is left out of the panel rather than shown as an empty row.
+
+   WHY PARSE AT ALL, RATHER THAN PRINT THE SENTENCE. It arrives under a badge saying "Compared",
+   which most readers take for a failure, in the same grey note box a real error uses. The four
+   numbers a person came for -- who won, at what price, by how much, out of how many -- are what
+   the panel makes findable; the sentence itself stays underneath, verbatim, because the parse can
+   only ever be as good as a format nobody promised us.
+
+   A MESSAGE THIS DOES NOT RECOGNISE IS NOT AN ERROR. `parts` comes back empty, the panel shows
+   the raw text alone, and the reader is exactly where they were before this function existed. */
+function parseCompare(message) {
+  const text = String(message || "");
+  const grab = (re) => {
+    const m = text.match(re);
+    return m ? m[1].trim() : "";
+  };
+  return {
+    winner: grab(/winner\s+([^;]+?)(?:;|$)/i),
+    runnerUp: grab(/runner-up\s+([^;]+?)(?:;|$)/i),
+    margin: grab(/margin\s+([^;]+?)(?:;|$)/i),
+    answered: grab(/(\d+\s+of\s+\d+\s+candidate\(?s?\)?\s+answered)/i),
+    raw: text,
+  };
+}
+
+/* Show the comparison, and hide the panels a comparison has nothing to put in.
+
+   THE HIDING IS HALF THE FEATURE. A Compared job never rented a machine, so Result files answers
+   "no files", Logs answers "the job has not started a container", the GPU chart has no samples
+   and the Shell panel offers a command that cannot reach anything. Four panels each saying
+   nothing, under a badge that reads like a failure, is what made a successful comparison look
+   like a broken run. */
+function drawCompare(job) {
+  const isCompare = job.phase === "Compared";
+  $("d-compare-panel").hidden = !isCompare;
+  ["d-files-panel", "d-shell-panel", "d-log-panel"].forEach((id) => {
+    $(id).hidden = isCompare;
+  });
+  if (!isCompare) return;
+
+  const c = parseCompare(job.message);
+  const rows = [
+    ["Winner", c.winner],
+    ["Runner-up", c.runnerUp],
+    ["Margin", c.margin],
+    ["Candidates", c.answered],
+  ].filter(([, v]) => v);
+
+  $("d-compare-facts").innerHTML = rows.length
+    ? rows.map(([k, v]) => fact(k, v)).join("")
+    : "";
+  // The sentence, always, whether it parsed or not. When nothing parsed it is the only thing
+  // here, which is the honest outcome for a format this panel does not own.
+  $("d-compare-raw").innerHTML = note("info",
+    rows.length
+      ? `Nothing was rented and the workload did not run. The operator's own sentence: ${c.raw}`
+      : `Nothing was rented and the workload did not run. ${c.raw}`);
+}
+
 /* ------------------------------------------------------------------ 4. Submit */
 
 let draft = null;   // built in step 1; steps 2 and 3 send the same object again.
@@ -730,14 +800,39 @@ function readForm() {
   const body = {
     name: $("f-name").value.trim() || "untitled",
     image: $("f-image").value.trim(),
-    command: $("f-command").value.trim() || null,
     parallelism: num("f-parallelism") || 1,
     capacity_type: $("f-capacity").value,
     env,
     training: {},
   };
+
+  /* DDPSRUN-UI-COMMAND. The box holds ONE SHELL LINE and it goes out as
+     args ["bash","-lc", line].
+
+     WHAT WAS WRONG. It used to go out as `command: "<line>"` -- a bare string
+     into a field the server types as `list[str]` -- so every non-empty box made
+     Validate answer 422 "command: Input should be a valid list". The
+     placeholder shipped in index.html was itself a failing input, which means
+     the only submittable state of this screen was an empty Command box running
+     whatever the image's own ENTRYPOINT is.
+
+     WHY args AND NOT command. `command` overrides the entrypoint and takes an
+     argv array, so honouring a typed line would mean splitting it -- and a
+     splitter gets `python -c "import x"` wrong four ways. Handing the line to a
+     shell is what makes quotes, pipes and redirections mean what they look
+     like, and it is the shape /v1/explain's own example uses:
+     "args": ["bash", "-lc", "python train.py --epochs 4"]. */
+  const line = $("f-command").value.trim();
+  if (line) body.args = ["bash", "-lc", line];
+
   if ($("f-gpu").value) body.gpu = { name: $("f-gpu").value, count: 1 };
-  if ($("f-result").value.trim()) body.result_path = $("f-result").value.trim();
+
+  /* DDPSRUN-VENDOR-CHOICE. Nothing checked sends nothing, which is "no
+     restriction" and is what every job did before these boxes existed. */
+  const vendors = Array.from(document.querySelectorAll("#view-submit [data-vendor]"))
+    .filter((b) => b.checked).map((b) => b.dataset.vendor);
+  if (vendors.length) body.vendors = vendors;
+  if ($("f-mode").value) body.placement_mode = $("f-mode").value;
 
   const t = body.training;
   if (num("f-pairs")) t.pairs = num("f-pairs");
@@ -746,6 +841,50 @@ function readForm() {
   if (num("f-batch")) t.batch_size = num("f-batch");
 
   return body;
+}
+
+/* DDPSRUN-IMAGES. Fill the Image box's datalist with what this lab has already built.
+
+   WHY IT IS FETCHED WHEN THE SCREEN OPENS AND CACHED. The list changes when somebody pushes an
+   image, which is not while a form is being filled in; asking once per visit costs one Lambda
+   call against a form that takes minutes to complete.
+
+   A FAILURE HERE CHANGES NOTHING ABOUT THE FORM. The box is a free-text input with a datalist,
+   not a select, so an empty list leaves it exactly as usable as it was before this existed -- and
+   a public image (runpod/pytorch:...) was never in the list anyway, because it is not in our
+   registry. So the catch says what happened in the note beside the label and moves on.
+
+   THE NOTE IS THE PART THAT MATTERS ON A FAILURE. The server answers 200 with a `note` rather
+   than 502 for exactly this reason: an empty list with no explanation reads as "this lab has
+   built nothing", which would send an operator looking in the wrong place when what is actually
+   missing is the IAM policy (DDPSRUN-IMAGES-READ in terraform/lambda). */
+let imagesDrawn = false;
+
+async function drawImages(force) {
+  if (imagesDrawn && !force) return;
+  imagesDrawn = true;
+  let answer;
+  try {
+    answer = await call("/v1/images");
+  } catch (err) {
+    $("f-image-note").textContent = `image list unavailable (${err.message})`;
+    return;
+  }
+  const rows = answer.images || [];
+  const options = [];
+  rows.forEach((r) => (r.addresses || []).forEach((a) => options.push([a, r.pushed_at])));
+  // A datalist option's `label` is what the browser shows beside the value, so the push date
+  // rides along without becoming part of what gets typed into the box.
+  $("f-image-list").innerHTML = options
+    .map(([value, pushed]) => `<option value="${esc(value)}"${pushed ? ` label="${esc(String(pushed).slice(0, 10))}"` : ""}></option>`)
+    .join("");
+  const repos = rows.filter((r) => (r.addresses || []).length).length;
+  $("f-image-note").textContent = answer.note
+    ? answer.note
+    : options.length
+      ? `${options.length} from ${repos} ${repos === 1 ? "repository" : "repositories"} this lab has built` +
+        (answer.truncated ? ", and more than one page exists" : "")
+      : "";
 }
 
 function step(n) {
@@ -785,13 +924,55 @@ $("s1-next").onclick = async () => {
 };
 
 $("s1-reset").onclick = () => {
-  ["f-name", "f-image", "f-command", "f-result", "f-env",
+  // f-result is gone (DDPSRUN-UI-NO-RESULT-PATH) and clearing an id that no
+  // longer exists throws on $(id).value, which would have left every field after
+  // it uncleared.
+  ["f-name", "f-image", "f-command", "f-env",
    "f-pairs", "f-epochs", "f-cap", "f-batch"].forEach((id) => { $(id).value = ""; });
   $("f-parallelism").value = 1;
   $("f-gpu").value = "";
   $("f-capacity").value = "spot";
+  $("f-mode").value = "";
+  document.querySelectorAll("#view-submit [data-vendor]").forEach((b) => { b.checked = false; });
+  vendorRules();
   $("s1-err").innerHTML = "";
 };
+
+/* DDPSRUN-VENDOR-CHOICE. gcp, azure, lambda and nebius are answered from
+   catalogue CSVs and no actuator in PACSrun understands their machine names, so
+   checking one only makes sense under `compare`, which ranks the candidates and
+   then stops without buying anything. Under `ordered` or `cheapest` such a
+   vendor can win the walk and the job then fails at the actuator with the
+   comparison thrown away.
+
+   THE SCREEN FORCES IT AND THE SERVER ONLY WARNS, and the two disagreeing is
+   deliberate. PACSrun's CRD allows the combination on purpose ("the right answer
+   to 'buy me a thing nobody can buy'"), so /v1/validate answers a WARNING and
+   lets it through -- a caller driving the API can still do it. What the screen
+   must not do is offer a checkbox whose only outcome is a failed job. */
+function vendorRules() {
+  const priced = Array.from(document.querySelectorAll("#view-submit [data-priced]"))
+    .filter((b) => b.checked).map((b) => b.dataset.vendor);
+  const mode = $("f-mode");
+  if (priced.length) {
+    mode.value = "compare";
+    Array.from(mode.options).forEach((o) => { o.disabled = o.value !== "compare"; });
+    $("f-mode-note").innerHTML = note("info",
+      `${priced.join(", ")} can be priced but not rented, so this is a comparison only: ` +
+      `nothing is bought and the job ends in the phase Compared with the winner and the ` +
+      `margin in its message.`);
+  } else {
+    Array.from(mode.options).forEach((o) => { o.disabled = false; });
+    $("f-mode-note").innerHTML = mode.value === "compare"
+      ? note("info", "compare prices every candidate and then STOPS. No machine is rented and " +
+                     "the workload does not run.")
+      : "";
+  }
+}
+
+document.querySelectorAll("#view-submit [data-vendor]")
+  .forEach((b) => { b.onchange = vendorRules; });
+$("f-mode").onchange = vendorRules;
 
 $("s2-back").onclick = () => step(1);
 $("s3-back").onclick = () => step(2);
@@ -968,15 +1149,60 @@ document.querySelectorAll("#jobs-tabs button").forEach((b) => {
   };
 });
 
+/* DDPSRUN-UI-RERUN. Copy the submitted spec back into the form.
+
+   THREE THINGS IT USED TO DROP, all of them silently:
+
+     args        it read `command` only. args is how a one-line workload is
+                 expressed (the server's own words) and is what this screen now
+                 sends, so a job submitted from here came back with NO command
+                 at all -- and the rerun would then run the image's entrypoint.
+     gpus.vramGB the server writes EITHER `name` OR `vramGB`, never both
+                 (models.py, to_pacsjob). Reading `name` alone meant a job that
+                 asked for 48 GB came back with the GPU box empty.
+     placement   vendors and mode were not in the object at all until
+                 2026-09-08; now they are, so they come back too.
+
+   WHAT IT STILL CANNOT RESTORE, said out loud rather than half-done: the
+   training facts (pairs, epochs, cap, batch) are not stored anywhere. They are
+   arguments to the estimate, not part of the job, so the object has no copy to
+   read -- and the estimate is re-run on the way to submitting anyway. */
 $("d-again").onclick = () => {
   if (!lastSpec) return;
   const sp = lastSpec.spec || {};
   $("f-name").value = (lastSpec.name || "") + " (rerun)";
   $("f-image").value = sp.image || "";
-  $("f-command").value = Array.isArray(sp.command) ? sp.command.join(" ") : (sp.command || "");
+
+  // A line this screen sent comes back as ["bash","-lc","<line>"], so unwrap
+  // that shape back into the one box it came from. Anything else -- a kubectl
+  // job's argv, an entrypoint override -- is joined with spaces, which is
+  // readable and re-sendable because the box is handed to a shell.
+  const a = Array.isArray(sp.args) ? sp.args : [];
+  const shellLine = (a.length === 3 && a[0] === "bash" && a[1] === "-lc") ? a[2] : "";
+  $("f-command").value = shellLine
+    || a.join(" ")
+    || (Array.isArray(sp.command) ? sp.command.join(" ") : (sp.command || ""));
+
   $("f-parallelism").value = sp.parallelism || 1;
-  $("f-capacity").value = (sp.placement && sp.placement.capacityType) || "spot";
-  $("f-gpu").value = (sp.resources && sp.resources.gpus && sp.resources.gpus.name) || "";
+
+  const pl = sp.placement || {};
+  $("f-capacity").value = pl.capacityType || "spot";
+  $("f-mode").value = pl.mode && pl.mode !== "ordered" ? pl.mode : "";
+  const want = new Set(pl.vendors || []);
+  document.querySelectorAll("#view-submit [data-vendor]")
+    .forEach((b) => { b.checked = want.has(b.dataset.vendor); });
+  vendorRules();
+
+  // The GPU box lists MODELS, so a job that asked by memory has nothing to
+  // select. Leaving it empty means "let the server recommend one", which is the
+  // honest answer -- and the note says why rather than letting the ask vanish.
+  const g = (sp.resources && sp.resources.gpus) || {};
+  $("f-gpu").value = g.name || "";
+  $("s1-err").innerHTML = (!g.name && g.vramGB)
+    ? note("info", `The original asked for ${g.vramGB} GB rather than a model, and this box ` +
+                   `lists models. Left empty, which means "let the server recommend one".`)
+    : "";
+
   // An entry whose value came from a Secret has no value here to copy, by
   // design. Carry the name across with an empty value and let the user fill it.
   $("f-env").value = (sp.env || [])

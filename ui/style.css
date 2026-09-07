@@ -205,6 +205,9 @@ button.go:disabled, button.flat:disabled {
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* A checkbox and its word sit side by side. `label` above is column-flex for the form's
+   stacked fields, so a checkbox label has to say otherwise or the box lands above the word. */
+.chk { flex-direction: row; align-items: center; gap: 6px; margin-right: 10px; }
 
 /* ------------------------------------------------------------------ tabs */
 

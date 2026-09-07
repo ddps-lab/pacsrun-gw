@@ -89,6 +89,11 @@ resource "aws_iam_role_policy" "gw" {
   policy = data.aws_iam_policy_document.permissions.json
 }
 
+// DDPSRUN-IMAGES-READ needs this account's id to build the ECR repository ARN. A data source
+// rather than a variable: the id is a fact about whoever is running terraform, and asking for it
+// in terraform.tfvars would be one more twelve-digit number to copy wrongly.
+data "aws_caller_identity" "gw" {}
+
 // DDPSRUN-ARTIFACTS-READ. The results bucket, read-only, results prefix only.
 // GET /v1/jobs/{id}/artifacts lists a job's files and mints a presigned GET
 // URL per file. S3 checks a presigned URL against the SIGNER's permission at
@@ -124,6 +129,51 @@ resource "aws_iam_role_policy" "results_read" {
   name   = "${var.name}-results-read"
   role   = aws_iam_role.gw.id
   policy = data.aws_iam_policy_document.results_read.json
+}
+
+// DDPSRUN-IMAGES-READ. The container registry, read-only, this account only.
+//
+// WHY. GET /v1/images offers the images this lab has already built, because the Image field on
+// the New job screen was free text with a 70-character ECR URL in its placeholder and a typo in
+// any part of it is not caught anywhere: the request is valid, the job is created, and the answer
+// arrives as an ImagePullBackOff on a machine that has already been rented.
+//
+// TWO ACTIONS AND NO MORE. DescribeRepositories answers "what exists" and DescribeImages answers
+// "which tags". Deliberately absent: ecr:GetAuthorizationToken and every Get*Layer* action, which
+// are what a PULL needs -- this function reads the catalogue and never fetches an image. Also
+// absent is every write action, so a compromise of the function cannot push a tag over one a
+// researcher is running.
+//
+// SCOPED TO THIS ACCOUNT'S OWN REPOSITORIES, in this region, by ARN. Both actions take a
+// repository resource, so neither needs "*" -- a repository in another account is out of reach
+// even if its ARN were guessed, and the role cannot be pointed at a registry this deployment
+// does not own. Verified after apply by calling GET /v1/images, which is the only way to know
+// the ARN form is the one ECR actually authorises against.
+//
+// A SEPARATE RESOURCE, for the same reason results_read is one: it can be applied and removed
+// with -target without touching the rest of the role.
+//
+// COST. ECR's price list bills stored bytes ($0.10/GB-month) and data transferred out, and has no
+// per-request line for either of these calls, so the route's cost is the Lambda time it spends.
+// (Read off the pricing page, not measured here.)
+data "aws_iam_policy_document" "registry_read" {
+  statement {
+    sid    = "ReadThisAccountsRepositoriesOnly"
+    effect = "Allow"
+    actions = [
+      "ecr:DescribeRepositories",
+      "ecr:DescribeImages",
+    ]
+    resources = [
+      "arn:aws:ecr:${var.region}:${data.aws_caller_identity.gw.account_id}:repository/*"
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "registry_read" {
+  name   = "${var.name}-registry-read"
+  role   = aws_iam_role.gw.id
+  policy = data.aws_iam_policy_document.registry_read.json
 }
 
 // ------------------------------------------------------------- cluster access

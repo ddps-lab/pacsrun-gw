@@ -78,12 +78,45 @@ class GpuRequest(BaseModel):
         return self
 
 
+# DDPSRUN-VENDOR-CHOICE. The vendor names PACSrun recognises, and the four of
+# them that can only be PRICED.
+#
+# WHY THEY ARE REPEATED HERE. They are PACSrun's list (`knownVendors` in
+# internal/controller/vendorpod.go) and the CRD carries them as an enum, so a
+# typo would already be refused -- by the Kubernetes API, at submit time, with a
+# message about an enum. Repeating them turns that into a 400 from /v1/validate
+# that names the bad word and lists the ones that would have worked, before
+# anything is submitted. Same reason GpuRequest repeats the CRD's CEL rule.
+#
+# THE SPLIT IS THE PART THAT MATTERS. aws and runpod have an execution path: the
+# built-in KubePACS solver over EC2, and a rented container behind a driver pod.
+# The other four are answered from the SkyPilot catalog CSVs, which needs no
+# credential of any kind -- enough to state a price, nothing like enough to rent
+# a machine, because no actuator here understands their machine names. So they
+# belong with `mode: compare`, which stops after the ranking.
+RUNNABLE_VENDORS: tuple[str, ...] = ("aws", "runpod")
+PRICE_ONLY_VENDORS: tuple[str, ...] = ("gcp", "azure", "lambda", "nebius")
+KNOWN_VENDORS: tuple[str, ...] = RUNNABLE_VENDORS + PRICE_ONLY_VENDORS
+
+# What the walk does with its candidates. The words and their meanings are the
+# CRD's (spec.placement.mode); this copy exists so the request can be checked
+# before it is sent.
+PLACEMENT_MODES: tuple[str, ...] = ("ordered", "cheapest", "compare")
+
+
 class SubmitRequest(BaseModel):
     """The body of `POST /v1/jobs`.
 
-    Note what is missing: namespace, serviceAccountName, resultPath, placement.
-    A caller cannot set them, so a caller cannot write into another user's
-    folder or run as another user's identity.
+    Note what is missing: namespace, serviceAccountName and resultPath. A caller
+    cannot set them, so a caller cannot write into another user's folder or run
+    as another user's identity.
+
+    PLACEMENT IS PARTLY THE CALLER'S SINCE 2026-09-08 (DDPSRUN-VENDOR-CHOICE).
+    Three of its fields are theirs -- `capacity_type`, `vendors` and
+    `placement_mode` -- and the rest is still not offered. Before that date the
+    server wrote `placement: {capacityType}` and nothing else, so a caller could
+    not say "run this on RunPod" or "price every vendor and buy nothing", both
+    of which PACSrun's CRD has had all along.
     """
 
     name: str = Field(
@@ -140,6 +173,26 @@ class SubmitRequest(BaseModel):
         gt=0,
         description="Your own guess at the runtime. Recorded, not yet acted on.",
     )
+    vendors: list[str] = Field(
+        default_factory=list,
+        description="WHO the machines may be bought from. Empty means no "
+        "restriction, which is how every job behaved before this field existed. "
+        f"Runnable: {', '.join(RUNNABLE_VENDORS)}. Price-only: "
+        f"{', '.join(PRICE_ONLY_VENDORS)} -- these are answered from catalogue "
+        "CSVs and no actuator here can rent from them, so list one only together "
+        "with placement_mode 'compare', which stops after the ranking.",
+    )
+    placement_mode: str | None = Field(
+        default=None,
+        pattern="^(ordered|cheapest|compare)$",
+        description="What the walk does with its candidates. 'ordered' (the "
+        "default when omitted) asks them in order and stops at the first that "
+        "answers, comparing nothing. 'cheapest' asks every candidate and buys "
+        "the cheapest answer. 'compare' asks every candidate, ranks them, and "
+        "then STOPS -- nothing is bought, and the job ends in the terminal phase "
+        "Compared with the winner, the runner-up and the margin in its message. "
+        "'compare' is the only mode that costs nothing to run.",
+    )
 
     @model_validator(mode="after")
     def something_to_run(self) -> "SubmitRequest":
@@ -158,6 +211,24 @@ class SubmitRequest(BaseModel):
                 f"{', '.join(overlap)} appears in both env and secrets. "
                 f"Pick one: env for a literal, secrets for a stored value."
             )
+
+        # DDPSRUN-VENDOR-CHOICE. An unrecognised vendor is an ERROR and not a
+        # skip, for the reason PACSrun's own validateVendors gives: the word
+        # matches no placement candidate, so ignoring it would leave the walk
+        # with nothing that vendor covers and the job would run somewhere the
+        # user did not name, silently.
+        unknown = [v for v in self.vendors if v not in KNOWN_VENDORS]
+        if unknown:
+            raise ValueError(
+                f"vendors: {unknown[0]!r} is not a vendor this service knows. "
+                f"Use one of: {', '.join(KNOWN_VENDORS)}."
+            )
+        duplicates = sorted({v for v in self.vendors if self.vendors.count(v) > 1})
+        if duplicates:
+            raise ValueError(
+                f"vendors lists {', '.join(duplicates)} more than once. "
+                f"A vendor appears at most once."
+            )
         return self
 
 
@@ -168,6 +239,55 @@ class SubmitResponse(BaseModel):
     name: str
     result_path: str = Field(
         description="Where this job's output will be written. Yours to read."
+    )
+
+
+class ImageView(BaseModel):
+    """One container repository this lab has built, as the Image box offers it.
+
+    DDPSRUN-IMAGES. The Image field was a free-text box with a 70-character ECR URL in its
+    placeholder, and a typo in any part of it is not caught here: the request is valid, the job
+    is created, and the answer arrives as an ImagePullBackOff on a machine already rented. The
+    mechanics and the four deliberate omissions -- no owner filtering, no AMIs, no pagination,
+    no per-request cost -- are narrated in registry.py.
+    """
+
+    repository: str = Field(description='The repository name, e.g. "pacsrun/operator".')
+    registry: str = Field(
+        description="The host part, so the screen can build the pullable address without "
+        "knowing this deployment's account id."
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        description="The newest tags, newest first, capped at a handful per repository. Empty "
+        "for a repository holding only untagged images -- a real state, shown rather than "
+        "hidden, because an empty row is the answer to \"why can I not find my image\".",
+    )
+    pushed_at: str = Field(
+        default="",
+        description="When the newest image was pushed, or empty for a repository with none.",
+    )
+    addresses: list[str] = Field(
+        default_factory=list,
+        description="`registry/repository:tag` for every tag above, ready to paste into the "
+        "Image field. Built here rather than in the browser so one place decides the shape.",
+    )
+
+
+class ImagesResponse(BaseModel):
+    """What `GET /v1/images` returns."""
+
+    images: list[ImageView] = Field(default_factory=list)
+    truncated: bool = Field(
+        default=False,
+        description="True when this account holds more repositories than one page. Said out "
+        "loud rather than showing a prefix of the truth as if it were all of it.",
+    )
+    note: str = Field(
+        default="",
+        description="Why the list is empty, when it is. An empty list with no note would read "
+        "as 'this lab has built nothing', which is a different fact from 'the registry "
+        "refused the question'.",
     )
 
 
@@ -520,8 +640,19 @@ def to_pacsjob(
         spec["env"] = env_entries
     if resources:
         spec["resources"] = resources
+    # DDPSRUN-VENDOR-CHOICE. All three placement fields the caller may set, in
+    # one dict, so that a job naming vendors but no capacity type still gets a
+    # placement block -- before 2026-09-08 the block existed only when a
+    # capacity type did, which is why this is not three separate ifs.
+    placement: dict[str, Any] = {}
     if capacity_type:
-        spec["placement"] = {"capacityType": capacity_type}
+        placement["capacityType"] = capacity_type
+    if request.vendors:
+        placement["vendors"] = list(request.vendors)
+    if request.placement_mode:
+        placement["mode"] = request.placement_mode
+    if placement:
+        spec["placement"] = placement
 
     annotations: dict[str, str] = {naming.DISPLAY_NAME_ANNOTATION: request.name}
     if request.expected_hours is not None:
