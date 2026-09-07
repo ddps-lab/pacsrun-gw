@@ -856,10 +856,28 @@ class MemberTotalsView(BaseModel):
     )
 
 
+class VendorTotalsView(BaseModel):
+    """One vendor's share of the team's figures."""
+
+    vendor: str = Field(
+        description="Who sold the machines: status.currentOffering.vendor. "
+        "Jobs recorded before that field existed group under 'unknown'."
+    )
+    jobs: int
+    gpu_hours: float
+    cost_usd: float
+    unpriced_jobs: int
+
+
 class StatsResponse(BaseModel):
     """What /v1/stats returns."""
 
     team: str
+    vendors: list[VendorTotalsView] = Field(
+        default_factory=list,
+        description="The same jobs added up by who sold the machines — computed "
+        "in the same pass as members, so the two tables cannot disagree.",
+    )
     caller: str = Field(
         default="",
         description="The requesting token's own user name, so the screen can "

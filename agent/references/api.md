@@ -304,6 +304,7 @@ What /v1/stats returns.
 | `note` |  | Why the figures are incomplete, in words. Empty when they are not. |
 | `team` | yes |  |
 | `unpriced_jobs` |  |  |
+| `vendors` |  | The same jobs added up by who sold the machines — computed in the same pass as members, so the two tables cannot disagree. |
 
 ### SubmitResponse
 
@@ -349,3 +350,15 @@ What /v1/validate returns. Nothing was submitted.
 | `loc` | yes |  |
 | `msg` | yes |  |
 | `type` | yes |  |
+
+### VendorTotalsView
+
+One vendor's share of the team's figures.
+
+| field | required | description |
+|---|---|---|
+| `cost_usd` | yes |  |
+| `gpu_hours` | yes |  |
+| `jobs` | yes |  |
+| `unpriced_jobs` | yes |  |
+| `vendor` | yes | Who sold the machines: status.currentOffering.vendor. Jobs recorded before that field existed group under 'unknown'. |
