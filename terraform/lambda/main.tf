@@ -89,6 +89,43 @@ resource "aws_iam_role_policy" "gw" {
   policy = data.aws_iam_policy_document.permissions.json
 }
 
+// DDPSRUN-ARTIFACTS-READ. The results bucket, read-only, results prefix only.
+// GET /v1/jobs/{id}/artifacts lists a job's files and mints a presigned GET
+// URL per file. S3 checks a presigned URL against the SIGNER's permission at
+// the moment the URL is USED, so without GetObject here every link the server
+// mints would answer AccessDenied — and without ListBucket the listing itself
+// is refused. A separate resource rather than a fourth statement above so it
+// can be applied and removed with -target, without touching the rest.
+data "aws_iam_policy_document" "results_read" {
+  statement {
+    sid       = "ListResultPrefixOnly"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::${var.result_bucket}"]
+    // ListBucket is a bucket-level action; this condition is what narrows it
+    // to the results prefix, so the function cannot enumerate anything else
+    // the bucket might one day hold.
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["${var.result_prefix}*"]
+    }
+  }
+
+  statement {
+    sid       = "ReadResultObjectsOnly"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::${var.result_bucket}/${var.result_prefix}*"]
+  }
+}
+
+resource "aws_iam_role_policy" "results_read" {
+  name   = "${var.name}-results-read"
+  role   = aws_iam_role.gw.id
+  policy = data.aws_iam_policy_document.results_read.json
+}
+
 // ------------------------------------------------------------- cluster access
 
 // WHY A GROUP AND NOT A USERNAME. Measured 2026-09-01: the access entry reports

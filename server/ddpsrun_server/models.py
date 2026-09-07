@@ -171,6 +171,42 @@ class SubmitResponse(BaseModel):
     )
 
 
+class ArtifactFileView(BaseModel):
+    """One result file on the artifacts screen."""
+
+    name: str = Field(description="Path relative to the job's own result folder.")
+    size_bytes: int
+    last_modified: str = Field(description="When S3 last wrote it, RFC 3339.")
+    url: str = Field(
+        description="A presigned GET for this one file. It downloads straight "
+        "from S3 — the bytes never pass through this server — and it stops "
+        "working after artifacts.EXPIRES_SECONDS; ask this route again for a "
+        "fresh one."
+    )
+
+
+class ArtifactsResponse(BaseModel):
+    """What `GET /v1/jobs/{id}/artifacts` returns."""
+
+    files: list[ArtifactFileView]
+    prefix: str = Field(
+        default="",
+        description="The S3 address that was listed, for `aws s3 sync` by hand.",
+    )
+    total: int = Field(description="How many files are listed.")
+    truncated: bool = Field(
+        default=False,
+        description="True when the folder holds more than one page (1000 keys) "
+        "and only the first page is shown.",
+    )
+    note: str = Field(
+        default="",
+        description="Why the list is empty when that needs saying: the job has "
+        "no resultPath, nothing is uploaded yet, or the path points outside "
+        "this server's bucket and was refused.",
+    )
+
+
 class NamespacesResponse(BaseModel):
     """What `GET /v1/namespaces` returns: the caller's namespace picker."""
 
@@ -247,9 +283,9 @@ class JobView(BaseModel):
     result_path: str | None = Field(
         default=None,
         description="Where the output is. This is the one place a namespace name "
-        "crosses the API boundary, because it is part of the S3 key and a "
-        "stage-1 caller has no other way to collect their results. It goes away "
-        "when /v1/jobs/{id}/artifacts starts handing out download URLs.",
+        "crosses the API boundary, because it is part of the S3 key. The screen "
+        "now downloads through /v1/jobs/{id}/artifacts instead, but this field "
+        "stays: the CLI and scripts read results with `aws s3 sync <this>`.",
     )
 
     @staticmethod

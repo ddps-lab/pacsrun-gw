@@ -346,11 +346,11 @@ function jobsTable(jobs, columns) {
   };
   const CELL = {
     name: (j) => `<span class="name">${esc(j.name || "(unnamed)")}</span>`,
-    // Jobs with no id do exist. A PacsJob applied with kubectl rather than
-    // submitted here does not follow the ddpsrun-<hex> naming rule, so no id
-    // can be read off it — on 2026-09-01 that was all 24 jobs on the cluster.
-    // Such a row has nowhere to click through to, so the <tr> below drops its
-    // click class and this cell says why.
+    // Jobs with no id do exist: a PacsJob applied with kubectl does not follow
+    // the ddpsrun-<hex> naming rule, so no id can be read off it — on
+    // 2026-09-01 that was all 24 jobs on the cluster. This cell says where the
+    // job came from; the row still clicks through, because the server also
+    // accepts the object NAME as the detail key (DDPSRUN-JOB-BY-NAME).
     id: (j) => j.job_id
       ? `<span class="num dim tiny">${esc(j.job_id)}</span>`
       : `<span class="dim tiny" title="Created outside this gateway">applied directly</span>`,
@@ -390,11 +390,17 @@ function jobsTable(jobs, columns) {
   return `<div class="scroll"><table><thead><tr>` +
     columns.map((c) => `<th>${HEAD[c]}</th>`).join("") +
     `</tr></thead><tbody>` +
-    jobs.map((j) =>
-      `<tr class="${j.job_id ? "click" : ""}${j.phase === "Failed" ? " failed" : ""}" ` +
-      `data-id="${esc(j.job_id)}">` +
-      columns.map((c) => `<td${c === "elapsed" || c === "created" ? ' class="num"' : ""}>${CELL[c](j)}</td>`).join("") +
-      `</tr>`).join("") +
+    jobs.map((j) => {
+      // The click-through key: the gateway's id when there is one, else the
+      // object name itself — the second spelling the server accepts
+      // (DDPSRUN-JOB-BY-NAME). For a kubectl-applied job the display name IS
+      // metadata.name (models.py falls back to it), so it is the right key.
+      const key = j.job_id || j.name;
+      return `<tr class="${key ? "click" : ""}${j.phase === "Failed" ? " failed" : ""}" ` +
+        `data-id="${esc(key)}">` +
+        columns.map((c) => `<td${c === "elapsed" || c === "created" ? ' class="num"' : ""}>${CELL[c](j)}</td>`).join("") +
+        `</tr>`;
+    }).join("") +
     `</tbody></table></div>`;
 }
 
@@ -427,6 +433,10 @@ async function drawDetail(jobId, ns = "") {
   lastSpec = null;
   $("d-log").textContent = "Waiting for output.";
   $("d-id").textContent = jobId;
+
+  // Once per open, not per poll — see the panel's comment in index.html.
+  drawArtifacts(jobId);
+  $("d-files-refresh").onclick = () => drawArtifacts(jobId);
 
   // The spec never changes, so read it once rather than on every poll.
   call(`/v1/jobs/${jobId}/spec` + nsQuery()).then((spec) => {
@@ -483,6 +493,55 @@ async function drawDetail(jobId, ns = "") {
 
 const fact = (k, v) =>
   `<div class="fact"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`;
+
+/* The Result files panel: GET /v1/jobs/{id}/artifacts, drawn as a table with
+   one Download link per file. The link is a presigned S3 URL — the browser
+   follows it to S3 directly, so the bytes never pass through Lambda (whose
+   response is capped around 6 MB; one adapter file measured 528,550,256
+   bytes). Links expire after 10 minutes; Refresh mints fresh ones. */
+async function drawArtifacts(jobId) {
+  $("d-files-note").textContent = "";
+  $("d-files").innerHTML = `<p class="dim">Loading...</p>`;
+  let a;
+  try {
+    a = await call(`/v1/jobs/${jobId}/artifacts` + nsQuery());
+  } catch (err) {
+    $("d-files").innerHTML = note("err", err.message);
+    return;
+  }
+  if (!a.files.length) {
+    $("d-files").innerHTML = `<p class="dim">${esc(a.note || "No files.")}</p>`;
+    return;
+  }
+  $("d-files-note").textContent =
+    `${a.total} ${a.total === 1 ? "file" : "files"}` +
+    `${a.truncated ? " (first 1000 only)" : ""}, links are good for 10 minutes`;
+  $("d-files").innerHTML =
+    `<div class="scroll"><table><thead><tr>` +
+    `<th>File</th><th>Size</th><th>Last written</th><th></th>` +
+    `</tr></thead><tbody>` +
+    a.files.map((f) =>
+      `<tr><td><span class="name">${esc(f.name)}</span></td>` +
+      `<td class="num">${esc(humanSize(f.size_bytes))}</td>` +
+      `<td class="num dim">${esc(when(f.last_modified))}</td>` +
+      `<td><a class="flat tiny" style="padding:4px 10px" href="${esc(f.url)}" ` +
+      `target="_blank" rel="noopener">Download</a></td></tr>`
+    ).join("") +
+    `</tbody></table></div>`;
+}
+
+/* "528550256" is unreadable at a glance; "504.1 MiB" is what a person needs to
+   decide whether to download on the network they are on. Powers of 1024, the
+   same convention `ls -lh` and the S3 console print. */
+function humanSize(n) {
+  if (!Number.isFinite(n) || n < 1024) return `${n} B`;
+  let v = n;
+  for (const unit of ["KiB", "MiB", "GiB", "TiB"]) {
+    v /= 1024;
+    if (v < 1024) return `${v.toFixed(1)} ${unit}`;
+  }
+  return `${v.toFixed(1)} PiB`;
+}
 
 async function drawMetrics(jobId) {
   let m;
