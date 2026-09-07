@@ -74,8 +74,11 @@ def test_every_card_on_the_machine_is_billed():
     # RunPod's ledger says $44.28 for it (facts/cost-ledger.md, 2026-09-07);
     # at the measured $1.59/card/hour this arithmetic gives $44.32. Before the
     # card count existed the screen said $11.07 to the person holding that bill.
+    # The shape is the CRD's own: resources.gpus.count, read off the live
+    # baseline-c object — not a flat spec.gpus, which a first version of the
+    # code reached for and silently priced every job as one card.
     four_cards = job(instance="NVIDIA A100-SXM4-80GB")
-    four_cards["spec"]["gpus"] = {"name": "A100", "count": 4}
+    four_cards["spec"]["resources"] = {"gpus": {"name": "A100", "count": 4}}
     assert abs(stats.job_cost(four_cards, 6.97) - 44.32) < 0.05
 
 

@@ -134,7 +134,11 @@ def job_cost(job: dict[str, Any], hours: float) -> float | None:
     # screen while RunPod's ledger said $44.28 (facts/cost-ledger.md,
     # 2026-09-07): the missing factor was exactly the 4.
     slots = int(spec.get("parallelism", 1) or 1)
-    cards = int(((spec.get("gpus") or {}).get("count", 1)) or 1)
+    # The card count lives at spec.resources.gpus.count on the CRD (checked on
+    # the live baseline-c object, 2026-09-07) — NOT at spec.gpus, which was the
+    # first version of this line and quietly read 1 for every job.
+    gpus = ((spec.get("resources") or {}).get("gpus")) or {}
+    cards = int(gpus.get("count", 1) or 1)
     return hours * gpu.usd_per_hour * slots * cards
 
 
