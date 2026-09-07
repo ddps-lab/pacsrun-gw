@@ -63,6 +63,8 @@ Nothing is submitted. An answer of `unknown` is a real answer: the last time we 
 | `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
 | `--gpu-count N` |  | how many GPUs PER POD (default 1) |
 | `--capacity-type CAPACITY_TYPE` |  | how the machine is bought. YOU decide this. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed mid-run. Run `ddpsrun estimate` first — it recommends one and says why. submit refuses without it rather than choosing for you. |
+| `--vendor NAME` |  | who the machine may be bought from. Repeat it to allow several; omit it entirely for no restriction, which is what every job did before this flag existed. aws and runpod can actually run a job; gcp, azure, lambda and nebius can only be PRICED, so name one of those only with --placement-mode compare. |
+| `--placement-mode PLACEMENT_MODE` |  | what to do with the candidates. ordered (the default) asks them in order and stops at the first that answers, comparing nothing. cheapest asks every candidate and buys the cheapest answer. compare asks every candidate, ranks them and then STOPS -- nothing is bought and the job ends in the phase Compared with the winner and the margin in its message. compare is the only mode that costs nothing to run. |
 | `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |
@@ -93,6 +95,8 @@ Nothing is submitted. Pass --script to unlock four more checks.
 | `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
 | `--gpu-count N` |  | how many GPUs PER POD (default 1) |
 | `--capacity-type CAPACITY_TYPE` |  | how the machine is bought. YOU decide this. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed mid-run. Run `ddpsrun estimate` first — it recommends one and says why. submit refuses without it rather than choosing for you. |
+| `--vendor NAME` |  | who the machine may be bought from. Repeat it to allow several; omit it entirely for no restriction, which is what every job did before this flag existed. aws and runpod can actually run a job; gcp, azure, lambda and nebius can only be PRICED, so name one of those only with --placement-mode compare. |
+| `--placement-mode PLACEMENT_MODE` |  | what to do with the candidates. ordered (the default) asks them in order and stops at the first that answers, comparing nothing. cheapest asks every candidate and buys the cheapest answer. compare asks every candidate, ranks them and then STOPS -- nothing is bought and the job ends in the phase Compared with the winner and the margin in its message. compare is the only mode that costs nothing to run. |
 | `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |
@@ -123,6 +127,8 @@ Give a YAML or JSON file, or build the request from flags, or both. Flags win ov
 | `--gpu-name MODEL` |  | exact GPU model, e.g. L40S |
 | `--gpu-count N` |  | how many GPUs PER POD (default 1) |
 | `--capacity-type CAPACITY_TYPE` |  | how the machine is bought. YOU decide this. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed mid-run. Run `ddpsrun estimate` first — it recommends one and says why. submit refuses without it rather than choosing for you. |
+| `--vendor NAME` |  | who the machine may be bought from. Repeat it to allow several; omit it entirely for no restriction, which is what every job did before this flag existed. aws and runpod can actually run a job; gcp, azure, lambda and nebius can only be PRICED, so name one of those only with --placement-mode compare. |
+| `--placement-mode PLACEMENT_MODE` |  | what to do with the candidates. ordered (the default) asks them in order and stops at the first that answers, comparing nothing. cheapest asks every candidate and buys the cheapest answer. compare asks every candidate, ranks them and then STOPS -- nothing is bought and the job ends in the phase Compared with the winner and the margin in its message. compare is the only mode that costs nothing to run. |
 | `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |

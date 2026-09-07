@@ -119,6 +119,32 @@ jobs:
       - name: 명령이 실제로 설치되는지
         run: ddpsrun --help
 
+  screen:
+    name: 화면이 서버가 받는 body 를 만드는지
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # WHY THIS JOB EXISTS. 2026-09-08 까지 CI 는 ui/ 를 한 번도 안 봤다 — pytest 는
+      # JavaScript 를 못 읽고, `node --check` 조차 없었다. 그 틈으로 결함 둘이 배포됐고
+      # 둘 다 한쪽만 보면 안 보이는 것이었다.
+      #
+      #   Command 칸이 `command` 에 문자열을 보냈다. 서버 타입은 list[str] 이라 그 칸에
+      #   무엇을 넣어도 Validate 가 422 "Input should be a valid list" 를 답했고,
+      #   index.html 에 실려 있던 placeholder 자체가 실패하는 입력이었다. 화면으로 낼 수
+      #   있는 job 은 Command 를 비운 것뿐이었다.
+      #
+      #   Result path 칸이 `result_path` 를 보냈다. submit schema 에 없는 필드고 pydantic 은
+      #   모르는 필드를 버리므로, 사용자가 적은 bucket 이 오류 없이 사라졌다.
+      #
+      # 서버 테스트는 이미 valid 한 body 에서 시작하므로 못 보고, app.js 를 읽는 사람도
+      # 서버의 타입을 알아야 알아본다. 잡히는 자리는 **화면이 만드는 요청의 모양**이다.
+      - name: 문법
+        run: node --check ui/app.js
+      - name: New job 화면이 보내는 body
+        # app.js 에서 함수를 이름으로 꺼내 stub document 위에서 돌린다. 다시 구현하지
+        # 않으므로, 통과하면 배포되는 그 함수가 통과한 것이다.
+        run: node ui/submit_form_test.js
+
   references-current:
     name: agent reference 가 코드와 맞는지
     runs-on: ubuntu-latest

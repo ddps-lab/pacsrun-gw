@@ -172,6 +172,23 @@
     <div id="d-message"></div>
   </div>
 
+  <!-- DDPSRUN-COMPARE-PANEL. A mode=compare job priced every candidate and bought nothing, so
+       it has no GPU, no logs, no result files and no shell -- and until this panel existed the
+       one thing it DID have, the ranking, arrived as a run-on sentence in the status message
+       under a badge most readers would take for a failure.
+       IT NEEDS NO NEW NAVIGATION, which is the point: a comparison is submitted from the same
+       New job screen, lands in the same Jobs list with a Compared badge, and clicking it opens
+       this. Placed above every other panel because for this phase it is the answer, and the
+       panels that would be empty are hidden by drawCompare. -->
+  <div class="panel" id="d-compare-panel" hidden>
+    <header>
+      <h2>Price comparison</h2>
+      <span class="dim small">nothing was bought</span>
+    </header>
+    <div class="facts" id="d-compare-facts"></div>
+    <div id="d-compare-raw"></div>
+  </div>
+
   <div class="panel" id="d-progress-panel" hidden>
     <header><h2>Progress</h2><span class="dim small" id="d-progress-note"></span></header>
     <div id="d-progress"></div>
@@ -186,7 +203,7 @@
        file. Filled by drawArtifacts once per open (plus the Refresh button),
        not by the 5-second poll — every answer lists S3 and signs one URL per
        file, and links stop working after 10 minutes anyway. -->
-  <div class="panel">
+  <div class="panel" id="d-files-panel">
     <header>
       <h2>Result files</h2>
       <span class="dim small" id="d-files-note"></span>
@@ -202,12 +219,12 @@
        workload container on the rented machine. A terminal cannot run in this
        PAGE (the API is a Lambda Function URL; no inbound WebSocket), so the
        page teaches the CLI instead of pretending. Filled by drawShell. -->
-  <div class="panel">
+  <div class="panel" id="d-shell-panel">
     <header><h2>Shell</h2></header>
     <div id="d-shell">-</div>
   </div>
 
-  <div class="panel">
+  <div class="panel" id="d-log-panel">
     <header>
       <h2>Logs</h2>
       <span class="dim small" id="d-log-note"></span>
@@ -247,10 +264,22 @@
     <div class="grid2">
       <label><span><b>Name</b></span>
         <input id="f-name" placeholder="bank-exp3"></label>
-      <label><span><b>Image *</b></span>
-        <input id="f-image" placeholder="&lt;ACCOUNT_ID&gt;.dkr.ecr.us-west-2.amazonaws.com/your-image:tag"></label>
+      <!-- DDPSRUN-IMAGES. A datalist and NOT a select: the addresses this lab has built are
+           offered, and anything else stays typeable. A select would make a public image
+           (runpod/pytorch:...) unreachable, and those are not in our registry at all. -->
+      <label><span><b>Image *</b> <span class="dim" id="f-image-note"></span></span>
+        <input id="f-image" list="f-image-list" autocomplete="off"
+               placeholder="type, or pick one this lab has built">
+        <datalist id="f-image-list"></datalist></label>
     </div>
-    <label><span><b>Command</b></span>
+    <!-- DDPSRUN-UI-COMMAND. One shell line, sent as args ["bash","-lc","<line>"], which is
+         the idiom /v1/explain's own example uses. It used to be sent as a bare STRING into a
+         field the server types as list[str], so ANY text here made Validate answer 422
+         "Input should be a valid list" - the placeholder itself was a failing input, and an
+         empty box was the only submittable state. Sending a shell line rather than splitting
+         on spaces is what makes quoting work: `python -c "import x"` is one argument to the
+         shell, and four wrong tokens to a splitter. -->
+    <label><span><b>Command</b> <span class="dim">one shell line. Runs as <code>bash -lc</code>, so quotes and pipes work</span></span>
       <textarea id="f-command" placeholder="bash /work/run.sh"></textarea></label>
     <div class="grid2">
       <label><span><b>GPU</b></span>
@@ -278,11 +307,43 @@
           <option value="spot">spot (cheaper, can be reclaimed)</option>
           <option value="on-demand">on-demand (dearer, never reclaimed)</option>
         </select></label>
-      <label><span><b>Result path</b></span>
-        <input id="f-result" placeholder="Leave empty and the server picks one"></label>
+      <!-- DDPSRUN-UI-NO-RESULT-PATH. There was a "Result path" input here and the server has
+           no field for it: /v1/explain says "Where the output goes, which identity the job runs
+           as, and which slice of storage it may write to are all decided from your token. There
+           is no field for any of them." The box sent `result_path`, pydantic ignores unknown
+           fields, and the value vanished with no error - so a user typed a bucket and their
+           results went somewhere else. Removed rather than made read-only: the destination is
+           on the job's detail screen once it exists, which is where a fact nobody can change
+           belongs. -->
     </div>
     <label><span><b>Environment</b> <span class="dim">one KEY=VALUE per line</span></span>
       <textarea id="f-env" placeholder="EPOCHS=4&#10;PAIRS=train.jsonl"></textarea></label>
+    <!-- DDPSRUN-VENDOR-CHOICE. PACSrun's CRD has had spec.placement.vendors and
+         spec.placement.mode all along and this gateway wrote neither: it sent
+         `placement: {capacityType}` and nothing else, so "run this on RunPod" and "price every
+         vendor and buy nothing" could not be said through the screen at all.
+         The two groups are separated because they are not the same kind of thing: aws and
+         runpod have an execution path, while the other four are answered from catalogue CSVs
+         and no actuator here understands their machine names. -->
+    <label><span><b>Vendors</b> <span class="dim">none checked = no restriction, which is what every job did before</span></span>
+      <div class="row" id="f-vendors">
+        <label class="chk"><input type="checkbox" data-vendor="aws"> aws</label>
+        <label class="chk"><input type="checkbox" data-vendor="runpod"> runpod</label>
+      </div>
+      <div class="row" id="f-vendors-priced">
+        <span class="dim small">price only, needs Compare:</span>
+        <label class="chk"><input type="checkbox" data-vendor="gcp" data-priced> gcp</label>
+        <label class="chk"><input type="checkbox" data-vendor="azure" data-priced> azure</label>
+        <label class="chk"><input type="checkbox" data-vendor="lambda" data-priced> lambda</label>
+        <label class="chk"><input type="checkbox" data-vendor="nebius" data-priced> nebius</label>
+      </div></label>
+    <label><span><b>Placement</b> <span class="dim">what to do with the candidates</span></span>
+      <select id="f-mode">
+        <option value="">ordered - stop at the first that answers (default)</option>
+        <option value="cheapest">cheapest - ask every candidate, buy the cheapest</option>
+        <option value="compare">compare - ask every candidate, buy NOTHING</option>
+      </select></label>
+    <div id="f-mode-note"></div>
     <label><span><b>Training size</b> <span class="dim">used for the cost estimate. Safe to leave empty.</span></span>
       <div class="grid2">
         <input id="f-pairs" type="number" min="1" placeholder="rows in the dataset">

@@ -1,0 +1,288 @@
+/* submit_form_test.js -- what the New job screen actually sends.
+ *
+ * WHY THIS FILE EXISTS. Until 2026-09-08 nothing in CI looked at ui/ at all: not pytest, which
+ * cannot read JavaScript, and not even `node --check`. Two defects shipped through that gap and
+ * both were invisible from either side on its own.
+ *
+ *   1. The Command box sent a bare STRING into `command`, which the server types as
+ *      `list[str]`. So ANY text in that box made Validate answer
+ *      422 "command: Input should be a valid list" -- and the placeholder shipped in
+ *      index.html, `bash /work/run.sh`, was itself a failing input. The only submittable state
+ *      of the screen was an empty Command box running the image's own ENTRYPOINT.
+ *   2. The Result path box sent `result_path`, a field the submit schema does not have.
+ *      Pydantic ignores unknown fields, so the value vanished with no error at all: a user
+ *      typed a bucket and their results went somewhere else. /v1/explain says plainly
+ *      "Where the output goes ... There is no field for any of them."
+ *
+ * Neither is visible to the server's own tests, which start from a valid body, nor to a reader
+ * of app.js alone, because being wrong requires knowing the server's types. What catches this
+ * class of defect is asserting the SHAPE OF THE REQUEST the screen builds.
+ *
+ * HOW IT RUNS THE REAL CODE. app.js is a browser script with top-level statements that bind
+ * handlers to elements, so it cannot be required into node. So the two functions under test are
+ * EXTRACTED FROM THE SHIPPED FILE BY NAME and evaluated against a stub document. Nothing is
+ * re-implemented here: if this file passes, the function in the deployed app.js passed.
+ *
+ * Run: node ui/submit_form_test.js      (no browser, no network, no login)
+ */
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+
+const SRC = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
+const failures = [];
+
+function check(condition, description) {
+  console.log((condition ? "  ok    " : "  FAIL  ") + description);
+  if (!condition) failures.push(description);
+}
+
+/* Pull one function out of app.js by name, brace-counting to its end. Deliberately blunt: a
+ * rename in app.js makes this throw rather than silently test nothing. */
+function extract(name) {
+  const at = SRC.indexOf(`function ${name}(`);
+  if (at < 0) throw new Error(`app.js has no function ${name} -- was it renamed?`);
+  let depth = 0;
+  for (let j = SRC.indexOf("{", at); j < SRC.length; j++) {
+    if (SRC[j] === "{") depth++;
+    else if (SRC[j] === "}" && --depth === 0) return SRC.slice(at, j + 1);
+  }
+  throw new Error(`unbalanced braces in ${name}`);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The stub document. Only what these two functions touch: fields by id, the vendor checkboxes,
+// and the mode select's options.
+// ---------------------------------------------------------------------------------------------
+const fields = {};
+const modeOptions = [{ value: "" }, { value: "cheapest" }, { value: "compare" }];
+const vendorBoxes = [
+  { dataset: { vendor: "aws" }, checked: false },
+  { dataset: { vendor: "runpod" }, checked: false },
+  { dataset: { vendor: "gcp", priced: "" }, checked: false },
+  { dataset: { vendor: "azure", priced: "" }, checked: false },
+  { dataset: { vendor: "lambda", priced: "" }, checked: false },
+  { dataset: { vendor: "nebius", priced: "" }, checked: false },
+];
+
+global.document = {
+  getElementById: (id) => {
+    if (!fields[id]) {
+      fields[id] = { value: "", innerHTML: "" };
+      if (id === "f-mode") fields[id].options = modeOptions;
+    }
+    return fields[id];
+  },
+  querySelectorAll: (selector) =>
+    selector.includes("data-priced")
+      ? vendorBoxes.filter((b) => "priced" in b.dataset)
+      : vendorBoxes,
+};
+global.$ = (id) => document.getElementById(id);
+global.note = (kind, text) => `[${kind}] ${text}`;
+
+/* WRAPPED IN PARENTHESES AND ASSIGNED, rather than `eval(extract(...))` on its own. This file is
+ * strict mode, and a bare eval'd function DECLARATION is scoped to the eval call -- it never
+ * reaches the module, and the first line that calls it dies with "readForm is not defined".
+ * Parenthesised, the same text is an EXPRESSION that evaluates to the function itself. */
+const readForm = eval(`(${extract("readForm")})`);
+const vendorRules = eval(`(${extract("vendorRules")})`);
+const parseCompare = eval(`(${extract("parseCompare")})`);
+
+function setForm(o) {
+  $("f-name").value = o.name ?? "";
+  $("f-image").value = o.image ?? "";
+  $("f-command").value = o.command ?? "";
+  $("f-parallelism").value = o.parallelism ?? 1;
+  $("f-capacity").value = o.capacity ?? "spot";
+  $("f-gpu").value = o.gpu ?? "";
+  $("f-env").value = o.env ?? "";
+  $("f-mode").value = o.mode ?? "";
+  vendorBoxes.forEach((b) => {
+    b.checked = (o.vendors || []).includes(b.dataset.vendor);
+  });
+  modeOptions.forEach((opt) => {
+    opt.disabled = false;
+  });
+}
+
+const IMAGE = "runpod/pytorch:torch291-cu1281";
+
+// ---------------------------------------------------------------------------------------------
+console.log("the command box, which was the one that made the screen unusable");
+
+setForm({ image: IMAGE, command: "bash /work/run.sh" });
+let body = readForm();
+check(
+  !("command" in body),
+  "`command` is not sent at all. It is typed list[str] on the server and this box holds one " +
+    "shell line, so sending the line as a string is the 422 this file exists to prevent"
+);
+check(
+  JSON.stringify(body.args) === JSON.stringify(["bash", "-lc", "bash /work/run.sh"]),
+  "the line goes out as args [bash, -lc, <line>], which is the shape /v1/explain's own " +
+    "example uses"
+);
+
+setForm({ image: IMAGE, command: 'python -c "import torch; print(torch.__version__)"' });
+body = readForm();
+check(
+  body.args.length === 3 &&
+    body.args[2] === 'python -c "import torch; print(torch.__version__)"',
+  "a quoted argument survives whole. Splitting the line on spaces instead would hand the " +
+    "container four wrong tokens, which is why a shell gets the line rather than a splitter"
+);
+
+setForm({ image: IMAGE, command: "   " });
+body = readForm();
+check(
+  !("args" in body) && !("command" in body),
+  "a blank box sends neither, which leaves the image's own ENTRYPOINT in charge -- legitimate, " +
+    "and the server's `something_to_run` validator allows it"
+);
+
+// ---------------------------------------------------------------------------------------------
+console.log("\nthe result path box, which silently threw the value away");
+
+setForm({ image: IMAGE });
+body = readForm();
+check(
+  !("result_path" in body),
+  "`result_path` is never sent. The submit schema has no such field, pydantic drops unknown " +
+    "fields, and the user's typed bucket vanished with no error"
+);
+check(
+  !SRC.includes('$("f-result")'),
+  "and nothing in app.js still reads f-result -- the element is gone from index.html, so a " +
+    "leftover read would throw and stop every field after it (the Clear button did exactly this)"
+);
+
+// ---------------------------------------------------------------------------------------------
+console.log("\nvendors: the three cases the CRD has always supported and the screen could not say");
+
+setForm({ image: IMAGE, vendors: ["aws"] });
+check(JSON.stringify(readForm().vendors) === '["aws"]', "aws alone");
+
+setForm({ image: IMAGE, vendors: ["runpod"] });
+check(JSON.stringify(readForm().vendors) === '["runpod"]', "runpod alone");
+
+setForm({ image: IMAGE });
+body = readForm();
+check(
+  !("vendors" in body) && !("placement_mode" in body),
+  "nothing checked sends neither field, which is 'no restriction' and is byte-for-byte what " +
+    "every job did before these boxes existed"
+);
+
+setForm({ image: IMAGE, vendors: ["aws", "runpod"], mode: "cheapest" });
+body = readForm();
+check(
+  JSON.stringify(body.vendors) === '["aws","runpod"]' && body.placement_mode === "cheapest",
+  "two vendors and a mode go out together -- naming two on its own only lengthens the walk; " +
+    "the mode is what turns it into a price comparison"
+);
+
+setForm({ image: IMAGE, vendors: ["aws", "runpod", "gcp", "azure", "lambda", "nebius"], mode: "compare" });
+check(readForm().vendors.length === 6, "all six names are offered, not just the two that can run");
+
+// ---------------------------------------------------------------------------------------------
+console.log("\nthe price-only vendors, which can be ranked and never rented");
+
+setForm({ image: IMAGE, vendors: ["gcp"], mode: "cheapest" });
+vendorRules();
+check(
+  $("f-mode").value === "compare",
+  "checking gcp forces the mode to compare. Under cheapest or ordered it can WIN the walk and " +
+    "then fail at the actuator, because no actuator here understands its machine names"
+);
+check(
+  modeOptions.filter((o) => o.disabled).map((o) => o.value).join(",") === ",cheapest",
+  "and the other two options are disabled, so the screen never offers a checkbox whose only " +
+    "outcome is a failed job"
+);
+check(
+  $("f-mode-note").innerHTML.includes("priced but not rented"),
+  "with a note saying why, rather than a select that moves on its own"
+);
+
+setForm({ image: IMAGE, vendors: ["aws"], mode: "" });
+vendorRules();
+check(
+  $("f-mode").value === "" && modeOptions.every((o) => !o.disabled),
+  "unchecking it gives every mode back. The forcing is a consequence of the choice, not a " +
+    "one-way door"
+);
+
+setForm({ image: IMAGE, vendors: ["aws"], mode: "compare" });
+vendorRules();
+check(
+  $("f-mode-note").innerHTML.includes("STOPS"),
+  "and choosing compare on its own still says out loud that nothing is bought -- the one mode " +
+    "where the job ends without the workload ever running"
+);
+
+// ---------------------------------------------------------------------------------------------
+console.log("\nRun again, which used to drop what this screen now sends");
+
+const rerun = SRC.slice(SRC.indexOf('$("d-again").onclick'));
+const rerunBody = rerun.slice(0, rerun.indexOf("\n};"));
+check(
+  rerunBody.includes("sp.args"),
+  "it reads sp.args. Reading `command` alone meant a job submitted from this screen came back " +
+    "with no command at all, and the rerun ran the image's entrypoint instead"
+);
+check(
+  rerunBody.includes("g.vramGB"),
+  "it looks at gpus.vramGB. The server writes EITHER name OR vramGB and never both, so " +
+    "reading name alone made a 48 GB ask come back as an empty box"
+);
+check(
+  rerunBody.includes("pl.vendors") && rerunBody.includes("pl.mode"),
+  "and it carries the placement back, which did not exist in the object before 2026-09-08"
+);
+
+// ---------------------------------------------------------------------------------------------
+console.log("\nthe compare panel, reading the operator's own sentence");
+
+/* The real shape, from internal/controller/placement.go's `mode == placementModeCompare`
+   return: "winner %s %s %s; runner-up %s; margin %s; %d of %d candidate(s) answered (%w)". */
+const REAL =
+  "winner runpod $1.590/hr buys 1 machine; runner-up aws $2.160/hr; margin 26.4%; " +
+  "2 of 3 candidate(s) answered (mode=compare: the comparison IS the job, so nothing was bought)";
+let c = parseCompare(REAL);
+check(c.winner === "runpod $1.590/hr buys 1 machine", "the winner comes out whole, price and all");
+check(c.runnerUp === "aws $2.160/hr", "so does the runner-up");
+check(c.margin === "26.4%", "and the margin");
+check(c.answered === "2 of 3 candidate(s) answered", "and how many of the candidates answered");
+check(c.raw === REAL, "and the sentence itself is kept, because the parse is only as good as a " +
+                      "format nobody promised us");
+
+/* truncateMsg cuts status.message at 300 characters, so a long sentence really can lose its
+   tail. Every part is optional and a missing one must not become an empty row. */
+c = parseCompare("winner aws $2.160/hr buys 2 machines; runner-up");
+check(c.winner === "aws $2.160/hr buys 2 machines",
+      "a sentence cut short still yields the winner -- 300 characters is the ceiling " +
+      "truncateMsg imposes and the tail is what it takes");
+check(c.runnerUp === "" && c.margin === "" && c.answered === "",
+      "and the parts that were cut come back empty rather than as guesses");
+
+c = parseCompare("placement failed: no candidate answered");
+check(!c.winner && !c.runnerUp && c.raw === "placement failed: no candidate answered",
+      "a message this does not recognise yields nothing parsed and the text intact, which " +
+      "leaves the reader exactly where they were before the panel existed");
+
+c = parseCompare(undefined);
+check(c.raw === "" && !c.winner, "and an absent message does not throw");
+
+// ---------------------------------------------------------------------------------------------
+console.log();
+if (failures.length) {
+  console.log(`FAILED (${failures.length}):`);
+  failures.forEach((f) => console.log("  - " + f));
+  process.exit(1);
+}
+console.log(
+  "the New job screen sends a body the server accepts, says which vendors may sell the " +
+    "machine, and throws nothing away in silence"
+);

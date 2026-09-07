@@ -200,3 +200,78 @@ def test_every_finding_says_what_to_change_or_deliberately_does_not():
         # `info` may have nothing to change; anything stronger must.
         if finding.level != v.INFO:
             assert finding.fix, finding.code
+
+
+# ---------------------------------------------------------------- DDPSRUN-VENDOR-CHOICE
+
+
+def test_a_price_only_vendor_under_the_default_mode_is_warned_about():
+    """Six vendor names are accepted and only two of them can run anything.
+
+    gcp, azure, lambda and nebius are answered from the SkyPilot catalogue CSVs -- enough to
+    state a price, nothing like enough to rent a machine, because no actuator in PACSrun
+    understands their machine names. Under `ordered` (the default) such a vendor answering FIRST
+    reaches the actuator and fails there; under `cheapest` it fails if it WINS, and takes the
+    comparison down with it.
+    """
+    findings = v.check_vendors_can_run(["gcp"], None)
+    codes = [f.code for f in findings]
+    assert "vendor-cannot-run" in codes
+    warned = next(f for f in findings if f.code == "vendor-cannot-run")
+    assert warned.level == v.WARNING
+    assert "gcp" in warned.message
+    assert "compare" in warned.fix
+
+
+def test_it_warns_and_does_not_refuse():
+    """PACSrun's CRD allows the combination on purpose, so this service must not be stricter.
+
+    The CRD's own words on spec.placement.vendors: "Listing one under mode: cheapest and having
+    it WIN reaches the actuator and fails there, which is the right answer to 'buy me a thing
+    nobody can buy'". Refusing here would overrule a judgement the layer below has already made;
+    saying so before the money is spent is the part that was missing.
+    """
+    findings = v.check_vendors_can_run(["gcp", "azure"], "cheapest")
+    assert all(f.level != v.ERROR for f in findings)
+
+
+def test_compare_says_out_loud_that_nothing_is_bought():
+    """The one mode where the job ends without the workload ever running.
+
+    A user who picks it expecting a run gets a job in the terminal phase Compared, no machine and
+    no output -- so the finding is what stands between "I got my prices" and "why did nothing
+    happen".
+    """
+    findings = v.check_vendors_can_run(["aws", "runpod"], "compare")
+    told = next(f for f in findings if f.code == "compare-buys-nothing")
+    assert told.level == v.INFO
+    assert "Compared" in told.message
+
+
+def test_ranking_one_candidate_against_itself_is_pointed_out():
+    """`cheapest` and `compare` rank the candidates against each other, and one is not a ranking."""
+    codes = [f.code for f in v.check_vendors_can_run(["aws"], "cheapest")]
+    assert "nothing-to-compare" in codes
+    assert "nothing-to-compare" not in [
+        f.code for f in v.check_vendors_can_run(["aws", "runpod"], "cheapest")
+    ]
+
+
+def test_the_runnable_two_under_the_default_mode_say_nothing_at_all():
+    """The common case has to stay silent, or the findings list becomes something people skim."""
+    assert v.check_vendors_can_run(["aws", "runpod"], "ordered") == []
+    assert v.check_vendors_can_run(["aws"], None) == []
+    assert v.check_vendors_can_run([], None) == []
+
+
+def test_the_findings_reach_the_aggregator():
+    """A check nothing calls is a check that never runs.
+
+    validate() gained two arguments for this and the route threads both -- whether naming a
+    price-only vendor is sensible depends entirely on the mode, so neither is useful alone.
+    """
+    result = v.validate(
+        env={}, script=None, cap=12288, vram_gb=48, job_estimate=KNOWN,
+        vendors=["nebius"], placement_mode="ordered",
+    )
+    assert "vendor-cannot-run" in [f.code for f in result.findings]
