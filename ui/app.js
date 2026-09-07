@@ -489,6 +489,7 @@ async function drawDetail(jobId, ns = "") {
       fact("Result", job.result_path || "-"),
     ].join("");
 
+    drawShell(jobId, job);
     await Promise.all([drawMetrics(jobId, job), drawLog(jobId)]);
     // A finished job has nothing left to ask about. Stopping the timers here is
     // also where the billing for this screen stops.
@@ -498,6 +499,35 @@ async function drawDetail(jobId, ns = "") {
 
 const fact = (k, v) =>
   `<div class="fact"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`;
+
+/* The Shell panel says what is actually possible, which is not a terminal in
+   this page: the API is a Lambda Function URL, and an interactive terminal
+   needs an inbound WebSocket that Function URLs cannot accept. What DOES work
+   (verified live 2026-09-07, exit codes relay like ssh) is exec THROUGH THE
+   DRIVER POD from a machine with cluster access, so a running job gets that
+   command ready to copy, and a finished job gets told why there is nothing
+   left to enter. AWS/GCP rentals only: a RunPod job is a rented container
+   with no machine behind it, and the shell relay refuses it by design. */
+function drawShell(jobId, job) {
+  if (TERMINAL.includes(job.phase)) {
+    $("d-shell").innerHTML =
+      `<p class="dim">This job has finished — its containers are gone, so there is nothing to shell into.</p>`;
+    return;
+  }
+  // The driver pod's name: the Kubernetes object name plus "-pod-<slot>". A
+  // job opened by name IS the object name; a gateway id maps by the same rule
+  // the server uses (naming.py: "job-<hex>" -> "ddpsrun-<hex>").
+  const objectName = job.job_id ? "ddpsrun-" + job.job_id.replace(/^job-/, "") : jobId;
+  $("d-shell").innerHTML =
+    `<p class="dim small">A terminal cannot run in this page (the API is a Lambda ` +
+    `Function URL, which cannot accept the WebSocket a terminal needs). From a machine ` +
+    `with cluster access, the driver pod relays a shell into the workload container ` +
+    `— AWS and GCP machine rentals only; a RunPod container has no machine to enter:</p>` +
+    `<pre class="spec">kubectl exec -it ${esc(objectName)}-pod-0 -- python3 /app/driver/aws/shell.py\n` +
+    `kubectl exec ${esc(objectName)}-pod-0 -- python3 /app/driver/aws/shell.py -- nvidia-smi</pre>` +
+    `<p class="dim tiny">parallelism &gt; 1: replace pod-0 with pod-&lt;slot&gt;. ` +
+    `Add --list to see machines, --slot N to pick one, --logs to tail the workload.</p>`;
+}
 
 /* The Result files panel: GET /v1/jobs/{id}/artifacts, drawn as a table with
    one Download link per file. The link is a presigned S3 URL — the browser

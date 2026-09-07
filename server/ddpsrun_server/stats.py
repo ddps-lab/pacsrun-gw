@@ -121,7 +121,26 @@ def job_cost(job: dict[str, Any], hours: float) -> float | None:
         rather than zero is the point: a total that silently absorbed unpriced
         jobs would read as complete and be low.
     """
-    offering = (job.get("status") or {}).get("currentOffering") or {}
+    status = job.get("status") or {}
+
+    # PACSRUN-GROUP-PRICE, the vendor-neutral first choice. Since 2026-09-07
+    # PACSrun stamps every offering group with the price the winning answer
+    # stated (usdPerHour — machine count already inside, so nothing here
+    # multiplies). When EVERY group carries one, the job's hourly rate is
+    # simply their sum: any vendor the solver can price, AWS included, with no
+    # price table in this server at all. A partly priced job falls through to
+    # the measured-card estimate below — the same all-or-nothing rule
+    # answerPrice applies in PACSrun, because a partial sum can only ever
+    # understate the bill.
+    groups = status.get("currentOfferingGroups") or []
+    rates = [g.get("usdPerHour") for g in groups]
+    if groups and all(rates):
+        try:
+            return hours * sum(float(rate) for rate in rates)
+        except (TypeError, ValueError):
+            pass  # a malformed stamp is a bug upstream; fall back to the estimate
+
+    offering = status.get("currentOffering") or {}
     gpu = gpu_by_name(offering.get("instanceType") or "")
     if gpu is None:
         return None
