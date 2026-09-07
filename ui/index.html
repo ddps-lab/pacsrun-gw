@@ -124,6 +124,10 @@
     <button data-phase="active" class="on">Active</button>
     <button data-phase="finished">Finished</button>
     <button data-phase="">All</button>
+    <!-- Namespace picker. Hidden unless GET /v1/namespaces says this caller is
+         an operator (selectable) with more than one namespace to look at.
+         Everyone else keeps exactly the screen they had before it existed. -->
+    <select id="jobs-ns" hidden title="Namespace" style="margin-left:auto"></select>
   </div>
 
   <div id="jobs-body"></div>

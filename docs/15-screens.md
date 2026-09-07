@@ -195,7 +195,8 @@ Home  |  Jobs  |  Submit  |  Team
 
 탭은 `전체` / `진행 중` / `끝남` 세 개입니다.
 
-표의 열은 SkyPilot 13개를 우리 조건으로 줄여 **9개**로 합니다.
+표의 열은 SkyPilot 13개를 우리 조건으로 줄여 **9개**로 했고, 2026-09-07에 운영자 요청으로
+**비용**과 **결과 위치** 두 열을 더해 **11개**입니다.
 
 | 열 | 출처 필드 | SkyPilot 대응 |
 |---|---|---|
@@ -207,10 +208,17 @@ Home  |  Jobs  |  Submit  |  Team
 | 경과 | (없음, 15.6 참조) | `duration` |
 | GPU | `JobView.gpu` | `requested_resources` |
 | 벤더 | `JobView.vendor` | `infra` |
+| 비용 | `JobView.cost_usd` | (없음) |
 | 재시작 | `JobView.recovery_count` | `recoveries` |
+| 결과 위치 | `JobView.result_path` | (없음) |
 
 `workspace`와 `pool`은 우리에게 대응하는 개념이 없어서 뺐습니다. `details`와 `logs`
 링크 열은 행 전체를 누르면 상세로 가게 만들어서 없앴습니다.
+
+비용 열은 `/v1/stats`가 팀 합계에 쓰는 것과 같은 계산(`stats.job_cost` — machine 위의 시간
+x 실측 시간당 가격 x parallelism)의 job 한 건 값입니다. 가격을 모르는 machine 은 0 이 아니라
+"-" 로 보입니다. 제출자 열은 owner label 이 없는 job(= kubectl 로 만든 것)을 "admin" 으로
+표기합니다 — 그 label 은 서버만 쓰므로 label 이 없다는 것 자체가 운영자의 작업이라는 뜻입니다.
 
 ### 화면 3 — 작업 상세
 

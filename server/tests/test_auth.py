@@ -17,6 +17,31 @@ def entry(token, user, namespace):
     return {"sha256": auth.hash_token(token), "user": user, "namespace": namespace}
 
 
+def test_admin_is_parsed_and_absent_means_false():
+    store = store_with(
+        {**entry("root-token", "root", "default"), "admin": True},
+        entry("alice-token", "alice", "lab-alice"),
+    )
+    assert store.principal_for("root-token").admin is True
+    assert store.principal_for("alice-token").admin is False
+
+
+def test_a_non_boolean_admin_is_refused():
+    # "true" the string is exactly the quoting mistake the check exists for: it
+    # must fail the file at startup, not quietly grant cross-namespace read.
+    with pytest.raises(auth.TokenFileError):
+        store_with({**entry("t", "root", "default"), "admin": "true"})
+
+
+def test_all_namespaces_is_sorted_deduplicated_and_sees_email_only_entries():
+    store = store_with(
+        entry("a", "alice", "lab-alice"),
+        entry("b", "bob", "lab-alice"),   # same namespace twice -> once
+        {"email": "carol@example.com", "user": "carol", "namespace": "lab-carol"},
+    )
+    assert store.all_namespaces() == ["lab-alice", "lab-carol"]
+
+
 def test_a_known_token_names_its_user_and_namespace():
     store = store_with(entry("s3cret", "alice", "lab-alice"))
     principal = store.principal_for("s3cret")

@@ -89,6 +89,10 @@ def client(tmp_path, monkeypatch, cluster):
                      "namespace": "lab-bob", "team": "lab"},
                     {"sha256": auth.hash_token("solo-token"), "user": "solo",
                      "namespace": "solo-ns"},
+                    # The operator account: the one kind of caller whose
+                    # ?namespace= is honoured (DDPSRUN-ADMIN-NAMESPACE).
+                    {"sha256": auth.hash_token("root-token"), "user": "root",
+                     "namespace": "default", "admin": True},
                 ]
             }
         )
@@ -118,6 +122,62 @@ def as_alice(client, method, path, **kwargs):
     return client.request(
         method, path, headers={"Authorization": "Bearer alice-token"}, **kwargs
     )
+
+
+def as_root(client, method, path, **kwargs):
+    return client.request(
+        method, path, headers={"Authorization": "Bearer root-token"}, **kwargs
+    )
+
+
+# ---------------------------------------------------------------- namespaces
+
+
+def test_asking_for_another_namespace_without_admin_is_refused(client, cluster):
+    cluster.objects[("lab-bob", OBJECT_NAME)] = {
+        "metadata": {"name": OBJECT_NAME}, "spec": {}, "status": {},
+    }
+    for method, path in [
+        ("GET", f"/v1/jobs?namespace=lab-bob"),
+        ("GET", f"/v1/jobs/{JOB_ID}?namespace=lab-bob"),
+        ("GET", f"/v1/jobs/{JOB_ID}/spec?namespace=lab-bob"),
+        ("GET", f"/v1/jobs/{JOB_ID}/metrics?namespace=lab-bob"),
+        ("GET", f"/v1/jobs/{JOB_ID}/logs?namespace=lab-bob"),
+        ("DELETE", f"/v1/jobs/{JOB_ID}?namespace=lab-bob"),
+    ]:
+        response = as_alice(client, method, path)
+        assert response.status_code == 403, (method, path, response.status_code)
+    # Nothing was read or deleted on the way to any of those refusals.
+    assert ("lab-bob", OBJECT_NAME) in cluster.objects
+
+
+def test_naming_your_own_namespace_is_not_an_admin_ask(client, cluster):
+    # ?namespace=<own> must behave exactly like no parameter at all, so a
+    # screen can always send the value it is showing.
+    response = as_alice(client, "GET", "/v1/jobs?namespace=lab-alice")
+    assert response.status_code == 200
+
+
+def test_an_admin_reads_the_namespace_they_asked_for(client, cluster):
+    cluster.objects[("lab-alice", OBJECT_NAME)] = {
+        "metadata": {"name": OBJECT_NAME}, "spec": {}, "status": {},
+    }
+    listed = as_root(client, "GET", "/v1/jobs?namespace=lab-alice").json()
+    assert [j["job_id"] for j in listed["jobs"]] == [JOB_ID]
+    got = as_root(client, "GET", f"/v1/jobs/{JOB_ID}?namespace=lab-alice")
+    assert got.status_code == 200
+    # Without the parameter the same admin reads their own (empty) namespace.
+    assert as_root(client, "GET", "/v1/jobs").json()["total"] == 0
+
+
+def test_namespaces_lists_everything_for_admin_and_self_for_others(client):
+    mine = as_alice(client, "GET", "/v1/namespaces").json()
+    assert mine == {"namespaces": ["lab-alice"], "own": "lab-alice",
+                    "selectable": False}
+    theirs = as_root(client, "GET", "/v1/namespaces").json()
+    assert theirs["selectable"] is True
+    assert theirs["own"] == "default"
+    assert theirs["namespaces"] == ["default", "lab-alice", "lab-bob", "solo-ns"]
 
 
 def test_healthz_needs_no_token(client):

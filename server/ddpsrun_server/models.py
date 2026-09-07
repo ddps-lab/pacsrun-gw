@@ -27,6 +27,7 @@ Grep anchors: DDPSRUN-SERVER-FILLS, DDPSRUN-NO-INTERNAL-NAMES
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -34,6 +35,7 @@ from pydantic import BaseModel, Field, model_validator
 from . import naming
 from .auth import Principal
 from .config import PACSJOB_GROUP, PACSJOB_VERSION, Settings
+from .stats import job_cost, job_hours
 
 # Environment variable names a user may not set. PACSrun's controller already
 # refuses them (`internal/controller/pacsjob_controller.go`, PACSRUN-ENV-GUARD),
@@ -169,6 +171,25 @@ class SubmitResponse(BaseModel):
     )
 
 
+class NamespacesResponse(BaseModel):
+    """What `GET /v1/namespaces` returns: the caller's namespace picker."""
+
+    namespaces: list[str] = Field(
+        description="For an operator (admin in the token file), every namespace "
+        "the token file names; for anyone else, exactly their own. The screen "
+        "draws a picker only when there is more than one to pick."
+    )
+    own: str = Field(
+        description="The caller's home namespace — what every request without "
+        "an explicit ?namespace= reads, and the picker's initial value."
+    )
+    selectable: bool = Field(
+        description="Whether this caller may ask for a namespace other than "
+        "their own. The server enforces this with 403 regardless; the field "
+        "only tells the screen whether to draw the picker at all."
+    )
+
+
 class JobView(BaseModel):
     """What `GET /v1/jobs/{id}` returns.
 
@@ -213,6 +234,16 @@ class JobView(BaseModel):
         default=0,
         description="How many times the job lost its machine and was restarted.",
     )
+    cost_usd: float | None = Field(
+        default=None,
+        description="What this job has cost so far, in dollars: the hours "
+        "between status.startedAt and status.finishedAt (or now, while it "
+        "still runs) times the measured hourly price of its machine, times "
+        "parallelism — the same arithmetic /v1/stats uses for the team total "
+        "(stats.job_cost), so the two screens cannot disagree. None when the "
+        "job never reached a machine, or ran on one we have no measured price "
+        "for; the screen shows '-' because a zero here would be a lie.",
+    )
     result_path: str | None = Field(
         default=None,
         description="Where the output is. This is the one place a namespace name "
@@ -253,6 +284,14 @@ class JobView(BaseModel):
         gpu = offering.get("instanceType") or None
         vendor = offering.get("vendor") or None
 
+        # Price the job with the same two functions the team total uses
+        # (DDPSRUN-STATS), so a job's own row and its share of /v1/stats can
+        # never disagree. hours is None for a job that never reached Running —
+        # it spent nothing — and job_cost is None for a machine with no
+        # measured price. Both surface as null, never as a false $0.00.
+        hours = job_hours(obj, datetime.now(timezone.utc))
+        cost = job_cost(obj, hours) if hours is not None else None
+
         return JobView(
             job_id=job_id or "",
             # The annotation first: it holds the name the user typed, Korean and
@@ -276,6 +315,7 @@ class JobView(BaseModel):
             gpu=gpu,
             vendor=vendor,
             recovery_count=int(status.get("recoveryCount", 0) or 0),
+            cost_usd=cost,
             result_path=spec.get("resultPath"),
         )
 

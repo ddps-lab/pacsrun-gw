@@ -26,6 +26,7 @@ Authorization: Bearer <your token>
 | GET | `/v1/jobs/{job_id}/spec` | The submission this job was created from, with secrets removed. |
 | GET | `/v1/login-config` | Where to send someone to sign in. |
 | GET | `/v1/metrics/query` | Ask the in-cluster Prometheus one instant query. |
+| GET | `/v1/namespaces` | Which namespaces this caller may read — the screen's namespace picker. |
 | GET | `/v1/schema` | Return the JSON Schema of a request. |
 | GET | `/v1/stats` | What this caller's team has spent. |
 | POST | `/v1/validate` | Check a job without running it. |
@@ -143,6 +144,7 @@ What `GET /v1/jobs/{id}` returns.
 
 | field | required | description |
 |---|---|---|
+| `cost_usd` |  | What this job has cost so far, in dollars: the hours between status.startedAt and status.finishedAt (or now, while it still runs) times the measured hourly price of its machine, times parallelism — the same arithmetic /v1/stats uses for the team total (stats.job_cost), so the two screens cannot disagree. None when the job never reached a machine, or ran on one we have no measured price for; the screen shows '-' because a zero here would be a lie. |
 | `created_at` |  |  |
 | `finished_at` |  | When the job reached Succeeded or Failed, from status.finishedAt. Absent while it is still running. |
 | `gpu` |  | What it is actually running on, once it is running. |
@@ -213,6 +215,16 @@ What /v1/jobs/{id}/metrics returns.
 | `note` |  | What is missing and why, in plain words. Empty when nothing is. |
 | `progress` |  |  |
 | `window_seconds` | yes | How far back the log was read. Older readings are still in the log; ask for a bigger window to see them. |
+
+### NamespacesResponse
+
+What `GET /v1/namespaces` returns: the caller's namespace picker.
+
+| field | required | description |
+|---|---|---|
+| `namespaces` | yes | For an operator (admin in the token file), every namespace the token file names; for anyone else, exactly their own. The screen draws a picker only when there is more than one to pick. |
+| `own` | yes | The caller's home namespace — what every request without an explicit ?namespace= reads, and the picker's initial value. |
+| `selectable` | yes | Whether this caller may ask for a namespace other than their own. The server enforces this with 403 regardless; the field only tells the screen whether to draw the picker at all. |
 
 ### ProgressView
 

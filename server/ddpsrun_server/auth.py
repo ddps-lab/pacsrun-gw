@@ -69,11 +69,17 @@ class Principal:
             only decides which namespaces `/v1/stats` adds together. Isolation
             is the namespace's job, and it stays that way precisely so that a
             mistake in team bookkeeping can never show one person another's job.
+        admin: True only for an operator account. It changes exactly one thing:
+            routes that accept an explicit `?namespace=` honour it for an admin
+            and answer 403 for everyone else (`main.namespace_for`). Everything
+            a request does still happens in exactly one namespace — this flag
+            only lets an operator say which one.
     """
 
     user: str
     namespace: str
     team: str = ""
+    admin: bool = False
 
 
 def hash_token(token: str) -> str:
@@ -237,6 +243,19 @@ class TokenStore:
             return []
         return sorted({p.namespace for p in self._by_hash.values() if p.team == team})
 
+    def all_namespaces(self) -> list[str]:
+        """Every namespace the token file names, sorted and deduplicated.
+
+        This is what an operator's namespace picker shows. It comes from the
+        token file for the same reason `namespaces_in_team` does: the server
+        already holds the mapping, so answering costs no Kubernetes permission.
+        A namespace nobody is registered in is deliberately absent — there is
+        nobody whose jobs could be in it, and listing it would only invite a
+        502 from a namespace the Lambda's role has no RoleBinding in.
+        """
+        principals = list(self._by_hash.values()) + list(self._by_email.values())
+        return sorted({p.namespace for p in principals})
+
     def __len__(self) -> int:
         """How many people this store can recognise.
 
@@ -310,10 +329,21 @@ def parse_token_document(document: object) -> tuple[dict[str, Principal], dict[s
             if digest in by_hash:
                 raise TokenFileError(f"tokens[{index}].sha256 appears twice")
 
+        # `admin` is opt-in and strictly boolean. JSON has real booleans, and
+        # accepting "true"-the-string would let a quoting mistake hand out
+        # cross-namespace read. Absent means False, which is right for everyone
+        # but the operator accounts (docs/16-login.md 16.2).
+        admin = entry.get("admin", False)
+        if not isinstance(admin, bool):
+            raise TokenFileError(
+                f"tokens[{index}].admin must be true or false, not {admin!r}"
+            )
+
         principal = Principal(
             user=str(entry["user"]).strip(),
             namespace=str(entry["namespace"]).strip(),
             team=str(entry.get("team", "")).strip(),
+            admin=admin,
         )
         if digest:
             by_hash[digest] = principal
