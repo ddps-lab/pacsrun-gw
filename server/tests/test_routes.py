@@ -29,6 +29,8 @@ class FakeCluster:
         self.created: list[tuple[str, dict]] = []
         self.objects: dict[tuple[str, str], dict] = {}
         self.logs: dict[tuple[str, str], list[str]] = {}
+        self.execs: list[tuple[str, str, int, list[str], int]] = []
+        self.exec_answer: tuple[str, int | None] = ("", 0)
 
     def create_job(self, namespace, body):
         self.created.append((namespace, body))
@@ -49,6 +51,10 @@ class FakeCluster:
             del self.objects[(namespace, name)]
         except KeyError:
             raise k8s.NotFound(name) from None
+
+    def exec_in_driver(self, namespace, job_name, slot, argv, timeout_seconds):
+        self.execs.append((namespace, job_name, slot, argv, timeout_seconds))
+        return self.exec_answer
 
     def recent_log_lines(self, namespace, job_name, since_seconds):
         lines = self.logs.get((namespace, job_name))
@@ -290,6 +296,36 @@ def test_metrics_window_reaches_a_week_back_and_no_further(client, cluster):
     assert ok.status_code == 200
     too_far = as_alice(client, "GET", f"/v1/jobs/{job_id}/metrics?window_seconds=604801")
     assert too_far.status_code == 422
+
+
+def test_exec_relays_one_command_and_the_exit_code(client, cluster):
+    cluster.objects[("lab-alice", "hand-made")] = {
+        "metadata": {"name": "hand-made"}, "spec": {},
+        "status": {"phase": "Running"},
+    }
+    cluster.exec_answer = ("NVIDIA L40S, 48 GiB\n", 0)
+    answer = as_alice(client, "POST", "/v1/jobs/hand-made/exec",
+                      json={"command": "nvidia-smi -L"})
+    assert answer.status_code == 200
+    assert answer.json()["output"].startswith("NVIDIA")
+    assert answer.json()["exit_code"] == 0
+    namespace, job, slot, argv, _ = cluster.execs[0]
+    assert (namespace, job, slot) == ("lab-alice", "hand-made", 0)
+    # The user's line rides inside sh -lc, through the driver's shell relay.
+    assert argv[:3] == ["python3", "/app/driver/aws/shell.py", "--"]
+    assert argv[-2:] == ["-lc", "nvidia-smi -L"]
+
+
+def test_exec_refuses_a_finished_job_with_the_reason(client, cluster):
+    cluster.objects[("lab-alice", "done-job")] = {
+        "metadata": {"name": "done-job"}, "spec": {},
+        "status": {"phase": "Succeeded"},
+    }
+    answer = as_alice(client, "POST", "/v1/jobs/done-job/exec",
+                      json={"command": "ls"})
+    assert answer.status_code == 409
+    assert "containers are gone" in answer.json()["detail"]
+    assert cluster.execs == []
 
 
 # --------------------------------------------------------------- jobs by name

@@ -215,6 +215,23 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("job_id")
     add_json_flag(status)
 
+    shell = sub.add_parser(
+        "shell", help="run commands inside a running job's workload",
+        description="Each line is one HTTPS round trip: the server relays it "
+        "through the job's driver pod into the workload container on the "
+        "rented machine and brings the exit code back like ssh. It is NOT a "
+        "TTY — no vim, no top, about 25 seconds per command — because the "
+        "server is a Lambda and cannot hold a terminal open. AWS and GCP "
+        "machine rentals only: a RunPod job is a rented container with no "
+        "machine behind it, and the relay refuses it.",
+    )
+    shell.add_argument("job", help="the job id, or the PacsJob's Kubernetes name")
+    shell.add_argument("--slot", type=int, default=0, help="which pod of a parallel job")
+    shell.add_argument(
+        "command", nargs=argparse.REMAINDER, metavar="-- COMMAND",
+        help="one shell line to run and exit; leave it off for a prompt",
+    )
+
     watch = sub.add_parser(
         "watch", help="GPU usage and training progress",
         description="Read out of the job's own log. Nothing is stored, so what "
@@ -610,6 +627,56 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return EXIT_OK if result["ok"] else EXIT_SERVER
 
 
+def cmd_shell(args: argparse.Namespace) -> int:
+    """Run commands inside a running job's workload container.
+
+    One line, one HTTPS round trip: the server relays it through the driver
+    pod onto the rented machine and returns the exit code like ssh. With a
+    trailing `-- command` it runs once and exits with that code; without one
+    it prompts, which FEELS like a slow shell and is honestly a request loop.
+    """
+    client = client_from_config()
+
+    def run_once(line: str) -> int:
+        answer = client.exec_in_job(args.job, line, slot=args.slot)
+        output = answer.get("output") or ""
+        if output:
+            print(output, end="" if output.endswith("\n") else "\n")
+        if answer.get("note"):
+            print(f"({answer['note']})", file=sys.stderr)
+        code = answer.get("exit_code")
+        return 1 if code is None else int(code)
+
+    # argparse.REMAINDER keeps the "--" separator itself; drop it.
+    words = [w for w in (args.command or []) if w != "--"] if args.command else []
+    if words:
+        return run_once(" ".join(words))
+
+    print(
+        f"one command per line, ~25s each; 'exit' or Ctrl-D leaves. Not a TTY.",
+        file=sys.stderr,
+    )
+    while True:
+        try:
+            line = input(f"{args.job}$ ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return EXIT_OK
+        line = line.strip()
+        if not line:
+            continue
+        if line in ("exit", "quit"):
+            return EXIT_OK
+        try:
+            code = run_once(line)
+            if code:
+                print(f"(exit {code})", file=sys.stderr)
+        except ServerError as exc:
+            # One failed command must not end the session: say what the server
+            # said and keep the prompt.
+            print(f"error: {exc}", file=sys.stderr)
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     """Print one job's state."""
     view = client_from_config().status(args.job_id)
@@ -778,6 +845,7 @@ COMMANDS = {
     "estimate": cmd_estimate,
     "validate": cmd_validate,
     "submit": cmd_submit,
+    "shell": cmd_shell,
     "status": cmd_status,
     "watch": cmd_watch,
     "stats": cmd_stats,

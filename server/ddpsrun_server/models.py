@@ -207,6 +207,38 @@ class ArtifactsResponse(BaseModel):
     )
 
 
+class ExecRequest(BaseModel):
+    """What `POST /v1/jobs/{id}/exec` accepts: one command for the workload."""
+
+    command: str = Field(
+        min_length=1,
+        max_length=4000,
+        description="Run as `sh -lc <command>` inside the workload container "
+        "on the rented machine, via the driver pod's shell relay.",
+    )
+    slot: int = Field(default=0, ge=0, le=255, description="Which pod of a parallel job.")
+    timeout_seconds: int = Field(
+        default=20,
+        ge=1,
+        le=25,
+        description="How long to wait for the command. The ceiling is 25 "
+        "because the Lambda serving this route dies at 30 no matter what.",
+    )
+
+
+class ExecResponse(BaseModel):
+    """What `POST /v1/jobs/{id}/exec` returns."""
+
+    output: str = Field(description="stdout and stderr, in arrival order.")
+    exit_code: int | None = Field(
+        default=None,
+        description="The command's exit code, relayed from the workload "
+        "container like ssh would. None means it was still running when the "
+        "timeout closed — never 0.",
+    )
+    note: str = Field(default="", description="Anything the caller should know, in words.")
+
+
 class NamespacesResponse(BaseModel):
     """What `GET /v1/namespaces` returns: the caller's namespace picker."""
 

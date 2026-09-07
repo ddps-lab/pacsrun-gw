@@ -60,6 +60,18 @@ def test_a_submit_sends_the_body_and_the_bearer_token():
     assert result["job_id"] == "job-a8acdef80a07"
 
 
+def test_shell_sends_the_command_and_waits_longer_than_the_server():
+    session = FakeSession(FakeResponse(200, {"output": "ok\n", "exit_code": 0, "note": ""}))
+    result = client_with(session).exec_in_job("baseline-c", "nvidia-smi -L", slot=1)
+    call = session.calls[0]
+    assert call["url"] == "https://run.example/v1/jobs/baseline-c/exec"
+    assert call["json"] == {"command": "nvidia-smi -L", "slot": 1, "timeout_seconds": 20}
+    # The server may hold the request for its whole window, so the client's
+    # read timeout must outlive it.
+    assert call["timeout"] > 20
+    assert result["exit_code"] == 0
+
+
 def test_explain_and_schema_send_no_token():
     # They need none, and asking for a credential to find out what a service is
     # would be the wrong way round.

@@ -350,6 +350,78 @@ class Cluster:
             raise NotFound(f"no pod yet for {job_name}")
         return pods.items[0].metadata.name
 
+    def exec_in_driver(
+        self,
+        namespace: str,
+        job_name: str,
+        slot: int,
+        argv: list[str],
+        timeout_seconds: int,
+    ) -> tuple[str, int | None]:
+        """Run ONE command in a job's driver pod and return what it printed.
+
+        THE RELAY CHAIN, spelled out. This call reaches the DRIVER pod — the
+        GPU-less pod in OUR cluster — over the apiserver's exec subresource,
+        an OUTBOUND WebSocket from this server. (A Lambda may OPEN WebSockets;
+        it is INBOUND ones a Function URL cannot accept, which is why there is
+        no terminal in the browser.) Inside that pod the argv starts shell.py,
+        and shell.py tunnels the command into the workload container on the
+        rented machine — verified live 2026-09-07, exit codes relay like ssh.
+        The user types one line and the answer comes back from the GPU
+        machine, with no kubectl and no cluster credential on their laptop.
+
+        ONE COMMAND, NOT A TTY. A Lambda execution ends with its response, so
+        nothing can hold a session open between keystrokes; the CLI's shell
+        prompt sends one line per request instead.
+
+        Args:
+            namespace, job_name, slot: which driver pod, found by the same
+                label lookup the logs route uses.
+            argv: the exact command vector to start in the driver pod.
+            timeout_seconds: how long to wait for the command to finish.
+
+        Returns:
+            (everything it printed, its exit code). The exit code is None when
+            the command was still running at the timeout — reported as such,
+            never as 0.
+
+        Raises:
+            NotFound: no pod — not created yet, or already collected.
+            ClusterError: the apiserver refused. A 403 here means the
+                ClusterRole lacks pods/exec (config/deploy/rbac.yaml).
+        """
+        pod = self.job_pod_name(namespace, job_name, slot)
+        # A local import, the same convention lambda_handler uses for boto3:
+        # the stream helper drags in websocket-client, and only this method
+        # needs it.
+        from kubernetes.stream import stream
+
+        try:
+            ws = stream(
+                self._core.connect_get_namespaced_pod_exec,
+                name=pod,
+                namespace=namespace,
+                command=argv,
+                stdout=True,
+                stderr=True,
+                stdin=False,
+                tty=False,
+                _preload_content=False,
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                raise NotFound(pod) from exc
+            raise ClusterError(_api_message(exc)) from exc
+
+        ws.run_forever(timeout=timeout_seconds)
+        output = (ws.read_stdout() or "") + (ws.read_stderr() or "")
+        try:
+            code: int | None = ws.returncode
+        except Exception:  # noqa: BLE001 - no status frame yet means "still running"
+            code = None
+        ws.close()
+        return output, code
+
     def recent_log_lines(
         self, namespace: str, job_name: str, since_seconds: int
     ) -> list[str]:

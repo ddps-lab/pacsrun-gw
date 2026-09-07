@@ -62,6 +62,8 @@ from .models import (
     ArtifactFileView,
     ArtifactsResponse,
     CostRange,
+    ExecRequest,
+    ExecResponse,
     EstimateResponse,
     FindingView,
     GpuAdviceView,
@@ -850,6 +852,73 @@ def get_artifacts(
         total=len(files),
         truncated=listing.truncated,
         note="" if files else "Nothing is uploaded here yet.",
+    )
+
+
+@app.post("/v1/jobs/{job_id}/exec", response_model=ExecResponse)
+def exec_in_job(
+    request: Request,
+    job_id: str,
+    body: ExecRequest,
+    principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
+) -> ExecResponse:
+    """Run one command inside a running job's workload container.
+
+    DDPSRUN-EXEC. This is `ddpsrun shell`'s server half, and it exists so a
+    researcher NEVER needs kubectl: the same relay an operator reached with
+    `kubectl exec` (driver pod -> shell.py -> the workload container on the
+    rented machine, verified live 2026-09-07) is reached here through the
+    apiserver by this server's own identity. One command per request — the
+    mechanics and the no-TTY reasoning are on `Cluster.exec_in_driver`.
+
+    Raises:
+        HTTPException: 404 for an unknown job or a job with no pod; 409 for a
+            finished job, because its containers are gone and "not found"
+            would send the caller hunting for a typo; 502 when the apiserver
+            refused (a 403 underneath means the ClusterRole lacks pods/exec).
+    """
+    cluster: Cluster = request.app.state.cluster
+    name = resolve_object_name(job_id)
+    ns = namespace_for(principal, namespace)
+    try:
+        obj: dict[str, Any] = cluster.get_job(ns, name)
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail="no such job") from exc
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    phase = ((obj.get("status") or {}).get("phase")) or ""
+    if phase in FINISHED_PHASES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"this job has finished ({phase}) — its containers are gone, "
+            "so there is nothing to run a command in",
+        )
+
+    # sh -lc, so the user writes one shell line ("cd /work && ls -la") rather
+    # than an argv. The line runs INSIDE the workload container; shell.py is
+    # the relay that carries it there and the exit code back.
+    argv = ["python3", "/app/driver/aws/shell.py", "--", "sh", "-lc", body.command]
+    try:
+        output, code = cluster.exec_in_driver(ns, name, body.slot, argv, body.timeout_seconds)
+    except NotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="no pod for this job yet (or it is already gone)",
+        ) from exc
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return ExecResponse(
+        output=output,
+        exit_code=code,
+        note=(
+            ""
+            if code is not None
+            else f"still running when the {body.timeout_seconds}s window closed; "
+            "the output shown is what had arrived by then"
+        ),
     )
 
 

@@ -195,13 +195,12 @@
     <div id="d-files">-</div>
   </div>
 
-  <!-- Shell: what CAN be done, said honestly. An interactive terminal cannot
-       exist behind this gateway — the API is a Lambda Function URL, and a
-       terminal needs an inbound WebSocket that Function URLs do not accept —
-       so this panel hands an operator the exec command that does work (the
-       driver pod relays a shell into the workload container; verified live
-       2026-09-07), and tells a finished job's reader why there is nothing to
-       enter. Filled by drawDetail from the job's phase. -->
+  <!-- Shell: `ddpsrun shell`, install line included — never kubectl, because a
+       researcher with kubectl would not need this product. The command goes to
+       POST /v1/jobs/{id}/exec, which relays through the driver pod into the
+       workload container on the rented machine. A terminal cannot run in this
+       PAGE (the API is a Lambda Function URL; no inbound WebSocket), so the
+       page teaches the CLI instead of pretending. Filled by drawShell. -->
   <div class="panel">
     <header><h2>Shell</h2></header>
     <div id="d-shell">-</div>
