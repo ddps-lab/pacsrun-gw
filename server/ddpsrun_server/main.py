@@ -482,9 +482,17 @@ def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     totals = stats_reader.summarise(principal.team, namespaces, jobs_by_namespace)
+    # The caller's own figure, admin bucket folded in for an operator — the
+    # reasoning lives on the response field (models.StatsResponse.caller_cost_usd).
+    caller_cost = sum(
+        m.cost_usd
+        for m in totals.members
+        if m.user == principal.user or (principal.admin and m.user == "admin")
+    )
     return StatsResponse(
         team=totals.team,
         caller=principal.user,
+        caller_cost_usd=round(caller_cost, 2),
         members=[
             MemberTotalsView(
                 user=m.user, jobs=m.jobs, succeeded=m.succeeded, failed=m.failed,

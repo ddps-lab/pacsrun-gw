@@ -243,16 +243,15 @@ function drawHome() {
     const doneToday = jobs.filter((j) => j.phase === "Succeeded" && isToday(j)).length;
     const failToday = jobs.filter((j) => j.phase === "Failed" && isToday(j)).length;
 
-    // "My spend" is the caller's own member row. A kubectl-applied job belongs
-    // to the member "admin", not to any signed-in caller, so an operator whose
-    // work all went through kubectl correctly sees $0.00 here while the team
-    // total (and the admin row on the Team screen) carries it.
-    const mine = stats && (stats.members || []).find((m) => m.user === stats.caller);
+    // caller_cost_usd is computed on the server (the screen decides nothing):
+    // the caller's own member row, plus the "admin" bucket when the caller IS
+    // an operator — kubectl jobs carry no owner label, and only an operator
+    // can have applied them, so they are the operator's own spend.
     $("home-cards").innerHTML = [
       card("Active", running.length, running.length ? "run" : ""),
       card("Finished today", doneToday, doneToday ? "ok" : ""),
       card("Failed today", failToday, failToday ? "bad" : ""),
-      card("My spend", stats ? "$" + (mine ? mine.cost_usd : 0).toFixed(2) : "-"),
+      card("My spend", stats ? "$" + (stats.caller_cost_usd || 0).toFixed(2) : "-"),
       card("Team spend", stats ? "$" + stats.cost_usd.toFixed(2) : "-"),
     ].join("");
 

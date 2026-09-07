@@ -92,7 +92,7 @@ def client(tmp_path, monkeypatch, cluster):
                     # The operator account: the one kind of caller whose
                     # ?namespace= is honoured (DDPSRUN-ADMIN-NAMESPACE).
                     {"sha256": auth.hash_token("root-token"), "user": "root",
-                     "namespace": "default", "admin": True},
+                     "namespace": "default", "team": "ddps", "admin": True},
                 ]
             }
         )
@@ -719,6 +719,29 @@ def test_stats_add_up_every_namespace_of_the_team(client, cluster):
     assert result["team"] == "lab"
     assert result["jobs"] == 2
     assert sorted(m["user"] for m in result["members"]) == ["alice", "bob"]
+
+
+def test_an_operators_own_spend_includes_the_admin_bucket(client, cluster):
+    # Only an operator can apply a job with kubectl, and such a job has no
+    # owner label, so the "admin" bucket is the operator's own work. Their
+    # My spend card must not say $0.00 next to a team total they personally
+    # spent — which is exactly what it said on 2026-09-07.
+    cluster.objects[("default", "hand-made")] = {
+        "metadata": {"name": "hand-made"},
+        "spec": {"parallelism": 1},
+        "status": {
+            "phase": "Succeeded",
+            "startedAt": "2026-09-07T00:00:00Z",
+            "finishedAt": "2026-09-07T02:00:00Z",
+            "currentOffering": {"vendor": "runpod", "instanceType": "NVIDIA L40S"},
+        },
+    }
+    result = as_root(client, "GET", "/v1/stats").json()
+    assert result["caller"] == "root"
+    assert [m["user"] for m in result["members"]] == ["admin"]
+    assert abs(result["caller_cost_usd"] - 2 * 0.99) < 0.01
+    # A non-operator's figure stays their own row alone.
+    assert as_alice(client, "GET", "/v1/stats").json()["caller_cost_usd"] == 0.0
 
 
 def test_stats_are_aggregate_and_carry_no_job_names(client, cluster):

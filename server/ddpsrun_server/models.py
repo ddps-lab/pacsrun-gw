@@ -819,6 +819,17 @@ class StatsResponse(BaseModel):
         "pick 'your' row out of members without guessing. Jobs applied with "
         "kubectl belong to the member 'admin', not to any caller.",
     )
+    caller_cost_usd: float = Field(
+        default=0.0,
+        description="What the CALLER has spent — the number Home's 'My spend' "
+        "card shows, computed here because the screen makes no decisions. For "
+        "most people it is their own member row. For an operator account "
+        "(admin in the token file) it also folds in the 'admin' member: only "
+        "an operator can apply a job with kubectl, so the label-less jobs in "
+        "that bucket are the operator's own work — showing the operator $0.00 "
+        "next to a team total they personally spent was the 2026-09-07 defect "
+        "this field exists to end.",
+    )
     members: list[MemberTotalsView] = Field(default_factory=list)
     jobs: int = 0
     gpu_hours: float = 0.0
