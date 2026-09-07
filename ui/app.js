@@ -885,6 +885,25 @@ async function makeVerifier() {
    over from the last sign-in would make the next one fail. */
 const redirectUri = () => location.origin + location.pathname;
 
+/* DDPSRUN-UI-LOGIN-STAGE. What the login card shows while start() works:
+     "checking" — fresh load, we do not yet know how this deployment signs in;
+     "signing"  — back from Cognito with a ?code=, the exchange is running;
+     "ready"    — start() finished; show the way in the server offers.
+   One function rather than scattered .hidden writes, because the 2026-09-07
+   defect was exactly a scattered default: the token box was the page's default
+   face while the answer was in flight (about 0.5s warm, ~5s on a cold Lambda),
+   and to someone just back from Google it read as a failed sign-in. */
+function setLoginStage(stage) {
+  $("login-wait").hidden = stage === "ready";
+  $("login-wait-text").textContent =
+    stage === "signing" ? "Signing you in…" : "Checking sign-in…";
+  if (stage !== "ready") {
+    $("cognito-box").hidden = true;
+    $("token-box").hidden = true;
+    $("token-toggle").hidden = true;
+  }
+}
+
 async function startCognitoLogin() {
   const { verifier, challenge } = await makeVerifier();
   // sessionStorage, not localStorage: this value is meaningless once the round
@@ -921,9 +940,22 @@ async function finishCognitoLogin() {
   const code = new URLSearchParams(location.search).get("code");
   if (!code) return false;
 
+  // Guard BEFORE anything is spent. Without the login domain there is no token
+  // endpoint to trade the code at — the old path built "undefined/oauth2/token",
+  // failed against CloudFront, and had already stripped the code from the URL,
+  // so even a reload could not finish that sign-in. Leaving the URL untouched
+  // keeps the code unspent: a reload asks /v1/login-config again and, when the
+  // server answers this time, this function completes normally.
+  if (!loginConfig || !loginConfig.enabled || !loginConfig.login_domain) {
+    $("login-err").innerHTML = note("err",
+      "You signed in, but the server's login settings could not be read, so the sign-in could not be finished.",
+      "Reload this page to try again.");
+    return false;
+  }
+
   const verifier = sessionStorage.getItem(LOGIN_KEY);
   sessionStorage.removeItem(LOGIN_KEY);
-  // Take the code out of the address bar before anything else. It is single-use,
+  // Take the code out of the address bar before spending it. It is single-use,
   // and leaving it there means a reload tries to spend it twice and shows an
   // error for a sign-in that actually worked.
   history.replaceState({}, "", redirectUri());
@@ -1040,6 +1072,11 @@ window.addEventListener("hashchange", route);
      2. if we came back from Cognito, finish that before anything else;
      3. show the app when we now hold a credential. */
 (async function start() {
+  // Back from Cognito? Say so before the first network round trip: the person
+  // has just signed in with Google, and the worst thing to show them while the
+  // exchange runs is a token box that reads as a failed sign-in.
+  if (new URLSearchParams(location.search).has("code")) setLoginStage("signing");
+
   // Where the API lives. The page and the API are on DIFFERENT hosts in the
   // deployed setup — the page is a CloudFront distribution over an S3 bucket,
   // the API is a Lambda Function URL — so `location.origin` is NOT the server.
@@ -1055,6 +1092,24 @@ window.addEventListener("hashchange", route);
   // page's own origin, which is correct for a same-origin deployment (the
   // server running as a pod behind one address).
   apiBase = store.server;
+
+  const fetchLoginConfig = async (base) => {
+    try {
+      const response = await fetch(base + "/v1/login-config");
+      return response.ok ? await response.json() : { enabled: false };
+    } catch {
+      return { enabled: false };
+    }
+  };
+
+  // login-config needs apiBase, and config.json may override apiBase — a real
+  // dependency, so a first-ever visit stays sequential. But a browser that has
+  // been here before already remembers the address, and for it the two fetches
+  // run in parallel (measured 2026-09-07: 317ms + 192ms sequentially, so this
+  // takes ~200ms off every warm load). If config.json then names a different
+  // address than remembered — it never has — the fetch simply reruns below.
+  const guessedBase = apiBase;
+  const early = guessedBase ? fetchLoginConfig(guessedBase) : null;
   try {
     const response = await fetch("config.json", { cache: "no-store" });
     if (response.ok) {
@@ -1064,12 +1119,9 @@ window.addEventListener("hashchange", route);
   } catch { /* no config.json: a pod deployment, or a local file. */ }
   if (!apiBase) apiBase = location.origin;
 
-  try {
-    const response = await fetch(apiBase + "/v1/login-config");
-    loginConfig = response.ok ? await response.json() : { enabled: false };
-  } catch {
-    loginConfig = { enabled: false };
-  }
+  loginConfig = early && apiBase === guessedBase
+    ? await early
+    : await fetchLoginConfig(apiBase);
 
   // A config that is on but incomplete is worse than one that is off: the
   // button would be live with nothing behind it, which is exactly the failure
@@ -1088,6 +1140,12 @@ window.addEventListener("hashchange", route);
   // to ask for something the page already knows.
   if (apiBase) store.set(apiBase, store.token || "");
 
+  // Finish a Cognito return BEFORE the card offers any way in: the exchange is
+  // still part of "signing you in", and revealing buttons underneath it would
+  // invite a second click in the middle of the first sign-in.
+  const arrived = await finishCognitoLogin();
+
+  setLoginStage("ready");
   $("cognito-box").hidden = !cognitoOn;
   $("token-box").hidden = cognitoOn;
   $("token-toggle").hidden = !cognitoOn;
@@ -1095,6 +1153,5 @@ window.addEventListener("hashchange", route);
   $("server-row").hidden = Boolean(apiBase);
   $("in-server").value = apiBase;
 
-  const arrived = await finishCognitoLogin();
   showApp(arrived || Boolean(store.server && store.token));
 })();
