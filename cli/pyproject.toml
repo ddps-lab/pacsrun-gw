@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ddpsrun"
-version = "0.1.0"
+version = "0.1.1"
 description = "Submit a GPU job and get results back. No kubectl, no cloud account."
 requires-python = ">=3.9"
 dependencies = ["requests>=2.31", "PyYAML>=6.0"]
