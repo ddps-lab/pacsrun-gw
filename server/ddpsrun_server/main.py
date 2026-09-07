@@ -65,6 +65,7 @@ from .models import (
     JobListResponse,
     JobSpecResponse,
     JobView,
+    NamespacesResponse,
     GpuSampleView,
     JudgementRequest,
     LogsResponse,
@@ -221,6 +222,47 @@ def require_principal(
 
 
 PrincipalDep = Annotated[Principal, Depends(require_principal)]
+
+
+def namespace_for(principal: Principal, requested: str) -> str:
+    """Which namespace this request reads.
+
+    DDPSRUN-ADMIN-NAMESPACE. Every job route reads exactly one namespace: the
+    caller's own, unless they asked for another with `?namespace=`. Asking is
+    honoured only for a token file entry marked `admin: true`; for anyone else
+    it is 403 rather than a silent fall-back to their own, because answering
+    from a different namespace than the one on the request is how a screen
+    shows the right rows under the wrong heading.
+
+    Args:
+        principal: the authenticated caller.
+        requested: the raw `?namespace=` value, empty when absent.
+
+    Returns:
+        The namespace to read.
+
+    Raises:
+        HTTPException: 403 when a non-admin asked for a namespace that is not
+            their own.
+    """
+    requested = (requested or "").strip()
+    if not requested or requested == principal.namespace:
+        return principal.namespace
+    if not principal.admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Only an operator account may read another namespace.",
+        )
+    return requested
+
+
+# The one description all six ?namespace= parameters share, so the OpenAPI page
+# says the same thing in six places instead of drifting into five variants.
+NAMESPACE_QUERY = Query(
+    default="",
+    description="Read this namespace instead of your own. Honoured only for an "
+    "operator account (admin in the token file); anyone else gets 403.",
+)
 
 
 @app.get("/healthz", include_in_schema=False)
@@ -502,10 +544,31 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
 FINISHED_PHASES = frozenset({"Succeeded", "Failed", "Compared"})
 
 
+@app.get("/v1/namespaces", response_model=NamespacesResponse)
+def list_namespaces(request: Request, principal: PrincipalDep) -> NamespacesResponse:
+    """Which namespaces this caller may read — the screen's namespace picker.
+
+    Everything here comes from the server's own token file, the same source
+    `/v1/stats` reads teams from, so this route costs no Kubernetes call and no
+    new cluster permission. What it does NOT promise is that the Lambda's role
+    can actually read every namespace listed: reading one needs a RoleBinding
+    in it, created alongside the namespace itself (docs/16-login.md 16.2). A
+    namespace listed here without its binding answers 502 when picked, which
+    names the real problem instead of hiding the namespace.
+    """
+    tokens: TokenStore = request.app.state.tokens
+    return NamespacesResponse(
+        namespaces=tokens.all_namespaces() if principal.admin else [principal.namespace],
+        own=principal.namespace,
+        selectable=principal.admin,
+    )
+
+
 @app.get("/v1/jobs", response_model=JobListResponse)
 def list_jobs(
     request: Request,
     principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
     phase: str = Query(
         default="",
         description="Filter. Empty means all. 'active' or 'finished' select a "
@@ -541,7 +604,7 @@ def list_jobs(
     """
     cluster: Cluster = request.app.state.cluster
     try:
-        objects = cluster.list_jobs(principal.namespace)
+        objects = cluster.list_jobs(namespace_for(principal, namespace))
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -563,14 +626,20 @@ def list_jobs(
 
 
 @app.get("/v1/jobs/{job_id}", response_model=JobView)
-def get_job(request: Request, job_id: str, principal: PrincipalDep) -> JobView:
+def get_job(
+    request: Request,
+    job_id: str,
+    principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
+) -> JobView:
     """Report one job's state.
 
     Args:
         job_id: an id this server issued.
-        principal: the caller. The lookup happens in their namespace only, so a
-            job belonging to someone else reads as 404, not 403 — we do not
-            confirm that another user's job exists.
+        principal: the caller. The lookup happens in their namespace only
+            (an operator may name another with ?namespace=), so a job belonging
+            to someone else reads as 404, not 403 — we do not confirm that
+            another user's job exists.
 
     Raises:
         HTTPException: 404 for an unknown or malformed id; 502 on a cluster error.
@@ -582,7 +651,7 @@ def get_job(request: Request, job_id: str, principal: PrincipalDep) -> JobView:
         raise HTTPException(status_code=404, detail="no such job") from exc
 
     try:
-        obj: dict[str, Any] = cluster.get_job(principal.namespace, name)
+        obj: dict[str, Any] = cluster.get_job(namespace_for(principal, namespace), name)
     except NotFound as exc:
         raise HTTPException(status_code=404, detail="no such job") from exc
     except ClusterError as exc:
@@ -592,7 +661,12 @@ def get_job(request: Request, job_id: str, principal: PrincipalDep) -> JobView:
 
 
 @app.delete("/v1/jobs/{job_id}", status_code=204)
-def cancel_job(request: Request, job_id: str, principal: PrincipalDep) -> Response:
+def cancel_job(
+    request: Request,
+    job_id: str,
+    principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
+) -> Response:
     """Stop a job and take it off the list.
 
     DDPSRUN-CANCEL. Deleting the PacsJob is the only stop the CRD offers, and it
@@ -629,7 +703,7 @@ def cancel_job(request: Request, job_id: str, principal: PrincipalDep) -> Respon
         raise HTTPException(status_code=404, detail="no such job") from exc
 
     try:
-        cluster.delete_job(principal.namespace, name)
+        cluster.delete_job(namespace_for(principal, namespace), name)
     except NotFound as exc:
         raise HTTPException(status_code=404, detail="no such job") from exc
     except ClusterError as exc:
@@ -640,7 +714,12 @@ def cancel_job(request: Request, job_id: str, principal: PrincipalDep) -> Respon
 
 
 @app.get("/v1/jobs/{job_id}/spec", response_model=JobSpecResponse)
-def get_job_spec(request: Request, job_id: str, principal: PrincipalDep) -> JobSpecResponse:
+def get_job_spec(
+    request: Request,
+    job_id: str,
+    principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
+) -> JobSpecResponse:
     """The submission this job was created from, with secrets removed.
 
     Two screens need it. The detail screen shows "what exactly did I run", and
@@ -662,7 +741,7 @@ def get_job_spec(request: Request, job_id: str, principal: PrincipalDep) -> JobS
         raise HTTPException(status_code=404, detail="no such job") from exc
 
     try:
-        obj: dict[str, Any] = cluster.get_job(principal.namespace, name)
+        obj: dict[str, Any] = cluster.get_job(namespace_for(principal, namespace), name)
     except NotFound as exc:
         raise HTTPException(status_code=404, detail="no such job") from exc
     except ClusterError as exc:
@@ -722,6 +801,7 @@ def get_metrics(
     request: Request,
     job_id: str,
     principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
     window_seconds: int = Query(
         default=3600, ge=60, le=86400,
         description="How far back to read the log. An hour by default.",
@@ -750,7 +830,9 @@ def get_metrics(
         raise HTTPException(status_code=404, detail="no such job") from exc
 
     try:
-        lines = cluster.recent_log_lines(principal.namespace, name, window_seconds)
+        lines = cluster.recent_log_lines(
+            namespace_for(principal, namespace), name, window_seconds
+        )
     except NotFound as exc:
         raise HTTPException(
             status_code=404,
@@ -801,6 +883,7 @@ def get_logs(
     request: Request,
     job_id: str,
     principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
     since: str | None = Query(
         default=None,
         description="The `last_timestamp` from your previous call. Lines at or "
@@ -842,7 +925,7 @@ def get_logs(
 
     try:
         lines = cluster.job_log_window(
-            principal.namespace, name, window_seconds, max_lines
+            namespace_for(principal, namespace), name, window_seconds, max_lines
         )
     except NotFound as exc:
         raise HTTPException(

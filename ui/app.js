@@ -201,7 +201,14 @@ async function route() {
   const [head, arg] = hash.split("/");
 
   try {
-    if (head === "jobs" && arg) { show("detail"); await drawDetail(arg); }
+    if (head === "jobs" && arg) {
+      // "<id>@<ns>": an operator viewing a foreign namespace carries it in the
+      // hash, so a reload of this page still asks the right namespace. "@" can
+      // appear in neither part — ids are hex, namespaces are DNS labels — so
+      // the split is unambiguous.
+      const [jobId, jobNs] = arg.split("@");
+      show("detail"); await drawDetail(jobId, jobNs || "");
+    }
     else if (head === "jobs")   { show("jobs");   drawJobs(); }
     else if (head === "submit") { show("submit"); }
     else if (head === "team")   { show("team");   drawTeam(); }
@@ -259,15 +266,43 @@ const card = (label, value, cls = "") =>
 
 let jobsTab = "active";
 
-function drawJobs() {
+/* DDPSRUN-UI-NAMESPACE. Which namespace the jobs screen reads. `current` empty
+   means the caller's own, which is all a non-operator ever sees: the picker is
+   drawn only when GET /v1/namespaces answers selectable (the token file's admin
+   flag) with more than one namespace. A chosen foreign namespace rides into the
+   detail hash as "#/jobs/<id>@<ns>", so reloading a foreign job's page still
+   asks the right namespace. The server enforces all of this with 403 anyway —
+   this state only decides what the screen offers. */
+let nsView = { loaded: false, list: [], own: "", selectable: false, current: "" };
+
+async function drawJobs() {
   document.querySelectorAll("#jobs-tabs button").forEach((b) => {
     b.classList.toggle("on", b.dataset.phase === jobsTab);
   });
 
+  // Ask once per sign-in which namespaces this caller may read. Failing quiet
+  // is deliberate: against an older server without the route, the picker just
+  // stays hidden and the screen is exactly what it was before namespaces.
+  if (!nsView.loaded) {
+    try {
+      const r = await call("/v1/namespaces");
+      nsView = { loaded: true, list: r.namespaces || [], own: r.own || "",
+                 selectable: Boolean(r.selectable), current: "" };
+    } catch { nsView.loaded = true; }
+    const sel = $("jobs-ns");
+    sel.hidden = !(nsView.selectable && nsView.list.length > 1);
+    if (!sel.hidden) {
+      sel.innerHTML = nsView.list.map((n) =>
+        `<option value="${esc(n)}"${n === nsView.own ? " selected" : ""}>${esc(n)}</option>`
+      ).join("");
+    }
+  }
+
   poll.every(15, async () => {
     let result;
     try {
-      result = await call(`/v1/jobs?limit=200${jobsTab ? "&phase=" + jobsTab : ""}`);
+      const nsq = nsView.current ? "&namespace=" + encodeURIComponent(nsView.current) : "";
+      result = await call(`/v1/jobs?limit=200${jobsTab ? "&phase=" + jobsTab : ""}${nsq}`);
     } catch (err) {
       $("jobs-body").innerHTML = note("err", err.message);
       return;
@@ -281,22 +316,33 @@ function drawJobs() {
       : `${result.total} ${result.total === 1 ? "job" : "jobs"}`;
 
     $("jobs-body").innerHTML = jobs.length
-      ? jobsTable(jobs, ["name", "id", "user", "status", "created", "elapsed", "gpu", "vendor", "recovery"])
+      ? jobsTable(jobs, ["name", "id", "user", "status", "created", "elapsed", "gpu", "vendor", "cost", "recovery", "result"])
       : empty(
           jobsTab === "active" ? "Nothing is running right now."
           : jobsTab === "finished" ? "No job has finished yet."
           : "You have not submitted a job yet.",
           "New job", "submit");
-    wireRows($("jobs-body"));
+    wireRows($("jobs-body"), nsView.current);
   });
 }
 
+// Changing the picker re-reads the list. poll.stop() first, because poll.every
+// only ever adds timers — without it the old namespace would keep refreshing
+// the table underneath the new one every 15 seconds.
+$("jobs-ns").onchange = () => {
+  const picked = $("jobs-ns").value;
+  nsView.current = picked === nsView.own ? "" : picked;
+  poll.stop();
+  drawJobs();
+};
+
 /* Build one table. The caller picks the columns: Home uses 4, the jobs screen
-   uses 9 (the table in docs/15-screens.md 15.5). */
+   uses 11 (the 9 in docs/15-screens.md 15.5, plus Cost and Result). */
 function jobsTable(jobs, columns) {
   const HEAD = {
     name: "Name", id: "ID", user: "Submitted by", status: "Status", created: "Created",
-    elapsed: "Elapsed", gpu: "GPU", vendor: "Vendor", recovery: "Restarts",
+    elapsed: "Elapsed", gpu: "GPU", vendor: "Vendor", cost: "Cost",
+    recovery: "Restarts", result: "Result",
   };
   const CELL = {
     name: (j) => `<span class="name">${esc(j.name || "(unnamed)")}</span>`,
@@ -308,7 +354,11 @@ function jobsTable(jobs, columns) {
     id: (j) => j.job_id
       ? `<span class="num dim tiny">${esc(j.job_id)}</span>`
       : `<span class="dim tiny" title="Created outside this gateway">applied directly</span>`,
-    user: (j) => esc(j.user || "-"),
+    // The owner label is written by the server at submit time and by nothing
+    // else, so a job with no owner was applied straight to the cluster with
+    // kubectl — and only an operator can do that. Naming the operator tells
+    // the reader who to ask about the job; "-" told them nothing.
+    user: (j) => esc(j.user || "admin"),
     status: (j) => badge(j.phase),
     created: (j) => `<span class="num dim">${esc(when(j.created_at))}</span>`,
     elapsed: elapsedCell,
@@ -317,6 +367,24 @@ function jobsTable(jobs, columns) {
     recovery: (j) => j.recovery_count
       ? `<span class="num" style="color:var(--run)">${j.recovery_count}</span>`
       : `<span class="dim">-</span>`,
+    // Dollars from the server (JobView.cost_usd), never computed here: it is
+    // the same number /v1/stats adds into the team total. null means "no
+    // price known" — a machine we never measured, or a job that never ran —
+    // and "-" is the honest rendering of that, where $0.00 would be a lie.
+    cost: (j) => (j.cost_usd == null)
+      ? `<span class="dim">-</span>`
+      : `<span class="num">$${Number(j.cost_usd).toFixed(2)}</span>`,
+    // resultPath is a spec field: it names where output WILL land, from the
+    // moment the job exists. So this cell shows the destination folder, not a
+    // claim that anything was saved — a Running job has a path and no file
+    // yet. The visible part is the job's own folder name (the piece a person
+    // can recognise in `aws s3 ls`); the full URI is in the tooltip and on
+    // the detail screen.
+    result: (j) => {
+      if (!j.result_path) return `<span class="dim">-</span>`;
+      const tail = j.result_path.replace(/\/+$/, "").split("/").pop();
+      return `<span class="num dim tiny" title="${esc(j.result_path)}">${esc(tail)}</span>`;
+    },
   };
 
   return `<div class="scroll"><table><thead><tr>` +
@@ -330,9 +398,12 @@ function jobsTable(jobs, columns) {
     `</tbody></table></div>`;
 }
 
-function wireRows(root) {
+function wireRows(root, ns) {
   root.querySelectorAll("tr.click").forEach((tr) => {
-    tr.onclick = () => go("jobs", tr.dataset.id);
+    // ns is set only when an operator is looking at a foreign namespace; it
+    // rides in the hash so the detail screen (and a reload of it) asks the
+    // same namespace the row came from.
+    tr.onclick = () => go("jobs", tr.dataset.id + (ns ? "@" + ns : ""));
   });
 }
 
@@ -341,8 +412,16 @@ function wireRows(root) {
 let logSeen = null;   // last timestamp seen. This is what keeps the server stateless.
 let logText = "";
 let lastSpec = null;  // what "Run again" copies from.
+let detailNs = "";    // which namespace the open detail screen reads. "" = own.
 
-async function drawDetail(jobId) {
+/* The ?namespace= suffix every detail request carries when an operator opened
+   a foreign job. One helper rather than five string concatenations, because
+   the logs URL sometimes already has ?since= and needs "&" instead of "?". */
+const nsQuery = (sep = "?") =>
+  detailNs ? `${sep}namespace=${encodeURIComponent(detailNs)}` : "";
+
+async function drawDetail(jobId, ns = "") {
+  detailNs = ns;
   logSeen = null;
   logText = "";
   lastSpec = null;
@@ -350,7 +429,7 @@ async function drawDetail(jobId) {
   $("d-id").textContent = jobId;
 
   // The spec never changes, so read it once rather than on every poll.
-  call(`/v1/jobs/${jobId}/spec`).then((spec) => {
+  call(`/v1/jobs/${jobId}/spec` + nsQuery()).then((spec) => {
     lastSpec = spec;
     $("d-spec").textContent = JSON.stringify(spec.spec, null, 2);
     $("d-spec-note").innerHTML = spec.redacted.length
@@ -362,7 +441,7 @@ async function drawDetail(jobId) {
   poll.every(5, async () => {
     let job;
     try {
-      job = await call(`/v1/jobs/${jobId}`);
+      job = await call(`/v1/jobs/${jobId}` + nsQuery());
     } catch (err) {
       $("d-message").innerHTML = note("err", err.message);
       poll.stop();
@@ -389,7 +468,9 @@ async function drawDetail(jobId) {
       fact("GPU", job.gpu || "not yet known"),
       fact("Vendor", job.vendor || "not yet known"),
       fact("Restarts", job.recovery_count || "none"),
-      fact("Submitted by", job.user || "-"),
+      // Same fallback as the list: no owner label means it was applied with
+      // kubectl, which only an operator can do.
+      fact("Submitted by", job.user || "admin"),
       fact("Result", job.result_path || "-"),
     ].join("");
 
@@ -405,7 +486,7 @@ const fact = (k, v) =>
 
 async function drawMetrics(jobId) {
   let m;
-  try { m = await call(`/v1/jobs/${jobId}/metrics`); }
+  try { m = await call(`/v1/jobs/${jobId}/metrics` + nsQuery()); }
   catch { return; }   // 404 while the pod does not exist yet. Normal; stay quiet.
 
   const p = m.progress;
@@ -470,7 +551,8 @@ function sparkline(series) {
 async function drawLog(jobId) {
   let r;
   try {
-    r = await call(`/v1/jobs/${jobId}/logs` + (logSeen ? `?since=${encodeURIComponent(logSeen)}` : ""));
+    r = await call(`/v1/jobs/${jobId}/logs` +
+      (logSeen ? `?since=${encodeURIComponent(logSeen)}` + nsQuery("&") : nsQuery()));
   } catch { return; }
 
   const lines = r.lines || [];
@@ -726,7 +808,7 @@ $("d-cancel").onclick = async () => {
   $("d-cancel").disabled = true;
   $("d-cancel").textContent = "Cancelling...";
   try {
-    await call(`/v1/jobs/${jobId}`, { method: "DELETE" });
+    await call(`/v1/jobs/${jobId}` + nsQuery(), { method: "DELETE" });
     poll.stop();
     go("jobs");
   } catch (err) {
@@ -902,6 +984,9 @@ function signOut() {
   poll.stop();
   store.clear();
   localStorage.removeItem(REFRESH_KEY);
+  // The namespace picker belongs to the person, not the browser: the next
+  // sign-in asks /v1/namespaces again from scratch.
+  nsView = { loaded: false, list: [], own: "", selectable: false, current: "" };
   showApp(false);
 }
 
