@@ -432,6 +432,9 @@ class Cluster:
             since_seconds: how far back to read. Make it several times the
                 polling interval: too narrow and a caller that pauses misses
                 lines, too wide and every request re-sends what it already sent.
+                0 or less means NO time filter — just the newest `tail_lines`
+                of the whole log — which is the only way to see output that is
+                hours old, because this filter is measured back from now.
             tail_lines: a hard cap on the window, so a job that produces
                 thousands of lines a second cannot return an unbounded body.
 
@@ -451,10 +454,12 @@ class Cluster:
             response = self._core.read_namespaced_pod_log(
                 name=pod,
                 namespace=namespace,
-                since_seconds=since_seconds,
                 tail_lines=tail_lines,
                 timestamps=True,
                 _preload_content=False,
+                # since_seconds=0 is not "everything" to the apiserver, it is
+                # malformed — so a no-filter read OMITS the parameter instead.
+                **({"since_seconds": since_seconds} if since_seconds > 0 else {}),
             )
             text = response.read().decode("utf-8", "replace")
         except ApiException as exc:

@@ -897,8 +897,12 @@ def get_metrics(
     principal: PrincipalDep,
     namespace: str = NAMESPACE_QUERY,
     window_seconds: int = Query(
-        default=3600, ge=60, le=86400,
-        description="How far back to read the log. An hour by default.",
+        default=3600, ge=60, le=604800,
+        description="How far back to read the log. An hour by default. The "
+        "window is measured back from NOW, so for a finished job ask for one "
+        "that reaches past its startedAt — the readings sit at the end of its "
+        "life, not near the present. The cap is seven days because a pod that "
+        "old has usually been collected anyway.",
     ),
 ) -> MetricsResponse:
     """GPU usage and training progress, read out of the job's own log.
@@ -981,8 +985,12 @@ def get_logs(
         "before it are dropped, so you get only what you have not seen.",
     ),
     window_seconds: int = Query(
-        default=30, ge=5, le=3600,
-        description="How far back to read. Several times your polling interval.",
+        default=30, ge=0, le=3600,
+        description="How far back to read. Several times your polling interval. "
+        "0 means no time filter at all — just the last max_lines of the log — "
+        "which is what a screen opening on a long-running or finished job "
+        "needs: its history is hours old, and any window measured back from "
+        "now would miss it.",
     ),
     max_lines: int = Query(
         default=2000, ge=1, le=10000,
