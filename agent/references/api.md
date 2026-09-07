@@ -271,6 +271,7 @@ What /v1/stats returns.
 
 | field | required | description |
 |---|---|---|
+| `caller` |  | The requesting token's own user name, so the screen can pick 'your' row out of members without guessing. Jobs applied with kubectl belong to the member 'admin', not to any caller. |
 | `cost_usd` |  |  |
 | `gpu_hours` |  |  |
 | `jobs` |  |  |

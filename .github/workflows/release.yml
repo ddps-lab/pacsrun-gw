@@ -151,7 +151,16 @@ jobs:
           cat ui/config.json
           # --delete so a file removed from the repo disappears from the bucket
           # too; otherwise a deleted page keeps being served forever.
-          aws s3 sync ui/ "s3://${{ vars.UI_BUCKET }}/" --delete
+          #
+          # --cache-control no-cache, because these files change under the SAME
+          # names on every deploy. Without the header S3 sends none, browsers
+          # cache heuristically, and a tab that loaded the page an hour ago
+          # keeps running the OLD app.js after a deploy — on 2026-09-07 that
+          # made a just-shipped fix look broken twice in one day. no-cache
+          # means "revalidate every time": the browser asks with the ETag it
+          # holds and CloudFront answers 304 from the edge, so the cost is one
+          # conditional request per file per load, not a re-download.
+          aws s3 sync ui/ "s3://${{ vars.UI_BUCKET }}/" --delete --cache-control no-cache
           # CloudFront caches aggressively and these files change on every
           # deploy, so the cache has to be told. Three files, so a blanket
           # invalidation is cheaper to reason about than a per-path one.
