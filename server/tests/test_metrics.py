@@ -30,6 +30,27 @@ def test_a_gpu_line_is_found_even_with_the_relay_prefix_around_it():
     assert m.parse_gpu("[remote] PACSRUN_GPU=10,100,200,40,50.0") is not None
 
 
+def test_the_apiserver_stamp_becomes_the_samples_time():
+    # recent_log_lines reads with timestamps=True, so a line arrives as
+    # "<RFC 3339> PACSRUN_GPU=..." — the stamp is the chart's x axis.
+    stamped = m.parse_gpu("2026-09-07T11:49:33.199910919Z PACSRUN_GPU=93,77209,81920,48,229.86")
+    assert stamped.time == "2026-09-07T11:49:33.199910919Z"
+    assert m.parse_gpu(GPU).time == ""   # a bare line has no stamp to harvest
+
+
+def test_scan_reports_the_peak_and_the_average():
+    # The peak is what a post-mortem asks for: a finished job's LAST reading is
+    # the idle card just before teardown (0%, 0 MiB) and says nothing.
+    reading = m.scan([
+        "PACSRUN_GPU=100,45669,81920,62,370.0",
+        "PACSRUN_GPU=98,77209,81920,51,381.1",
+        "PACSRUN_GPU=0,0,81920,36,67.8",
+    ], 3600)
+    assert reading.peak_gpu.memory_used_mib == 77209
+    assert reading.latest_gpu.memory_used_mib == 0
+    assert abs(reading.avg_utilization_percent - 66.0) < 0.1
+
+
 @pytest.mark.parametrize(
     "line",
     ["", "PACSRUN_KEEPALIVE", "{'loss': 0.42}", "PACSRUN_GPU=", "PACSRUN_GPU=1,2,3"],

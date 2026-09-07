@@ -393,6 +393,10 @@ class Cluster:
                 name=pod,
                 namespace=namespace,
                 since_seconds=since_seconds,
+                # The apiserver's own stamp on every line. metrics.scan() reads
+                # it into GpuSample.time, which is what lets the chart put real
+                # clock time on its x axis instead of "some window ago".
+                timestamps=True,
                 _preload_content=False,
             )
             text = response.read().decode("utf-8", "replace")
