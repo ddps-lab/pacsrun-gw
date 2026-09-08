@@ -1122,9 +1122,23 @@ $("s2-next").onclick = async () => {
   const hours = (r) => (r.low == null || r.high == null) ? "unknown"
     : r.low === r.high ? r.low.toFixed(1) + " h"
     : `${r.low.toFixed(1)} - ${r.high.toFixed(1)} h`;
+  // DDPSRUN-AWS-PRICES. The hourly rate is drawn even when the hours are not,
+  // and that is the whole reason this card exists. Twelve of the fourteen cards
+  // in the GPU dropdown have no throughput measurement, so "Estimated cost"
+  // read "unknown" for all twelve -- and the screen said nothing else about
+  // money, though the machine each one needs has a published price. Rate comes
+  // from the server (EstimateResponse.rate); nothing is computed here.
+  const rate = e.rate || {};
+  const rateText = (rate.usd_per_hour_low == null) ? "unknown"
+    : rate.usd_per_hour_low === rate.usd_per_hour_high
+      ? `$${rate.usd_per_hour_low.toFixed(4)}/h`
+      : `$${rate.usd_per_hour_low.toFixed(4)} - $${rate.usd_per_hour_high.toFixed(4)}/h`;
 
   $("s3-basis").textContent = e.basis;
   $("s3-cards").innerHTML = [
+    card("Hourly rate", rate.vendor
+      ? `${rateText} (${rate.vendor}${rate.machines > 1 ? ", " + rate.machines + " machines" : ""})`
+      : rateText),
     card("Estimated cost", money(e.cost_usd)),
     card("Estimated time", hours(e.hours)),
     card("Steps", e.steps ?? "unknown"),
@@ -1132,14 +1146,21 @@ $("s2-next").onclick = async () => {
   ].join("");
 
   const notes = [];
-  // With confidence "unknown" the numbers above rest on nothing. Say so loudly.
+  // With confidence "unknown" there is no time and no total. Which of the two
+  // halves is missing decides what the note can honestly advise: with a rate in
+  // hand the user can still bound the spend by capping the run.
   if (e.hours.confidence === "unknown") {
-    notes.push(note("warn", "This estimate has no measured run behind it.",
-      "Treat the numbers as a guess. A short trial run and a second estimate is the cheaper path."));
+    notes.push(rate.usd_per_hour_low == null
+      ? note("warn", "No measured run and no price for this ask.",
+             "Neither the time nor the cost can be answered. The findings below say why.")
+      : note("warn", `No measured run on this card, so the total is unknown. The rate is not: ${rateText}.`,
+             "One hour of this job is a known number. A short trial run measures the rest, "
+             + "and a second estimate then answers the total."));
   } else {
     notes.push(note("info",
       `Basis: ${e.hours.confidence === "measured" ? "a measured run" : "interpolation between measured runs"}`));
   }
+  if (rate.basis) notes.push(note("info", `Price: ${rate.basis}`));
   if (e.gpu.recommended) {
     notes.push(note("info",
       `Recommended GPU: ${e.gpu.recommended} (logits peak at ${e.gpu.peak_logits_gib.toFixed(2)} GiB). ${e.gpu.reason}`));

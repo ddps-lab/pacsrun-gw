@@ -62,7 +62,7 @@ What `GET /v1/jobs/{id}/artifacts` returns.
 
 ### CostRange
 
-What that runtime costs, at the price we last paid.
+What that runtime costs: the hours above times the rate below.
 
 | field | required | description |
 |---|---|---|
@@ -81,6 +81,7 @@ What /v1/estimate returns.
 | `cost_usd` | yes |  |
 | `gpu` | yes |  |
 | `hours` | yes |  |
+| `rate` | yes |  |
 | `steps` |  |  |
 | `warnings` |  |  |
 
@@ -314,6 +315,18 @@ Where the training run has got to, by its own reckoning.
 | `steady` | yes | False while too few steps have run for the projection to be worth quoting. One run was 32% out at step 1 and within 4% by step 50. |
 | `step` | yes |  |
 | `total_steps` | yes |  |
+
+### RateView
+
+What one hour of this job's machines costs.
+
+| field | required | description |
+|---|---|---|
+| `basis` |  | The machine type, the vendor, the capacity type and the date the price was read. Written even when the numbers are null, because why we cannot price something is the useful half of that answer. |
+| `machines` |  | How many machines the job rents. The rate is for all of them, so 4 pods of one L40S is 4 x $1.8610 = $7.4440/hour. |
+| `usd_per_hour_high` |  |  |
+| `usd_per_hour_low` |  | The whole job's hourly rate at the cheapest end. Equal to the high end for on-demand, which is published per region; lower for spot, which is per availability zone and moves. |
+| `vendor` |  | Which vendor this price belongs to: 'aws', 'runpod', or empty when neither could be priced. It matters: the one card both can supply costs $0.99/hour on RunPod and $1.8610/hour on AWS. |
 
 ### ScriptView
 

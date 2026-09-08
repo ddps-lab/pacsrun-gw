@@ -63,6 +63,7 @@ from .models import (
     ArtifactFileView,
     ArtifactsResponse,
     CostRange,
+    RateView,
     ExecRequest,
     ExecResponse,
     EstimateResponse,
@@ -390,6 +391,14 @@ def _estimate_for(body: JudgementRequest) -> estimator.Estimate:
         mitigations_on=all(validator.mitigations_from(body.env, body.script)),
         resumable=body.training.resumable,
         vocab=body.training.vocab,
+        # DDPSRUN-AWS-PRICES. These three reach the PRICE, not the runtime. The
+        # throughput table was measured on one-card pods on RunPod, so neither
+        # the count nor the vendor can change what we claim about step time --
+        # but both change the machine that gets rented and what it costs.
+        gpu_count=body.gpu.count if body.gpu else 1,
+        parallelism=body.parallelism,
+        vendors=body.vendors,
+        asked_capacity=body.capacity_type,
     )
 
 
@@ -415,6 +424,13 @@ def estimate_route(body: JudgementRequest, principal: PrincipalDep) -> EstimateR
             confidence=result.duration.confidence,
         ),
         cost_usd=CostRange(low=result.cost_low_usd, high=result.cost_high_usd),
+        rate=RateView(
+            usd_per_hour_low=result.rate.usd_per_hour_low,
+            usd_per_hour_high=result.rate.usd_per_hour_high,
+            vendor=result.rate.vendor,
+            machines=result.rate.machines,
+            basis=result.rate.basis,
+        ),
         basis=result.duration.basis,
         gpu=GpuAdviceView(
             recommended=result.gpu.recommended,
@@ -451,6 +467,11 @@ def validate_route(body: JudgementRequest, principal: PrincipalDep) -> ValidateR
         gpu_name=gpu_name_for(body),
         gpu_count=(body.gpu.count if body.gpu else 1),
         capacity_type=body.capacity_type,
+        # THE POD COUNT IS PART OF "can this be bought". PACSrun refuses a
+        # machine carrying more cards than the WHOLE job needs, so one pod
+        # asking for one A100-80GB is unfillable and eight pods asking for one
+        # each fill a p4de.24xlarge exactly (aws.go:333).
+        parallelism=body.parallelism,
         # DDPSRUN-VENDOR-CHOICE. Four of the six vendor names can be priced and
         # not rented, so whether the list the caller sent is sensible depends on
         # the mode. Both go in together.

@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .measurements import gpu_by_name
+from .measurements import aws_counts, gpu_by_name
 
 
 @dataclass(frozen=True)
@@ -52,19 +52,39 @@ class Choice:
         vram_gb: the number printed on the card. A spec figure, not a measured
             one; `measurements.Gpu.usable_gib` is the measured one and exists
             only for cards we have rented.
-        sold_singly: whether a machine with exactly one of these card can be
-            bought in us-west-2. False means the card only comes in whole
-            multi-GPU machines, so `count: 1` cannot be filled on the AWS route
-            however the name is spelled. Read off the catalogue on 2026-09-02
-            by counting rows with AcceleratorCount == 1.0.
         note: what to tell someone who picks it, or "" when there is nothing
             they need to know.
+
+    WHAT USED TO BE HERE AND WHY IT LEFT. This carried `sold_singly: bool`, read
+    off the CSV by hand on 2026-09-02. It is now derived, because it was BOTH
+    duplicated and too coarse:
+
+      duplicated  `measurements.aws_counts(name)` reads the same fact from the
+                  same CSV, so two copies could disagree and only one was
+                  generated.
+      too coarse  "sold singly" is one cell of an 8-wide row. AWS offers the L40S
+                  in machines of 1, 4 and 8, so a pod asking for 2 of them is
+                  just as unfillable as a pod asking for 1 A100-80GB -- and the
+                  boolean said nothing about it. Measured over all fourteen
+                  cards at counts 1 through 8 with one pod: 82 of the 112 asks
+                  cannot be filled, and the boolean caught 6 of them.
     """
 
     name: str
     vram_gb: int
-    sold_singly: bool
     note: str = ""
+
+    @property
+    def sold_singly(self) -> bool:
+        """Can a machine with exactly one of this card be bought in us-west-2.
+
+        Returns:
+            True when `aws_counts` contains 1. Kept as a name because it reads
+            well at the one place a single-card ask is what matters; anything
+            deciding about a REAL ask should call `measurements.aws_fillable`,
+            which also knows the pod count.
+        """
+        return 1 in aws_counts(self.name)
 
 
 # Every NVIDIA card the AWS catalogue offers in us-west-2, read on 2026-09-02
@@ -74,28 +94,23 @@ class Choice:
 # Inferentia, Trainium and the FPGA rows are left out: they are not GPUs and
 # nothing in this service can use them.
 CHOOSABLE: tuple[Choice, ...] = (
-    Choice("T4", 16, True),
-    Choice("T4g", 16, True, "ARM host. An x86 container image will not run on it."),
-    Choice("L4", 24, True),
-    Choice("A10G", 24, True),
-    Choice("RTX PRO 4500", 32, True),
-    Choice("V100-32GB", 32, False,
-           "Only sold as a whole 8-GPU machine, so a count of 1 cannot be filled."),
-    Choice("L40S", 48, True),
-    Choice("RTXPRO6000", 96, True),
-    Choice("A100", 40, False,
-           "Only sold as a whole 8-GPU machine on AWS. RunPod sells it singly, "
-           "but RunPod does not sell spot."),
-    Choice("A100-80GB", 80, False,
-           "Only sold as a whole 8-GPU machine on AWS. RunPod sells it singly, "
-           "but RunPod does not sell spot."),
-    Choice("H100", 80, True),
-    Choice("H200", 141, False,
-           "Only sold as a whole 8-GPU machine, so a count of 1 cannot be filled."),
-    Choice("B200", 180, False,
-           "Only sold as a whole 8-GPU machine, so a count of 1 cannot be filled."),
-    Choice("B300", 288, False,
-           "Only sold as a whole 8-GPU machine, so a count of 1 cannot be filled."),
+    Choice("T4", 16),
+    Choice("T4g", 16, "ARM host. An x86 container image will not run on it."),
+    Choice("L4", 24),
+    Choice("A10G", 24),
+    Choice("RTX PRO 4500", 32),
+    Choice("V100-32GB", 32),
+    Choice("L40S", 48),
+    Choice("RTXPRO6000", 96),
+    Choice("A100", 40, "AWS sells it only as a whole 8-GPU machine. RunPod sells "
+                       "it singly, but RunPod does not sell spot."),
+    Choice("A100-80GB", 80, "AWS sells it only as a whole 8-GPU machine. RunPod "
+                            "sells it singly, but RunPod does not sell spot."),
+    Choice("H100", 80),
+    Choice("H200", 141),
+    Choice("B200", 180),
+    Choice("B300", 288, "One availability zone in us-west-2 offers it, so a "
+                        "zone-level outage leaves nowhere to retry."),
 )
 
 BY_NAME = {choice.name.lower(): choice for choice in CHOOSABLE}

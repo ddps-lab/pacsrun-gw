@@ -803,10 +803,53 @@ class HoursRange(BaseModel):
 
 
 class CostRange(BaseModel):
-    """What that runtime costs, at the price we last paid."""
+    """What that runtime costs: the hours above times the rate below.
+
+    Both ends are None whenever either factor is missing, which is most often
+    the hours. The RATE is the half that is now almost always known -- see
+    `RateView` -- so a null cost with a non-null rate means "we know what an
+    hour costs, not how many hours".
+    """
 
     low: float | None = None
     high: float | None = None
+
+
+class RateView(BaseModel):
+    """What one hour of this job's machines costs.
+
+    Separate from `cost_usd` because the two fail independently. Twelve of the
+    fourteen choosable cards have no throughput measurement, so their hours are
+    `unknown` -- and before this field existed the cost line went blank with
+    them, leaving twelve cards saying nothing about money at all. A rate needs
+    no measurement of ours: it is a published price.
+    """
+
+    usd_per_hour_low: float | None = Field(
+        default=None,
+        description="The whole job's hourly rate at the cheapest end. Equal to "
+        "the high end for on-demand, which is published per region; lower for "
+        "spot, which is per availability zone and moves.",
+    )
+    usd_per_hour_high: float | None = None
+    vendor: str = Field(
+        default="",
+        description="Which vendor this price belongs to: 'aws', 'runpod', or "
+        "empty when neither could be priced. It matters: the one card both can "
+        "supply costs $0.99/hour on RunPod and $1.8610/hour on AWS.",
+    )
+    machines: int = Field(
+        default=1,
+        description="How many machines the job rents. The rate is for all of "
+        "them, so 4 pods of one L40S is 4 x $1.8610 = $7.4440/hour.",
+    )
+    basis: str = Field(
+        default="",
+        description="The machine type, the vendor, the capacity type and the "
+        "date the price was read. Written even when the numbers are null, "
+        "because why we cannot price something is the useful half of that "
+        "answer.",
+    )
 
 
 class GpuAdviceView(BaseModel):
@@ -824,6 +867,7 @@ class EstimateResponse(BaseModel):
     steps: int | None = None
     hours: HoursRange
     cost_usd: CostRange
+    rate: RateView
     basis: str
     gpu: GpuAdviceView
     capacity_type: str
