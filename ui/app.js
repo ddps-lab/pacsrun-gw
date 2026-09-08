@@ -821,14 +821,16 @@ async function drawScripts() {
   catch (err) { $("scripts-list").innerHTML = note("err", err.message); return; }
 
   const rows = answer.scripts || [];
-  // WHOSE list this is, always, even when it is your own. A list of somebody's
-  // training scripts with no owner on it reads as "everybody's".
-  const whose = answer.namespace
-    ? `in ${answer.namespace}` + (answer.namespace === nsView.own ? " (yours)" : "")
-    : "";
+  // ★ THE NAMESPACE IS NOT THE PERSON, and saying "in default (yours)" was the
+  // defect: all three principals in this deployment sit in `default`, so that
+  // sentence separated nobody while looking as though it had. The per-person
+  // fact is `owner`, from the job's own ddpsrun.io/owner label.
+  const people = answer.owners || [];
+  const named = people.filter(Boolean).length;
   $("scripts-note").textContent = rows.length
-    ? `${rows.length} script(s) ${whose}`
-    : whose;
+    ? `${rows.length} script(s) from ${named || "no"} `
+      + `${named === 1 ? "person" : "people"} in namespace ${answer.namespace}`
+    : `namespace ${answer.namespace || "-"}`;
   if (!rows.length) {
     $("scripts-list").innerHTML = note("info",
       answer.note || "You have not submitted a script yet.",
@@ -836,19 +838,46 @@ async function drawScripts() {
     return;
   }
 
-  $("scripts-list").innerHTML = rows.map((s, i) => {
-    const last = s.created_at ? when(s.created_at) : "";
-    const times = s.used > 1 ? `, used ${s.used} times` : "";
+  // ONE SECTION PER PERSON, which is the question the screen is asked: not
+  // "what scripts exist" but "what has each person run". `data-i` still indexes
+  // the FLAT list, so the buttons keep working after the grouping.
+  const groups = new Map();
+  rows.forEach((row, i) => {
+    const key = row.owner || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ row, i });
+  });
+  // Named people first and alphabetically; the unattributed group last, because
+  // it is a backlog rather than somebody.
+  const ordered = [...groups.keys()].sort((a, b) =>
+    (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
+
+  const card = (row, i) => {
+    const last = row.created_at ? when(row.created_at) : "";
+    const times = row.used > 1 ? `, run ${row.used} times` : "";
     return `<div class="panel">
       <header>
-        <h2>${esc(s.name || "(unnamed)")}</h2>
-        <span class="dim small">${s.lines} line(s)${esc(times)}${last ? "  last run " + esc(last) : ""}</span>
+        <h2>${esc(row.name || "(unnamed)")}</h2>
+        <span class="dim small">${row.lines} line(s)${esc(times)}${last ? "  last run " + esc(last) : ""}</span>
         <div class="spacer"></div>
         <button class="go tiny use-script" data-i="${i}" style="padding:4px 10px">Use this</button>
         <button class="flat tiny get-script" data-i="${i}" style="padding:4px 10px">Download</button>
       </header>
-      <pre class="spec">${esc(s.script)}</pre>
+      <pre class="spec">${esc(row.script)}</pre>
     </div>`;
+  };
+
+  $("scripts-list").innerHTML = ordered.map((who) => {
+    const mine = groups.get(who);
+    const heading = who
+      ? `${esc(who)} <span class="dim small">- ${mine.length} script(s)</span>`
+      : `<span class="dim">Submitter not recorded</span> `
+        + `<span class="dim small">- ${mine.length} script(s)</span>`;
+    const why = who ? "" : note("info",
+      "These jobs were not created through this service, so no submitter was "
+      + "recorded on them and it cannot be recovered afterwards.");
+    return `<h2 style="margin:18px 0 6px">${heading}</h2>${why}`
+      + mine.map(({ row, i }) => card(row, i)).join("");
   }).join("");
 
   $("scripts-list").querySelectorAll("button.get-script").forEach((b) => {

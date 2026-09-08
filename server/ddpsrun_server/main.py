@@ -1083,10 +1083,25 @@ def scripts_route(
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    # Keyed by the text itself, so the same run.sh submitted five times is one entry. dict keeps
-    # insertion order and the objects are walked newest first, so the first sighting of a text is
-    # also its most recent job -- which is the one worth naming.
-    seen: dict[str, ScriptView] = {}
+    # ★ KEYED ON (OWNER, TEXT) AND NOT ON THE TEXT ALONE, changed 2026-09-08.
+    #
+    # THE QUESTION THIS ROUTE IS ASKED is "which training scripts has each person
+    # run", and keying on the text alone cannot answer it: two people running the
+    # same run.sh collapsed into ONE entry that kept the first job's metadata and
+    # merely counted the second. So the listing named one of the two and silently
+    # dropped the other.
+    #
+    # AND THE NAMESPACE IS NOT THE PERSON. Scoping the read to a namespace looked
+    # like per-person separation and is not: a namespace is a tenancy boundary
+    # that may hold a whole team, and in this deployment it does -- all three
+    # principals in the token file sit in `default`. The per-person fact was
+    # already on every job as `ddpsrun.io/owner` (models.to_pacsjob stamps it
+    # from principal.user) and this route was not reading it.
+    #
+    # dict keeps insertion order and the objects are walked newest first, so the
+    # first sighting of a (person, text) pair is also their most recent run of it
+    # -- which is the one worth naming.
+    seen: dict[tuple[str, str], ScriptView] = {}
     ordered = sorted(
         objects,
         key=lambda o: (o.get("metadata") or {}).get("creationTimestamp") or "",
@@ -1099,16 +1114,22 @@ def scripts_route(
         text = args[2]
         if not isinstance(text, str) or not text.strip():
             continue
-        if text in seen:
-            seen[text].used += 1
-            continue
         meta = obj.get("metadata") or {}
         labels = meta.get("labels") or {}
+        # Empty when the job did not come through this gateway. Left empty rather
+        # than filled with "unknown": that string would sit in the owner column
+        # looking like somebody's username.
+        owner = labels.get(naming.OWNER_LABEL, "")
+        key = (owner, text)
+        if key in seen:
+            seen[key].used += 1
+            continue
         display = labels.get(naming.DISPLAY_NAME_LABEL, "") or meta.get("name", "")
-        seen[text] = ScriptView(
+        seen[key] = ScriptView(
             script=text,
             job_id=labels.get(naming.JOB_ID_LABEL, ""),
             name=display,
+            owner=owner,
             # A filename for saving it. Kubernetes names are already restricted
             # to lowercase letters, digits, dots and hyphens, but a display name
             # from an annotation is free text -- so anything else becomes a
@@ -1120,14 +1141,24 @@ def scripts_route(
             lines=len(text.splitlines()) or 1,
         )
 
+    owners = sorted({view.owner for view in seen.values()})
     note = ""
     if not seen:
         note = (
-            "None of your jobs carries a script this route recognises. It reads the text back "
-            "out of the job itself, and only a job submitted from the New job screen's Script "
-            "box (or with `--arg bash --arg -lc --arg '<text>'`) has it in that shape."
+            "No job in this namespace carries a script this route recognises. It reads the text "
+            "back out of the job itself, and only a job submitted from the New job screen's "
+            "Script box (or with `--arg bash --arg -lc --arg '<text>'`) has it in that shape."
         )
-    return ScriptsResponse(namespace=where, scripts=list(seen.values()), note=note)
+    elif owners == [""]:
+        # Worth saying, because the screen then has one unnamed group and that
+        # looks like the grouping is broken rather than like the jobs predating it.
+        note = (
+            "None of these jobs records who submitted it. A job carries "
+            f"`{naming.OWNER_LABEL}` only when it was created through this service; one made "
+            "with `kubectl apply` does not, and the submitter cannot be recovered afterwards."
+        )
+    return ScriptsResponse(namespace=where, owners=owners,
+                           scripts=list(seen.values()), note=note)
 
 
 @app.get("/v1/images", response_model=ImagesResponse)
