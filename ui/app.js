@@ -467,7 +467,11 @@ async function drawDetail(jobId, ns = "") {
     const s = statusOf(job.phase);
     $("d-name").textContent = job.name || jobId;
     $("d-badge").innerHTML = badge(job.phase);
-    $("d-message").innerHTML = job.message
+    // DDPSRUN-COMPARE-PANEL. A Compared job's message IS the comparison, and drawCompare puts
+    // it in its own panel with the four numbers pulled out. Printing it here as well showed the
+    // same run-on sentence twice on one screen, a few hundred pixels apart -- measured by
+    // looking at it on 2026-09-08.
+    $("d-message").innerHTML = (job.message && job.phase !== "Compared")
       ? note(s.cls === "bad" ? "err" : "info", job.message)
       : "";
 
