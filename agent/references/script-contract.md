@@ -301,3 +301,61 @@ bash /root/run.sh
 않는다 — `ddpsrun` 에 업로드 명령이 없고, 결과 prefix 는 서버가 job 마다 만들어 주는 것이라
 제출 전에는 그 주소가 존재하지도 않는다. 순서는: 사용자가 `aws s3 cp run.sh <경로>` 로 올리고,
 그 경로를 agent 에게 알려 주고, agent 는 위 부트스트랩을 `--script` 로 보낸다.
+
+---
+
+## 13. 결과는 `PACSRUN_ARTIFACT` 로 내보낸다 — `aws s3 cp` 로 쓰면 21시간 뒤에 잃는다
+
+**이 절이 없어서 실제로 잃을 뻔했다.** 2026-09-08 에 저장소만 들고 작업 C 를 제출하려던 세션이
+이 규약을 **문서 어디에서도 찾지 못했고**, 09-04 job 의 결과 tar 에 딸려 저장소에 커밋돼 있던
+옛 wrapper 를 우연히 읽어서 알았다. 그 우연이 없었으면 `aws s3 cp` 로 썼을 것이고, 21시간 뒤
+`AccessDenied` 로 결과가 전부 사라진다. `troubleshooting.md` 의 "job 이 Succeeded 인데 S3 가
+비어 있다" 항목이 그 실패의 흔적이다.
+
+### 규약
+
+파일 하나를 **완성한 직후**, stdout 에 한 줄을 찍는다. 그러면 driver 가 그 파일을 회수한다.
+
+```bash
+tar czf /root/work/adapter.tar.gz "$ADAPTER"
+echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
+```
+
+- **경로는 컨테이너 안의 절대 경로**다. driver 가 그 경로를 읽어 밖으로 옮긴다.
+- **파일마다 한 줄.** 여러 개면 여러 줄이고, 순서는 상관없다.
+- **완성한 뒤에 찍는다.** 쓰는 중인 파일을 알리면 잘린 파일이 회수된다. `tar` 는 닫힌 뒤,
+  로그는 마지막 flush 뒤.
+
+### 왜 `aws s3 cp` 가 아닌가
+
+이 클러스터는 **fetch mode** 로 돈다(`PACSRUN_FETCH_MODE=on`). 그 모드에서 컨테이너가 받는
+자격증명은 결과를 직접 올리는 용도가 아니고, 밖으로 내보내는 길은 driver 의 회수 하나뿐이다.
+driver 쪽 구현은 `PACSrun/driver/runpod/driver.py:232`(`ARTIFACT_RE` 가 이 줄을 찾는다)와
+`:47`(FetchWorker 가 큐에서 꺼내 올린다).
+
+`explain` 이 "Write it there yourself" 라고만 말하는 것은 이 절이 있기 전의 문장이다.
+
+### 관이 서는지 먼저 한 번 확인한다 (규칙 5 의 결과 경로 검사를 대신한다)
+
+학습 21시간을 태운 뒤 회수가 안 되는 것을 알면 늦다. **작은 파일 하나로 먼저 찍어 본다.**
+
+```bash
+date > /root/work/_probe.txt
+echo "PACSRUN_ARTIFACT=/root/work/_probe.txt"
+```
+
+그 줄이 driver 로그에 `fetched ... bytes` 로 되돌아오는지 보고 학습을 시작한다.
+
+**로그에서 그 줄은 `<internal>=/root/work/_probe.txt` 로 보인다.** gateway 의 로그 relay 가
+`PACSRUN_` 로 시작하는 이름을 가리기 때문이고(`server/ddpsrun_server/k8s.py` 의 `redact`,
+`test_k8s.py:23` 이 그 동작을 고정한다), **경로는 그대로 남으므로 확인은 된다.** 이름이 안 보이는
+것이 실패가 아니다 — 그 줄이 아예 없는 것이 실패다.
+
+### 회차로 나눠 내보내면 중단에도 남는다
+
+`Recovering` 후 컨테이너는 **빈 상태로 다시 시작한다** — `training.resumable` 은 사용자가
+주장하는 표시이고 도구가 되돌려주는 것은 없다. 회차가 끝날 때마다 그 산출물을 위 규약으로
+내보내면, 15시간째에 회수돼도 그때까지의 회차는 남는다.
+
+**의존해도 되는 사실:** 재시작 후에도 **result path 는 같다.** 서버가 job id 로 한 번 만들어
+`spec.resultPath` 에 넣고, recovery 는 같은 PacsJob 을 쓰므로 그 필드가 바뀌지 않는다.

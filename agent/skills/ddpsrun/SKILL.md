@@ -84,6 +84,17 @@ filled and the job sits in Pending. `ddpsrun schema` lists what is on offer.
 ddpsrun validate --name <n> --image <i> ... --script run.sh
 ```
 
+**ALWAYS pass `--script`.** Four checks read the script itself and are simply off
+without it — including the allocator setting, which a script may export just
+before training rather than in the job's env. A validate that never saw the
+script warns about things the script already does, and the `not_checked` list is
+what says so. If you built the request as a JSON file, put the script text in it.
+
+**When this document and `--help` disagree, `--help` is right**, and
+`pip install -U ddpsrun` is the fix: `references/cli.md` is generated from the
+repository, so it can describe flags a published release does not have yet.
+That happened on 2026-09-08 with `--vendor`.
+
 Exit 1 means something would actually stop the job. Fix it and run it again. Read the
 `not_checked` list aloud to the user: those are things no check could look at, so a pass
 is not a guarantee.
@@ -131,6 +142,17 @@ ddpsrun logs <job_id> --follow
 
 A `Recovering` phase and a non-zero restart count are **not failures**. Rented capacity
 gets taken back and the job is restarted. Say so rather than reporting a problem.
+
+## The researcher's own documents
+
+**Code wins over prose.** When a hand-off document and the repository disagree,
+read the code and say so. When two lines of the SAME document conflict — one
+saying "run it with no arguments", the other asking for behaviour that needs an
+argument — **do not choose. Quote both lines to the user and ask.** And before
+applying a correction from a report, check IN THE CODE which task it belongs to:
+on 2026-09-08 a correction meant for one pipeline (`max_tokens` 10,000) would
+have been applied to another whose own value is 4096, silently changing the
+experiment.
 
 ## When something goes wrong
 

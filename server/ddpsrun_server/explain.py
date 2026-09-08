@@ -94,8 +94,19 @@ LOGS
 
 RESULTS
   "result_path" in the submit response is an S3 location. Anything your command
-  writes there is yours to collect. Write it there yourself; nothing is copied
-  for you.
+  writes there is yours to collect.
+
+  HOW A FILE GETS THERE, and this is the whole protocol: print one line on
+  stdout for each finished file,
+
+      PACSRUN_ARTIFACT=/root/work/adapter.tar.gz
+
+  and the driver collects it. Print it AFTER the file is closed, or a truncated
+  one is collected. Do NOT write to the result path with `aws s3 cp` — the
+  credentials a job container holds are not for that, and the failure arrives
+  at the END of the run: 2026-09-08 a 21-hour job was one line away from
+  finishing and losing every result that way. Send one small file first to see
+  the pipe work before starting the long part.
 
 BEFORE YOU SUBMIT
   Call /v1/estimate and /v1/validate. They run nothing and cost nothing.

@@ -52,7 +52,13 @@ python patch_trl_liger_slice.py $(python -c "import trl.trainer.dpo_trainer as m
 
 ## job 이 `Succeeded` 인데 S3 가 비어 있다
 
-원인은 **자격증명 만료**다. STS temporary credentials 는 `DurationSeconds` 가 최대 43200,
+**원인이 둘이다. 먼저 이것부터 본다: 스크립트가 `PACSRUN_ARTIFACT` 를 안 찍었다.**
+fetch mode 에서 결과를 내보내는 길은 그 줄 하나뿐이고(script-contract 13절), 안 찍으면 job 은
+아무 문제 없이 `Succeeded` 로 끝난다 — 태운 시간이 그대로 사라진다. driver 로그에서
+`fetched` 를 찾아 한 건도 없으면 이 경우다. 2026-09-08 에 21시간짜리가 이 한 줄 앞에서
+멈춰 있었다.
+
+두 번째 원인은 **자격증명 만료**다. STS temporary credentials 는 `DurationSeconds` 가 최대 43200,
 즉 12 시간이다. 그보다 긴 job 은 마지막에 자기 결과를 못 올린다.
 
 조치는 fetch mode 다. 원격에 읽기 전용 자격증명만 주고 **driver pod 이 대신 가져와서 올린다.**
