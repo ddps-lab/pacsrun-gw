@@ -51,6 +51,7 @@ from . import artifacts
 from . import naming
 from . import registry      # DDPSRUN-IMAGES: the container images this lab has built
 from . import cognito
+from . import measurements
 from . import notify
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
@@ -64,6 +65,8 @@ from .models import (
     ArtifactFileView,
     ArtifactsResponse,
     CostRange,
+    PriceView,
+    PricesResponse,
     RateView,
     ExecRequest,
     ExecResponse,
@@ -548,8 +551,75 @@ def _estimate_for(body: JudgementRequest) -> estimator.Estimate:
         parallelism=body.parallelism,
         vendors=body.vendors,
         asked_capacity=body.capacity_type,
+        regions=body.regions,
     )
 
+
+
+@app.get("/v1/prices", response_model=PricesResponse)
+def prices_route(
+    card: str | None = Query(default=None),
+    vendor: str | None = Query(default=None),
+    region: str | None = Query(default=None),
+) -> PricesResponse:
+    """What every GPU the catalogue knows costs, in every region it prices.
+
+    DDPSRUN-PRICES. NO TOKEN NEEDED, for the same reason `/v1/schema` needs none:
+    a published list price is not this lab's information. It is also what somebody
+    reads BEFORE deciding whether to ask for an account.
+
+    WHAT THIS FIXES. The service could only speak about one region. The estimate
+    priced us-west-2, the screen showed us-west-2, and "what does an H100 cost in
+    Seoul" had no answer -- while `placement.regions` sat in the CRD unused, so
+    there was no way to ask for another region either. Both halves are fixed
+    together, because a price you can look at and not request is not much use.
+
+    THE TWO BASES ARE NOT COMPARABLE and the answer says so per row. AWS rows
+    price a whole machine; GCP rows price the accelerator alone, because a GPU
+    there attaches to a machine type the catalogue prices separately. Sorting the
+    two together would put GCP on top whenever it is not actually cheaper.
+
+    Args:
+        card: filter to one card, as the catalogue spells it.
+        vendor: 'aws' or 'gcp'.
+        region: one region.
+
+    Returns:
+        Every matching row, the AWS region list, and which region an ask that
+        names none really gets. Unfiltered this is about 610 rows -- some 70 KB
+        of JSON -- which is deliberate: a price table is read by sorting and
+        filtering it, and one request beats a round trip per card.
+    """
+    rows = measurements.PRICE_ROWS
+    if vendor:
+        rows = tuple(r for r in rows if r.vendor == vendor.strip().lower())
+    if card:
+        wanted = card.strip().lower()
+        rows = tuple(r for r in rows if r.card.lower() == wanted)
+    if region:
+        rows = tuple(r for r in rows if r.region == region.strip())
+
+    return PricesResponse(
+        rows=[PriceView(
+            vendor=r.vendor, basis=r.basis, card=r.card, gpus=r.gpus,
+            region=r.region, instance=r.instance, usd_per_hour=r.usd_per_hour,
+            spot_low=r.spot_low, spot_high=r.spot_high, zones=r.zones,
+            flags=r.flags,
+        ) for r in rows],
+        regions=list(measurements.AWS_REGIONS),
+        default_region=measurements.DEFAULT_AWS_REGION,
+        priced_on=measurements.AWS_PRICED_ON,
+        note=(
+            f"Read from the SkyPilot catalogue on {measurements.AWS_PRICED_ON}. "
+            f"On-demand is published per region and moves rarely; spot is per "
+            f"zone and moves continuously, so it is given as the range across "
+            f"the zones in that one snapshot. An ask that names no region gets "
+            f"{measurements.DEFAULT_AWS_REGION} and nothing else, so name a "
+            f"region in placement.regions to reach any other row here. AWS rows "
+            f"price a whole machine; GCP rows price the cards alone and the VM "
+            f"they attach to is extra."
+        ),
+    )
 
 @app.post("/v1/estimate", response_model=EstimateResponse)
 def estimate_route(body: JudgementRequest, principal: PrincipalDep) -> EstimateResponse:
@@ -621,6 +691,9 @@ def validate_route(body: JudgementRequest, principal: PrincipalDep) -> ValidateR
         # asking for one A100-80GB is unfillable and eight pods asking for one
         # each fill a p4de.24xlarge exactly (aws.go:333).
         parallelism=body.parallelism,
+        # DDPSRUN-REGIONS. The sizes AWS offers vary by region, so "can this be
+        # bought" cannot be answered without knowing where.
+        regions=body.regions,
         # DDPSRUN-VENDOR-CHOICE. Four of the six vendor names can be priced and
         # not rented, so whether the list the caller sent is sensible depends on
         # the mode. Both go in together.
@@ -999,8 +1072,14 @@ def scripts_route(
         A `ScriptsResponse`, newest first, one entry per DISTINCT text.
     """
     cluster: Cluster = request.app.state.cluster
+    # DDPSRUN-SCRIPTS-NAMESPACE. Hoisted so the ANSWER can name whose scripts
+    # these are. Every listing is one namespace's and never a mixture -- the
+    # caller's own, or another one when an operator asked for it -- and a list of
+    # somebody's training scripts with no owner printed on it reads as
+    # "everybody's", which on a shared cluster is the wrong thing to assume.
+    where = namespace_for(principal, namespace)
     try:
-        objects = cluster.list_jobs(namespace_for(principal, namespace))
+        objects = cluster.list_jobs(where)
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1025,10 +1104,17 @@ def scripts_route(
             continue
         meta = obj.get("metadata") or {}
         labels = meta.get("labels") or {}
+        display = labels.get(naming.DISPLAY_NAME_LABEL, "") or meta.get("name", "")
         seen[text] = ScriptView(
             script=text,
             job_id=labels.get(naming.JOB_ID_LABEL, ""),
-            name=labels.get(naming.DISPLAY_NAME_LABEL, "") or meta.get("name", ""),
+            name=display,
+            # A filename for saving it. Kubernetes names are already restricted
+            # to lowercase letters, digits, dots and hyphens, but a display name
+            # from an annotation is free text -- so anything else becomes a
+            # hyphen rather than reaching a Content-Disposition or a file system.
+            filename=(re.sub(r"[^A-Za-z0-9._-]+", "-", display).strip("-")
+                      or "run") + ".sh",
             created_at=meta.get("creationTimestamp"),
             used=1,
             lines=len(text.splitlines()) or 1,
@@ -1041,7 +1127,7 @@ def scripts_route(
             "out of the job itself, and only a job submitted from the New job screen's Script "
             "box (or with `--arg bash --arg -lc --arg '<text>'`) has it in that shape."
         )
-    return ScriptsResponse(scripts=list(seen.values()), note=note)
+    return ScriptsResponse(namespace=where, scripts=list(seen.values()), note=note)
 
 
 @app.get("/v1/images", response_model=ImagesResponse)

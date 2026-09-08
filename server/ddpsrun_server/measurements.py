@@ -185,111 +185,178 @@ GPUS: tuple[Gpu, ...] = (
 # WHAT THIS TABLE DOES NOT COVER. RunPod, whose prices come from `GPUS` above and
 # exist for two cards only; and every region other than us-west-2, which is the
 # only region PACSrun's AWS route has ever bought in.
-AWS_PRICE_REGION = "us-west-2"
+# ★ THE ROWS LIVE IN prices.csv, NOT IN THIS FILE, and 2026-09-08 is when that
+# changed. The first version of this table was us-west-2 only: 30 rows, small
+# enough to read here. All 22 AWS regions plus GCP is 610, and a 610-line literal
+# would bury the eight measured throughput rows that share this module. Being
+# generated also means it cannot be hand-edited into disagreeing with the
+# catalogue -- `tools/gen_prices_all.py` writes it and prints what it dropped.
+#
+# WHY ALL REGIONS AT ALL, when a solve only ever uses one. Two reasons, and the
+# second is the one that makes the first useful:
+#   * `GET /v1/prices` answers "what does this card cost anywhere", which had no
+#     answer before. us-west-2 was the only region this service could speak about.
+#   * `placement.regions` lets a caller ASK for another region, and the gateway
+#     now sends it. Being able to look at a price you cannot request is not much
+#     of a feature.
+#
+# ★★ WHAT AN ASK GETS WHEN IT NAMES NO REGION: exactly ONE region, the
+# operator's own default. PACSrun's placement.go:376 says so --
+# "For AWS it means the operator's ONE --region default" (grep:
+# PACSRUN-AWS-ONE-REGION) -- and this deployment's operator sets
+# PACSRUN_AWS_HOME_REGION=us-west-2. So DEFAULT_AWS_REGION below is not a
+# preference, it is where an unqualified ask really buys, and pricing an
+# unqualified ask at the globally cheapest region would be a wrong number
+# dressed as a helpful one.
+AWS_PRICES_FILE = "prices.csv"
 AWS_PRICED_ON = "2026-09-08"
+DEFAULT_AWS_REGION = "us-west-2"
+
+# Kept under the old name because `validate` and the tests read it, and it still
+# means what it said: the region this service speaks about unless told otherwise.
+AWS_PRICE_REGION = DEFAULT_AWS_REGION
 
 
 @dataclass(frozen=True)
-class AwsMachine:
-    """One AWS machine type, as the catalogue prices it.
+class PriceRow:
+    """One (vendor, card, count, region) the catalogue prices.
 
     Attributes:
-        card: the catalogue's spelling of the GPU, matching `catalogue.Choice.name`.
-        gpus: how many of that card the machine carries. This is the number
-            PACSrun compares an ask against, and the comparison is a RANGE and not
-            an equality -- see `aws_fillable`.
-        instance: the machine type. Named so a price can be checked against AWS's
-            own page.
-        usd_per_hour: on-demand, for the WHOLE machine. None when the catalogue
-            publishes no on-demand rate for it: AWS sells some of the newest cards
-            through Capacity Blocks instead, and `p5e.48xlarge` (H200) is such a
-            row in this snapshot -- it has a spot price and an empty Price column.
-        spot_low: the cheapest availability zone's spot price in this snapshot.
-        spot_high: the dearest. Equal to spot_low when only one zone offers it.
-        zones: how many availability zones the row was seen in, so a single-zone
-            card (B300, one zone) is visibly less available than a four-zone one.
+        vendor: "aws" or "gcp". Only AWS rows are used to price a job, because
+            AWS is the vendor this service can both price and rent; GCP rows are
+            here so `/v1/prices` can show them, and nothing ranks the two
+            together -- see `basis`.
+        basis: WHAT THE PRICE COVERS, and the two values are not comparable.
+            "machine" (AWS) is the whole instance with its GPUs, and `instance`
+            names it. "accelerator" (GCP) is the cards ALONE: GCP GPU rows carry
+            an empty InstanceType because a GPU there is attached to a machine
+            type and the catalogue prices the two separately. So a GCP row is
+            not "what a job costs" -- the VM it hangs off is extra, and the
+            catalogue does not say which VM.
+        card: the catalogue's spelling, matching `catalogue.Choice.name`.
+        gpus: how many of that card the row covers. AWS goes to 8; GCP to 16.
+        region: the region, e.g. "us-west-2".
+        instance: the machine type. Empty for every GCP row, by the reason above.
+        usd_per_hour: on-demand. None when the catalogue publishes none -- AWS
+            sells some of the newest cards through Capacity Blocks instead.
+        spot_low: cheapest zone's spot price in the same snapshot.
+        spot_high: dearest zone's.
+        zones: how many zones the row was seen in, so a single-zone card (B300)
+            is visibly less available than a four-zone one.
+        flags: "spot_above_ondemand" when this row's spot price exceeds its own
+            on-demand price. 38 GCP rows do, consistently and by 5-17%, with both
+            zones of a region agreeing -- A100 x1 asia-northeast1 is Price
+            1.70586 and SpotPrice 1.7915 in both -a and -c. That is the
+            catalogue's own content, not a grouping mistake (an earlier draft of
+            the generator DID have one, pairing a 1-card price with a 16-card
+            spot). Zero AWS rows are flagged. Nothing ranks a flagged row.
     """
 
+    vendor: str
+    basis: str
     card: str
     gpus: int
+    region: str
     instance: str
     usd_per_hour: float | None
     spot_low: float | None
     spot_high: float | None
     zones: int
+    flags: str = ""
 
 
-# DROPPED BY THE FILTERS (printed so the exclusions are visible, not implied):
-#   g6f.2xlarge      AcceleratorCount 0.25   rounds to 0
-#   g6f.4xlarge      AcceleratorCount 0.5    11.18 GiB < 16
-#   g6f.large        AcceleratorCount 0.125  rounds to 0
-#   g6f.xlarge       AcceleratorCount 0.125  rounds to 0
-#   gr6f.4xlarge     AcceleratorCount 0.5    11.18 GiB < 16
+def _load_prices() -> tuple[PriceRow, ...]:
+    """Read prices.csv, which sits beside this module and ships inside the zip.
 
-AWS_MACHINES: tuple[AwsMachine, ...] = (
-    AwsMachine("T4", 1, "g4dn.xlarge", 0.5260, 0.0631, 0.2086, 5),
-    AwsMachine("T4", 4, "g4dn.12xlarge", 3.9120, 1.3937, 1.5391, 5),
-    AwsMachine("T4", 8, "g4dn.metal", 7.8240, 3.8532, 4.1120, 5),
-    AwsMachine("T4g", 1, "g5g.xlarge", 0.4200, 0.1234, 0.1571, 3),
-    AwsMachine("T4g", 2, "g5g.16xlarge", 2.7440, 0.8326, 1.1337, 3),
-    AwsMachine("L4", 1, "g6.xlarge", 0.8048, 0.4444, 0.5454, 4),
-    AwsMachine("L4", 4, "g6.12xlarge", 4.6016, 1.5794, 2.1059, 4),
-    AwsMachine("L4", 8, "g6.48xlarge", 13.3504, 5.7420, 6.8526, 4),
-    AwsMachine("A10G", 1, "g5.xlarge", 1.0060, 0.5869, 0.6680, 3),
-    AwsMachine("A10G", 4, "g5.12xlarge", 5.6720, 2.9406, 3.5339, 3),
-    AwsMachine("A10G", 8, "g5.48xlarge", 16.2880, 3.2736, 7.2926, 3),
-    AwsMachine("RTX PRO 4500", 1, "g7.2xlarge", 2.5200, 0.7692, 0.8622, 4),
-    AwsMachine("RTX PRO 4500", 2, "g7.12xlarge", 7.1283, 2.0537, 2.6974, 4),
-    AwsMachine("RTX PRO 4500", 4, "g7.24xlarge", 14.2566, 1.5131, 4.0954, 4),
-    AwsMachine("RTX PRO 4500", 8, "g7.48xlarge", 28.5133, 4.2787, 5.0269, 4),
-    AwsMachine("V100-32GB", 8, "p3dn.24xlarge", 31.2120, 5.5250, 7.7890, 2),
-    AwsMachine("L40S", 1, "g6e.xlarge", 1.8610, 1.0555, 1.2863, 4),
-    AwsMachine("L40S", 4, "g6e.12xlarge", 10.4926, 3.1110, 7.4346, 4),
-    AwsMachine("L40S", 8, "g6e.48xlarge", 30.1312, 7.3472, 12.6860, 4),
-    AwsMachine("RTXPRO6000", 1, "g7e.2xlarge", 3.3631, 1.5964, 3.3631, 4),
-    AwsMachine("RTXPRO6000", 2, "g7e.12xlarge", 8.2861, 2.5417, 8.2861, 4),
-    AwsMachine("RTXPRO6000", 4, "g7e.24xlarge", 16.5722, 6.4355, 16.5722, 4),
-    AwsMachine("RTXPRO6000", 8, "g7e.48xlarge", 33.1443, 13.9304, 33.1443, 4),
-    AwsMachine("A100", 8, "p4d.24xlarge", 21.9576, 16.2246, 17.8254, 4),
-    AwsMachine("A100-80GB", 8, "p4de.24xlarge", 27.4471, 18.9276, 21.6732, 3),
-    AwsMachine("H100", 1, "p5.4xlarge", 6.8800, 2.6295, 2.6295, 4),
-    AwsMachine("H100", 8, "p5.48xlarge", 55.0400, 19.9398, 21.0363, 4),
-    AwsMachine("H200", 8, "p5en.48xlarge", 63.2960, 27.1035, 27.1792, 3),
-    AwsMachine("B200", 8, "p6-b200.48xlarge", 113.9328, 39.9348, 40.5845, 3),
-    AwsMachine("B300", 8, "p6-b300.48xlarge", 142.4160, 43.4369, 43.4369, 1),
-)
+    The release workflow does `cp -r ddpsrun_server build/`, so any file in the
+    package directory is in the deployment package. Read once at import: the
+    file is about 40 KB and a per-request read would pay for it on every call.
+
+    Returns:
+        Every row. An unreadable or missing file is NOT swallowed -- a service
+        that silently prices nothing looks identical to one whose catalogue says
+        nothing, and telling those apart is the whole point of `unknown` here.
+    """
+    import csv
+    import pathlib
+
+    path = pathlib.Path(__file__).with_name(AWS_PRICES_FILE)
+    rows: list[PriceRow] = []
+    with path.open(newline="") as handle:
+        for record in csv.DictReader(
+                line for line in handle if not line.startswith("#")):
+            def number(key: str) -> float | None:
+                raw = (record.get(key) or "").strip()
+                return float(raw) if raw else None
+
+            rows.append(PriceRow(
+                vendor=record["vendor"], basis=record["basis"],
+                card=record["card"], gpus=int(record["gpus"]),
+                region=record["region"], instance=record["instance"],
+                usd_per_hour=number("usd_per_hour"),
+                spot_low=number("spot_low"), spot_high=number("spot_high"),
+                zones=int(record["zones"] or 0),
+                flags=(record.get("flags") or "").strip(),
+            ))
+    return tuple(rows)
 
 
-def aws_machines_for(card: str) -> tuple[AwsMachine, ...]:
-    """Every priced AWS machine carrying this card.
+PRICE_ROWS: tuple[PriceRow, ...] = _load_prices()
+
+# The AWS half, which is the only half anything prices a job from.
+AWS_MACHINES: tuple[PriceRow, ...] = tuple(
+    row for row in PRICE_ROWS if row.vendor == "aws")
+
+# Every AWS region the catalogue prices, for `/v1/prices` and for telling a
+# caller which names `placement.regions` will accept.
+AWS_REGIONS: tuple[str, ...] = tuple(sorted({row.region for row in AWS_MACHINES}))
+
+
+# `AwsMachine` was the old name for a us-west-2-only row. Kept as an alias so a
+# reader who greps the older commits or the raw logs lands somewhere.
+AwsMachine = PriceRow
+
+
+def aws_machines_for(card: str,
+                     regions: tuple[str, ...] | list[str] | None = None
+                     ) -> tuple[PriceRow, ...]:
+    """Every priced AWS machine carrying this card, in the regions that apply.
 
     Args:
         card: the catalogue's spelling.
+        regions: which AWS regions the ask allows. None or empty means the ask
+            named none, which gets the operator's ONE default region -- not
+            every region (PACSRUN-AWS-ONE-REGION).
 
     Returns:
-        The matching rows, cheapest count first. Empty when us-west-2 does not
-        offer the card at all.
+        The matching rows. Empty when no allowed region offers the card.
     """
     key = (card or "").strip().lower()
-    return tuple(m for m in AWS_MACHINES if m.card.lower() == key)
+    allowed = {r.strip() for r in (regions or []) if r.strip()} or {DEFAULT_AWS_REGION}
+    return tuple(row for row in AWS_MACHINES
+                 if row.card.lower() == key and row.region in allowed)
 
 
-def aws_counts(card: str) -> tuple[int, ...]:
-    """How many of this card AWS sells at once, in us-west-2.
+def aws_counts(card: str,
+               regions: tuple[str, ...] | list[str] | None = None) -> tuple[int, ...]:
+    """How many of this card AWS sells at once, in the regions that apply.
 
     Args:
         card: the catalogue's spelling.
+        regions: as `aws_machines_for`.
 
     Returns:
-        The distinct machine sizes, ascending. `(8,)` means the card only comes
-        as a whole eight-GPU machine. This REPLACES a hand-maintained boolean:
-        `catalogue.Choice` used to carry `sold_singly`, which is just `1 in` this
-        answer, and carrying the derived form let it drift from the CSV.
+        The distinct machine sizes, ascending. `(8,)` means whole eight-GPU
+        machines only. THIS VARIES BY REGION -- the H100 comes as 1 or 8 in
+        us-west-2 and as 8 only in some others -- which is why the region has to
+        travel with the question.
     """
-    return tuple(sorted({m.gpus for m in aws_machines_for(card)}))
+    return tuple(sorted({m.gpus for m in aws_machines_for(card, regions)}))
 
 
-def aws_fillable(card: str, gpus_per_pod: int, pod_count: int) -> tuple[AwsMachine, ...]:
+def aws_fillable(card: str, gpus_per_pod: int, pod_count: int,
+                 regions: tuple[str, ...] | list[str] | None = None
+                 ) -> tuple[PriceRow, ...]:
     """Which machines PACSrun's AWS reader would actually accept for this ask.
 
     THE RULE IS PACSrun's, COPIED NOT INVENTED. `pkg/decider/skycatalog/aws.go:333`
@@ -314,6 +381,7 @@ def aws_fillable(card: str, gpus_per_pod: int, pod_count: int) -> tuple[AwsMachi
         pod_count: `parallelism`. Values below 1 are treated as 1, matching the
             `podCount <= 0` fallback at aws.go:312 which degenerates the ceiling
             to `gpusPerPod` alone.
+        regions: as `aws_machines_for`.
 
     Returns:
         The acceptable machines, or empty when nothing fits.
@@ -321,13 +389,13 @@ def aws_fillable(card: str, gpus_per_pod: int, pod_count: int) -> tuple[AwsMachi
     per_pod = max(1, gpus_per_pod)
     pods = max(1, pod_count)
     ceiling = per_pod * pods
-    return tuple(
-        m for m in aws_machines_for(card) if per_pod <= m.gpus <= ceiling
-    )
+    return tuple(m for m in aws_machines_for(card, regions)
+                 if per_pod <= m.gpus <= ceiling)
 
 
-def aws_cheapest(card: str, gpus_per_pod: int,
-                 pod_count: int) -> tuple[AwsMachine, int] | None:
+def aws_cheapest(card: str, gpus_per_pod: int, pod_count: int,
+                 regions: tuple[str, ...] | list[str] | None = None
+                 ) -> tuple[PriceRow, int] | None:
     """The machine this ask would be bought on, and how many pods it seats.
 
     WHY PER POD-HOUR AND NOT PER MACHINE-HOUR. This is the axis PACSrun's own
@@ -336,7 +404,7 @@ def aws_cheapest(card: str, gpus_per_pod: int,
     MACHINE would answer g6e.xlarge ($1.8610, one L40S) for a four-card pod, which
     cannot host it at all.
 
-    Worked example, L40S, one card per pod, four pods:
+    Worked example, L40S, one card per pod, four pods, us-west-2:
 
         g6e.xlarge     $1.8610/hr   1 card   seats 1 pod    $1.8610 per pod-hour
         g6e.12xlarge  $10.4926/hr   4 cards  seats 4 pods   $2.6232 per pod-hour
@@ -349,19 +417,23 @@ def aws_cheapest(card: str, gpus_per_pod: int,
         card: the catalogue's spelling.
         gpus_per_pod: `gpu.count`.
         pod_count: `parallelism`.
+        regions: as `aws_machines_for`. With several allowed regions the cheapest
+            across them wins and the answer names its own region, because a price
+            without its region is not checkable.
 
     Returns:
-        `(machine, seats)`, or None when nothing fits or nothing that fits has a
+        `(row, seats)`, or None when nothing fits or nothing that fits has a
         published on-demand price. Seats is how many pods that one machine holds,
         which is `gpus // gpus_per_pod` -- the same integer division as
         `PACSrun/pkg/decider/decider.go:607`.
     """
     per_pod = max(1, gpus_per_pod)
-    priced = [m for m in aws_fillable(card, gpus_per_pod, pod_count)
+    priced = [m for m in aws_fillable(card, gpus_per_pod, pod_count, regions)
               if m.usd_per_hour is not None]
     if not priced:
         return None
-    best = min(priced, key=lambda m: m.usd_per_hour / (m.gpus // per_pod))
+    best = min(priced, key=lambda m: (m.usd_per_hour / (m.gpus // per_pod),
+                                      m.region))
     return best, best.gpus // per_pod
 
 

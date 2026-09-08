@@ -420,7 +420,8 @@ def _unfillable_remedy(card: str, gpu_count: int, pods: int,
 
 def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
                         capacity_type: str | None,
-                        parallelism: int = 1) -> list[Finding]:
+                        parallelism: int = 1,
+                        regions: list[str] | None = None) -> list[Finding]:
     """Can the GPU that was asked for actually be bought.
 
     DDPSRUN-CATALOGUE. Three ways an ask can be unfillable, and none of them was
@@ -495,17 +496,24 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
         return findings
 
     pods = max(1, parallelism)
-    counts = measurements.aws_counts(choice.name)
-    if counts and not measurements.aws_fillable(choice.name, gpu_count, pods):
+    # THE MACHINE SIZES ON OFFER DEPEND ON THE REGION -- the H100 comes as 1 or 8
+    # in us-west-2 and as 8 only elsewhere -- so the region has to travel with
+    # the question. An ask that names none gets the operator's one default.
+    aws_regions = [entry.split("/", 1)[1] for entry in (regions or [])
+                   if entry.startswith("aws/") and "/" in entry]
+    counts = measurements.aws_counts(choice.name, aws_regions)
+    if counts and not measurements.aws_fillable(
+            choice.name, gpu_count, pods, aws_regions):
         sizes = ", ".join(str(n) for n in counts)
         ceiling = max(1, gpu_count) * pods
         # RunPod is only a candidate on on-demand, and we have no table of its
         # machine sizes -- so the severity says how much room is left, and the
         # remedy never claims RunPod WILL fill it.
         aws_only = capacity_type == "spot"
+        where = ", ".join(aws_regions) if aws_regions else measurements.AWS_PRICE_REGION
         findings.append(Finding(
             ERROR if aws_only else WARNING, "gpu-count-unfillable",
-            f"AWS us-west-2 sells the {choice.name} in machines of {sizes} cards. "
+            f"AWS {where} sells the {choice.name} in machines of {sizes} cards. "
             + (f"A machine must carry exactly {ceiling} for this ask -- one pod "
                f"needs {max(1, gpu_count)} and the whole job needs no more than "
                f"{max(1, gpu_count)} x {pods} pods -- and no machine does."
@@ -597,6 +605,7 @@ def validate(
     gpu_count: int = 1,
     capacity_type: str | None = None,
     parallelism: int = 1,
+    regions: list[str] | None = None,
     vendors: list[str] | None = None,
     placement_mode: str | None = None,
 ) -> Validation:
@@ -621,7 +630,8 @@ def validate(
 
     findings: list[Finding] = []
     findings += check_vendors_can_run(vendors or [], placement_mode)
-    findings += check_gpu_is_buyable(gpu_name, gpu_count, capacity_type, parallelism)
+    findings += check_gpu_is_buyable(gpu_name, gpu_count, capacity_type, parallelism,
+                                         regions)
     findings += check_secrets_as_literals(env)
     findings += check_memory(cap, vram_gb, alloc_on, patch_on)
     findings += check_caps(script, env)

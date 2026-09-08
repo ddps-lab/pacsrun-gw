@@ -1215,3 +1215,70 @@ def test_scripts_are_the_callers_own_and_nobody_elses(client, cluster):
     mine = as_alice(client, "GET", "/v1/scripts")
     assert mine.status_code == 200
     assert client.get("/v1/scripts").status_code == 401
+
+
+# ------------------------------------------------- DDPSRUN-PRICES: /v1/prices
+#
+# WHY THESE EXIST AT ALL, and it is a lesson rather than a formality. /v1/prices
+# shipped with 24 unit tests behind its DATA and not one behind the ROUTE, and
+# the route raised NameError on its first real call: `measurements` was never
+# imported into main.py. Everything passed, because nothing asked the route
+# anything. `test_every_route_appears_in_the_api_reference` checks that a route
+# is DOCUMENTED, which is not the same as answering.
+
+
+def test_the_price_table_answers_without_a_token(client):
+    """No token, for the same reason /v1/schema needs none: a published list
+    price is not this lab's information, and it is what somebody reads BEFORE
+    deciding whether to ask for an account."""
+    answer = client.get("/v1/prices")
+    assert answer.status_code == 200
+    body = answer.json()
+    assert len(body["rows"]) == 610
+    assert len(body["regions"]) == 22
+    assert body["default_region"] == "us-west-2"
+
+
+def test_the_price_table_filters(client):
+    """Three filters, because 610 rows is the whole table and a person looking
+    for one card should not have to receive all of it."""
+    one = client.get("/v1/prices?card=H100&vendor=aws&region=us-west-2").json()
+    assert {r["card"] for r in one["rows"]} == {"H100"}
+    assert {r["region"] for r in one["rows"]} == {"us-west-2"}
+    assert {r["vendor"] for r in one["rows"]} == {"aws"}
+    # The region list is the whole one regardless of the filter: it is what
+    # placement.regions accepts, not what the filter matched.
+    assert len(one["regions"]) == 22
+
+    assert client.get("/v1/prices?card=nosuchcard").json()["rows"] == []
+
+
+def test_the_price_table_says_which_basis_each_row_is(client):
+    """AWS prices a whole machine, GCP prices the cards alone. A screen that
+    sorted the two together would put GCP on top whenever it is not cheaper."""
+    body = client.get("/v1/prices").json()
+    bases = {(r["vendor"], r["basis"]) for r in body["rows"]}
+    assert bases == {("aws", "machine"), ("gcp", "accelerator")}
+    assert "whole machine" in body["note"] or "price a whole machine" in body["note"]
+
+
+def test_regions_reach_the_estimate_through_the_route(client):
+    """The same job, priced in two regions, over the real route. The H100 is 25%
+    dearer in ap-northeast-1 and that difference was invisible while the table
+    held one region."""
+    def ask(regions):
+        body = {"name": "r", "image": "nvidia/cuda:12.4.1-base-ubuntu22.04",
+                "args": ["bash", "-lc", "python train.py"],
+                "gpu": {"name": "H100", "count": 1}, "capacity_type": "on-demand",
+                "vendors": ["aws"], "regions": regions,
+                "training": {"pairs": 5000, "epochs": 1, "row_tokens": 4100,
+                             "cap": 12288}}
+        answer = as_alice(client, "POST", "/v1/estimate", json=body)
+        assert answer.status_code == 200, answer.text
+        return answer.json()["rate"]
+
+    home = ask([])
+    seoul = ask(["aws/ap-northeast-1"])
+    assert home["usd_per_hour_low"] == 6.88
+    assert seoul["usd_per_hour_low"] == 8.60
+    assert "us-west-2" in home["basis"] and "ap-northeast-1" in seoul["basis"]
