@@ -372,6 +372,7 @@ One script this caller has submitted before.
 | `job_id` |  | The most recent job that ran it. |
 | `lines` |  | How many lines it has, so the screen can say so. |
 | `name` |  | That job's display name. |
+| `owner` |  | WHO submitted it, from the job's ddpsrun.io/owner label. Empty when the job was not created through this gateway -- a job made with `kubectl apply` carries no owner, and saying 'unknown' would be a guess about a person. |
 | `script` | yes | The text, exactly as it was submitted. |
 | `used` |  | How many of this caller's jobs ran this exact text. The same run.sh submitted five times is one entry with used=5, not five entries -- a list where every retry is its own row is a list nobody scrolls. |
 
@@ -381,8 +382,9 @@ What `GET /v1/scripts` returns: this caller's own scripts, newest first.
 
 | field | required | description |
 |---|---|---|
-| `namespace` | yes | WHOSE scripts these are. Every listing is one namespace's and never a mixture: the caller's own unless an operator asked for another with ?namespace=. Said out loud because a list of scripts with no owner on it reads as 'everybody's', and on a shared cluster that is the wrong thing to assume about somebody else's training run. |
+| `namespace` | yes | WHICH NAMESPACE was read. Not the same thing as whose scripts these are -- see `owners`. One namespace can hold several people and in this deployment it does: all three principals in the token file sit in `default`, so scoping by namespace separates nobody. |
 | `note` |  | Why the list is empty, when it is. An empty list with no note reads as 'you have never submitted a script', which is a different fact from 'none of your jobs was submitted in a shape this route recognises'. |
+| `owners` |  | ★ WHO ran something in this listing, sorted. THIS is the per-person axis, and the namespace is not: a namespace is a tenancy boundary that may hold a whole team. An empty string in this list means jobs whose submitter was never recorded, which is every job created with `kubectl apply` rather than through this gateway. |
 | `scripts` |  |  |
 
 ### StatsResponse

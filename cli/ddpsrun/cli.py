@@ -56,6 +56,7 @@ import time
 import sys
 from typing import Any
 
+from . import __version__
 from . import browser_login
 from . import config
 from .client import Client, ServerError
@@ -174,6 +175,15 @@ def build_parser() -> argparse.ArgumentParser:
         prog="ddpsrun",
         description="Submit a batch job to a GPU we rent for you, and get the results back.",
         epilog="Run `ddpsrun explain` for the full description, straight from the server.",
+    )
+    # ON THE TOP-LEVEL PARSER ON PURPOSE, unlike --json below. "which version am
+    # I running" is a question about the INSTALL and not about any one command,
+    # and `ddpsrun --version` is where every other tool puts it. There was no way
+    # to ask at all before 2026-09-08, which is awkward the moment somebody
+    # reports a bug against a CLI they installed from PyPI.
+    parser.add_argument(
+        "--version", action="version", version=f"ddpsrun {__version__}",
+        help="print the installed version and exit",
     )
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 

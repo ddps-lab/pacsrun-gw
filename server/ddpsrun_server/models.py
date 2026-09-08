@@ -275,6 +275,13 @@ class ScriptView(BaseModel):
     created_at: str | None = Field(
         default=None, description="When that job was created, newest first in the listing."
     )
+    owner: str = Field(
+        default="",
+        description="WHO submitted it, from the job's ddpsrun.io/owner label. "
+        "Empty when the job was not created through this gateway -- a job made "
+        "with `kubectl apply` carries no owner, and saying 'unknown' would be a "
+        "guess about a person.",
+    )
     filename: str = Field(
         default="",
         description="A name to save this script under, built from the job's own "
@@ -294,11 +301,18 @@ class ScriptsResponse(BaseModel):
     """What `GET /v1/scripts` returns: this caller's own scripts, newest first."""
 
     namespace: str = Field(
-        description="WHOSE scripts these are. Every listing is one namespace's "
-        "and never a mixture: the caller's own unless an operator asked for "
-        "another with ?namespace=. Said out loud because a list of scripts with "
-        "no owner on it reads as 'everybody's', and on a shared cluster that is "
-        "the wrong thing to assume about somebody else's training run."
+        description="WHICH NAMESPACE was read. Not the same thing as whose "
+        "scripts these are -- see `owners`. One namespace can hold several "
+        "people and in this deployment it does: all three principals in the "
+        "token file sit in `default`, so scoping by namespace separates nobody."
+    )
+    owners: list[str] = Field(
+        default_factory=list,
+        description="★ WHO ran something in this listing, sorted. THIS is the "
+        "per-person axis, and the namespace is not: a namespace is a tenancy "
+        "boundary that may hold a whole team. An empty string in this list means "
+        "jobs whose submitter was never recorded, which is every job created "
+        "with `kubectl apply` rather than through this gateway.",
     )
     scripts: list[ScriptView] = Field(default_factory=list)
     note: str = Field(
