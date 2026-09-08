@@ -60,9 +60,27 @@ variable "result_prefix" {
 }
 
 variable "service_account" {
-  description = "The ServiceAccount every job's pods run as."
+  description = <<-EOT
+    The ServiceAccount every job's DRIVER pod runs as. It must be the one PACSrun's own
+    terraform wired to the EC2/STS role, because that role's trust policy names exactly one
+    namespace/ServiceAccount pair -- PACSrun's config/deploy/README.md step 3: "role의 trust
+    policy가 그 namespace/ServiceAccount 조합 하나만 신뢰하므로, 다른 SA로 돌리면 STS가
+    거절한다".
+
+    IT WAS "pacsrun-workload" UNTIL 2026-09-08 AND THAT IS AN IAM ROLE'S NAME, NOT THIS
+    CLUSTER'S ServiceAccount. The EKS Pod Identity association is
+    `default/pacsjob-writer -> role/pacsrun-workload`, so naming the role here produced a
+    driver pod with no usable identity: every AWS job died in its own configuration check with
+
+        configuration error: PACSRUN_AWS_ZONE is unusable: ... AccessDenied ... Not authorized
+        to perform sts:AssumeRoleWithWebIdentity
+
+    exit 10, terminal, before a machine was rented. Measured 2026-09-08 on job
+    ddpsrun-24547306294e submitted from the New job screen; the same request with
+    `pacsjob-writer` reached Running and rented a gr6.4xlarge.
+  EOT
   type        = string
-  default     = "pacsrun-workload"
+  default     = "pacsjob-writer"
 }
 
 variable "secret_bindings" {
