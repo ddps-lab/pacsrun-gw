@@ -51,6 +51,46 @@ ALLOC_CONF_VALUE = "expandable_segments:True"
 # instead of the whole sequence.
 TRL_PATCH = "patch_trl_liger_slice.py"
 
+# WHICH TRAINER THE SCRIPT USES, because TRL_PATCH only edits the DPO one.
+# The value on the right is what the reader would call it; the keys are the
+# spellings that actually occur in a script or a command line. Order matters:
+# "dpo" is checked last because "grpo" and "cpo" contain no "dpo" but a script
+# may well mention DPO in a comment while training with PPO.
+TRAINER_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("PPO", ("PPOTrainer", "ppo_trainer", "trl.trainer.ppo", "--ppo", "ppo.py")),
+    ("GRPO", ("GRPOTrainer", "grpo_trainer", "trl.trainer.grpo", "--grpo", "grpo.py")),
+    ("SFT", ("SFTTrainer", "sft_trainer", "trl.trainer.sft", "--sft", "sft.py")),
+    ("DPO", ("DPOTrainer", "dpo_trainer", "trl.trainer.dpo", "--dpo", "dpo.py")),
+)
+
+
+def trainer_in(script: str | None) -> str | None:
+    """Which TRL trainer this script trains with, as far as the text shows.
+
+    DDPSRUN-TRAINER. This exists because of one wrong sentence. On 2026-09-08 a
+    PPO job was told to `python patch_trl_liger_slice.py $(python -c "import
+    trl.trainer.dpo_trainer ...")` -- a patch that edits the DPO trainer, on a
+    run that never imports it. Following that advice patches a file nobody
+    reads and the reader is left believing a memory mitigation is in place.
+
+    Args:
+        script: the job's script text, or None when it was not supplied.
+
+    Returns:
+        "PPO", "GRPO", "SFT", "DPO", or None when nothing in the text says.
+        None is a real answer and the caller must treat it as "unknown", not as
+        "not DPO": a script that calls its own wrapper reveals no trainer at
+        all, and guessing either way would put a false sentence in front of a
+        reader.
+    """
+    if not script:
+        return None
+    for label, markers in TRAINER_MARKERS:
+        if any(marker in script for marker in markers):
+            return label
+    return None
+
+
 # `--out adapter_x` in the training command has to be the same directory the
 # inference command reads with `--lora`. They are two separate commands in the
 # same script and nothing connects them.
@@ -109,7 +149,8 @@ def mitigations_from(env: dict[str, str], script: str | None) -> tuple[bool, boo
     return alloc_on, patch_on
 
 
-def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on: bool) -> list[Finding]:
+def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on: bool,
+                 trainer: str | None = None) -> list[Finding]:
     """Will the largest allocation fit on the card that was asked for.
 
     Args:
@@ -117,6 +158,9 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
         vram_gb: the memory the job asked for. None for a CPU-only job.
         alloc_on: `PYTORCH_CUDA_ALLOC_CONF` is set.
         patch_on: the TRL patch runs.
+        trainer: what `trainer_in` found, or None for unknown. The TRL patch
+            edits `trl.trainer.dpo_trainer`, so telling a PPO run to apply it
+            is advice that cannot work -- see DDPSRUN-TRAINER.
 
     Returns:
         Findings.
@@ -138,7 +182,23 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
                 f"training command with it.",
             )
         )
-    if not patch_on:
+    patch_applies = trainer in (None, "DPO")
+    if not patch_on and not patch_applies:
+        # NOT a warning, because there is nothing for the reader to do: the
+        # patch cannot be applied to this trainer at all. What they need is to
+        # know that the peak figure came from a DPO measurement.
+        findings.append(
+            Finding(
+                INFO, "trl-patch-not-applicable",
+                f"{TRL_PATCH} edits `trl.trainer.dpo_trainer` and this script "
+                f"trains with {trainer}, so it does not apply here. The "
+                f"{peak:.2f} GiB above was measured on the DPO path; treat it "
+                f"as an upper bound for {trainer} rather than a figure for it.",
+                f"leave {TRL_PATCH} out. Keep {ALLOC_CONF}={ALLOC_CONF_VALUE} "
+                f"-- that one is the allocator's and applies to every trainer.",
+            )
+        )
+    if not patch_on and patch_applies:
         findings.append(
             Finding(
                 WARNING, "trl-patch-missing",
@@ -156,8 +216,13 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
             Finding(
                 ERROR, "gpu-too-small",
                 f"this asks for {vram_gb} GB. {advice.reason}",
-                f"ask for {advice.recommended_vram_gb} GB, or turn the two "
-                f"mitigations on and ask again.",
+                (f"ask for {advice.recommended_vram_gb} GB, or turn the two "
+                 f"mitigations on and ask again."
+                 if patch_applies else
+                 f"ask for {advice.recommended_vram_gb} GB. Only one of the two "
+                 f"mitigations is available to a {trainer} run ({ALLOC_CONF}), "
+                 f"so the smaller card this figure assumes is not reachable by "
+                 f"turning things on."),
             )
         )
     return findings
@@ -421,7 +486,8 @@ def _unfillable_remedy(card: str, gpu_count: int, pods: int,
 def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
                         capacity_type: str | None,
                         parallelism: int = 1,
-                        regions: list[str] | None = None) -> list[Finding]:
+                        regions: list[str] | None = None,
+                        vendors: list[str] | None = None) -> list[Finding]:
     """Can the GPU that was asked for actually be bought.
 
     DDPSRUN-CATALOGUE. Three ways an ask can be unfillable, and none of them was
@@ -462,10 +528,27 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
     operator, it sits in Pending and retries, which is exactly the 2026-09-02
     incident above.
 
+    ★ AND THE MACHINE SIZES ARE AWS'S, SO THE VENDOR LIST DECIDES WHETHER THEY
+    ARE EVIDENCE AT ALL. Everything under THE RULE above is read out of the AWS
+    catalogue. A job that names `vendors: ["runpod"]` never reaches
+    `pkg/decider/skycatalog/aws.go:333`, so an AWS row proves nothing about it.
+    Until 2026-09-08 vendors did not arrive here and the check judged every ask
+    against AWS anyway: a RunPod-only A100 count-1 job was told "AWS us-west-2
+    sells the A100 in machines of 8 cards", which is true, irrelevant, and
+    impossible to act on -- the remedy it suggested was already what the job
+    did. A warning that survives its own fix teaches a reader to skip warnings.
+
     Args:
         gpu_name: what the caller asked for, or None for a job with no GPU.
         gpu_count: how many.
         capacity_type: "spot", "on-demand", or None.
+        parallelism: how many pods, because the ceiling is per JOB not per pod.
+        regions: `["aws/us-west-2", ...]`. The sizes on offer differ by region.
+        vendors: the vendor names the job named. Empty means no restriction, so
+            AWS is a candidate. When AWS is NOT among them, the AWS size check
+            is skipped rather than softened -- we hold no table of RunPod's
+            machine sizes, and inventing a verdict from a table we do not have
+            would be worse than saying nothing.
 
     Returns:
         Findings. Nothing when no GPU was asked for.
@@ -501,7 +584,9 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
     # the question. An ask that names none gets the operator's one default.
     aws_regions = [entry.split("/", 1)[1] for entry in (regions or [])
                    if entry.startswith("aws/") and "/" in entry]
-    counts = measurements.aws_counts(choice.name, aws_regions)
+    # No vendor named means no restriction, so AWS is one of the candidates.
+    aws_is_candidate = not vendors or "aws" in vendors
+    counts = measurements.aws_counts(choice.name, aws_regions) if aws_is_candidate else []
     if counts and not measurements.aws_fillable(
             choice.name, gpu_count, pods, aws_regions):
         sizes = ", ".join(str(n) for n in counts)
@@ -528,7 +613,18 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
             _unfillable_remedy(choice.name, gpu_count, pods, counts, aws_only),
         ))
 
-    if capacity_type == "spot":
+    if capacity_type == "spot" and vendors and "aws" not in vendors:
+        # Naming spot with AWS excluded is not a hint, it is a contradiction:
+        # `pkg/decider/runpod/decider.go` refuses spot before it reads any
+        # catalogue, so there is no candidate left and the job cannot start.
+        findings.append(Finding(
+            ERROR, "spot-has-no-vendor",
+            f"spot was asked for and AWS is not among the vendors named "
+            f"({', '.join(vendors)}). RunPod does not sell spot and its decider "
+            f"refuses before it reads the catalogue, so no vendor is left to ask.",
+            "Either add aws to vendors, or submit on-demand.",
+        ))
+    elif capacity_type == "spot":
         findings.append(Finding(
             INFO, "spot-excludes-runpod",
             "spot leaves AWS as the only vendor. RunPod does not sell spot, and "
@@ -580,6 +676,113 @@ def check_secrets_as_literals(env: dict[str, str]) -> list[Finding]:
     ]
 
 
+def check_secret_names(secrets: list[str], known: dict[str, object]) -> list[Finding]:
+    """Are the names in `secrets` ones this deployment actually holds.
+
+    DDPSRUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` is a word that opens the
+    server's vault; submit refuses a word the vault does not have. Until
+    2026-09-08 validate did not look at these AT ALL, so a wrong name passed
+    with `Nothing blocking. EXIT=0` and the only way to learn the right one was
+    to try a submit and read the refusal — which is exactly backwards for a
+    tool whose promise is "check it before it costs anything".
+
+    Args:
+        secrets: the names the caller asked for.
+        known: the deployment's bindings, `Settings.secret_bindings`.
+
+    Returns:
+        One ERROR naming the unknown words and listing what does exist. An
+        error, not a warning: the submit WILL be refused, so this is a
+        certainty rather than a risk.
+    """
+    if not secrets:
+        return []
+    missing = [name for name in secrets if name not in known]
+    if not missing:
+        return []
+    available = ", ".join(sorted(known)) or "(none is stored for this deployment)"
+    return [
+        Finding(
+            ERROR, "secret-name-unknown",
+            f"{', '.join(missing)} is not a secret this deployment holds, so the "
+            f"submit would be refused. Stored names: {available}.",
+            "run `ddpsrun secrets` for the list. If the one you need is not "
+            "there, an operator has to store it — the value never travels "
+            "through this API, so nobody can add it from here.",
+        )
+    ]
+
+
+# The three variables PACSrun injects for the result upload. A job that needs a
+# DIFFERENT AWS account for its own work collides with them.
+_RESULT_CREDENTIAL_VARS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
+
+
+def check_aws_credential_collision(env: dict[str, str], secrets: list[str],
+                                   script: str | None) -> list[Finding]:
+    """Does this job want a second AWS identity in the same three variables.
+
+    DDPSRUN-AWS-COLLISION. PACSrun hands the container credentials for writing
+    results as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
+    A job that also calls another AWS account — Bedrock for an LLM judge, say —
+    reaches for the same three names, and boto3 reads the environment BEFORE
+    any profile, so `AWS_PROFILE` is ignored in silence. Whichever identity
+    wins, the other half of the job fails: either the judge is refused, or the
+    results cannot be collected at the end of a run that already cost money.
+
+    This was learned the hard way (2026-09-08): the fact appeared in no
+    document, and getting it wrong shows up an hour into a 21-hour job.
+
+    Args:
+        env, secrets: what the job asks to have set.
+        script: its text, when supplied.
+
+    Returns:
+        A WARNING when a second identity is visible, with the pattern that
+        works. Not an error: a job MAY legitimately override these — for
+        instance when it does not need the result upload at all.
+    """
+    asked = {name.upper() for name in list(env) + list(secrets)}
+    # A judge-shaped second identity: any AWS credential name that is NOT one
+    # of the three, e.g. JUDGE_AWS_ACCESS_KEY_ID.
+    second = sorted(
+        name for name in asked
+        if "AWS" in name and ("ACCESS_KEY" in name or "SECRET_ACCESS" in name)
+        and name not in _RESULT_CREDENTIAL_VARS
+    )
+    overwrites = sorted(name for name in asked if name in _RESULT_CREDENTIAL_VARS)
+    in_script = bool(script) and any(
+        f"export {var}" in script for var in _RESULT_CREDENTIAL_VARS
+    )
+
+    if not second and not overwrites and not in_script:
+        return []
+
+    what = []
+    if overwrites:
+        what.append(f"{', '.join(overwrites)} in the job's own variables")
+    if in_script:
+        what.append("an `export` of them inside the script")
+    if second:
+        what.append(f"a second identity in {', '.join(second)}")
+
+    return [
+        Finding(
+            WARNING, "aws-credential-collision",
+            "this job carries " + "; ".join(what) + ". PACSrun injects the "
+            "result-upload credentials as AWS_ACCESS_KEY_ID, "
+            "AWS_SECRET_ACCESS_KEY and AWS_SESSION_TOKEN, and boto3 reads the "
+            "environment before any profile — so AWS_PROFILE will not separate "
+            "them and whichever wins breaks the other half of the run.",
+            "keep the second identity under its own names and pass it "
+            "explicitly where it is used: "
+            "boto3.session.Session(aws_access_key_id=os.environ['JUDGE_AWS_ACCESS_KEY_ID'], "
+            "...). Do not overwrite the three: results are collected at the END "
+            "of the run, so a broken upload costs the whole job.",
+        )
+    ]
+
+
 # What no check here can see, because it would need the user's repository.
 NOT_CHECKED = (
     "whether the paths in your script match your repository's real layout. Our "
@@ -608,6 +811,8 @@ def validate(
     regions: list[str] | None = None,
     vendors: list[str] | None = None,
     placement_mode: str | None = None,
+    secrets: list[str] | None = None,
+    known_secrets: dict[str, object] | None = None,
 ) -> Validation:
     """Run every check and sort what comes back.
 
@@ -622,6 +827,11 @@ def validate(
         placement_mode: "ordered", "cheapest" or "compare", or None for the
             default. Both are needed together: whether naming a price-only
             vendor is sensible depends entirely on the mode.
+        secrets: the vault words the job asks for.
+        known_secrets: what the deployment holds (`Settings.secret_bindings`).
+            Both are needed together, and passing secrets without this would
+            make every name look unknown — so a caller that cannot supply the
+            bindings passes neither and the check simply does not run.
 
     Returns:
         A `Validation`. `ok` is False when any finding is an error.
@@ -630,10 +840,17 @@ def validate(
 
     findings: list[Finding] = []
     findings += check_vendors_can_run(vendors or [], placement_mode)
+    # vendors GOES IN, and until 2026-09-08 it did not: the check judged every
+    # ask against AWS's catalogue, so `vendors: ["runpod"]` left an AWS-shaped
+    # warning standing. A warning that survives the fix it asks for teaches a
+    # reader to ignore warnings.
     findings += check_gpu_is_buyable(gpu_name, gpu_count, capacity_type, parallelism,
-                                         regions)
+                                         regions, vendors or [])
     findings += check_secrets_as_literals(env)
-    findings += check_memory(cap, vram_gb, alloc_on, patch_on)
+    if known_secrets is not None:
+        findings += check_secret_names(secrets or [], known_secrets)
+    findings += check_aws_credential_collision(env, secrets or [], script)
+    findings += check_memory(cap, vram_gb, alloc_on, patch_on, trainer_in(script))
     findings += check_caps(script, env)
     findings += check_adapter_paths(script)
     findings += check_partial_results(script)

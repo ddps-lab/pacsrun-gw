@@ -359,3 +359,66 @@ echo "PACSRUN_ARTIFACT=/root/work/_probe.txt"
 
 **의존해도 되는 사실:** 재시작 후에도 **result path 는 같다.** 서버가 job id 로 한 번 만들어
 `spec.resultPath` 에 넣고, recovery 는 같은 PacsJob 을 쓰므로 그 필드가 바뀌지 않는다.
+
+---
+
+## 14. 두 번째 AWS 계정을 쓰는 job 은 세 변수를 스스로 가른다
+
+**PACSrun 은 결과 회수용 자격증명을 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_SESSION_TOKEN` 으로 주입한다.** job 이 **다른** AWS 계정을 부르는 경우 — 예를 들어 Bedrock
+judge — 그 코드도 같은 세 이름을 찾는다. **boto3 는 환경변수를 프로파일보다 먼저 읽으므로
+`AWS_PROFILE` 로는 갈라지지 않는다.**
+
+**어느 쪽이 이겨도 나머지 절반이 깨진다.** judge 가 지면 평가가 거부되고, 회수 쪽이 지면
+**21시간을 돌린 결과를 마지막에 못 올린다** — 회수는 job 이 끝날 때 일어나므로 그 실패는 가장
+비싼 시점에 드러난다.
+
+`validate` 가 이것을 먼저 말한다: 세 이름 중 하나를 job 이 직접 들고 있거나, `AWS` 와
+`ACCESS_KEY` 를 함께 가진 다른 이름이 보이면 `aws-credential-collision` 이 뜬다
+(`server/ddpsrun_server/validate.py` 의 `check_aws_credential_collision`).
+
+**되는 모양 — judge 키는 자기 이름으로 받고 쓰는 자리에서만 명시적으로 넘긴다.**
+
+```bash
+python - <<'PY'
+import os, boto3
+s = boto3.session.Session(
+    aws_access_key_id=os.environ["JUDGE_AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["JUDGE_AWS_SECRET_ACCESS_KEY"],
+    aws_session_token=os.environ.get("JUDGE_AWS_SESSION_TOKEN"),
+)
+bedrock = s.client("bedrock-runtime", region_name="us-west-2")
+PY
+```
+
+**연구원 코드가 boto3 기본 체인을 쓰고 고칠 수 없는 경우**에만, 그 호출 구간 앞에서 세 변수를
+judge 값으로 치환하고 **끝나면 되돌린다.** 되돌리지 않으면 13번의 회수가 깨진다.
+
+```bash
+# 치환 -- 되돌리기까지 한 쌍으로만 쓴다.
+export _SAVED_KEY="$AWS_ACCESS_KEY_ID" _SAVED_SECRET="$AWS_SECRET_ACCESS_KEY" _SAVED_TOKEN="$AWS_SESSION_TOKEN"
+export AWS_ACCESS_KEY_ID="$JUDGE_AWS_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$JUDGE_AWS_SECRET_ACCESS_KEY" AWS_SESSION_TOKEN="$JUDGE_AWS_SESSION_TOKEN"
+python evaluate.py            # judge 를 부르는 구간
+export AWS_ACCESS_KEY_ID="$_SAVED_KEY" AWS_SECRET_ACCESS_KEY="$_SAVED_SECRET" AWS_SESSION_TOKEN="$_SAVED_TOKEN"
+```
+
+---
+
+## 15. 뜬 뒤에야 알 수 있는 것 셋 — script 가 한 줄씩 찍어 둔다
+
+이 셋은 **submit 시점에 정할 수 없다.** 스키마에 필드가 없고, 값은 어느 host 를 받았는지에
+달렸다. 그래서 규칙은 "요청한다" 가 아니라 "**확인하고 기록한다**" 다.
+
+| 무엇 | 지금 값이 어디서 오나 | script 가 할 일 |
+|---|---|---|
+| 디스크 | operator 전역 `PACSRUN_DISK_GB=200`. job 별로 못 정한다 | `df -h /root` 를 학습 전에 한 줄 찍는다. venv 3개 + 모델 30GB 급이면 200GB 로 충분하다는 것이 09-04 실측이다 |
+| `/dev/shm` | 받은 host 가 정한다. 필드 없음 | `df -h /dev/shm` 를 찍는다. TP4 vLLM 이 요구하므로 작으면 그 사실을 로그에 남기고 tensor parallel 크기를 낮추는 쪽을 사용자에게 알린다 |
+| NCCL P2P | RunPod 일부 host 에서 첫 all-reduce 가 정지한다. 필드 없음 | `NCCL_P2P_DISABLE` 을 **한 곳에서** 정해 두고 되돌릴 수 있게 한다. 정지 자체는 플랫폼이 잡아 exit 21 로 끝낸다 |
+
+```bash
+# 학습 전에, 순서대로. 세 줄 다 로그로 남는 것이 목적이다.
+df -h /root /dev/shm
+nvidia-smi --query-gpu=index,name,memory.total --format=csv
+: "${NCCL_P2P_DISABLE:=0}"; export NCCL_P2P_DISABLE
+echo "NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE"
+```

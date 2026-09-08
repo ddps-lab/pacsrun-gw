@@ -620,22 +620,44 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
             reasons.append(
                 "RunPod cannot be priced: it does not sell spot, so its decider "
                 "refuses before it reads any price")
-        elif per_pod != 1:
-            # WHY THIS REFUSES TO MULTIPLY. Both RunPod prices we hold were paid
-            # for a pod holding ONE card. Charging count x that assumes RunPod
-            # bills linearly per card, which is plausible and unmeasured, and an
-            # unmeasured multiplication is what this module exists to refuse.
-            reasons.append(
-                f"RunPod cannot be priced for {per_pod} cards per pod: both "
-                f"prices we hold were paid for a one-card pod, and we have never "
-                f"rented several at once")
         else:
-            lo = hi = round(gpu.usd_per_hour * pods, 4)
+            # ★ THE MULTIPLICATION BY CARD COUNT IS MEASURED, so it is allowed.
+            # This branch used to refuse any pod holding more than one card, on
+            # the grounds that both prices we held were paid for a one-card pod
+            # and "an unmeasured multiplication is what this module exists to
+            # refuse". That was true when it was written and is not true now:
+            # baseline-c rented 4 x A100-SXM4-80GB on 2026-09-04 and RunPod
+            # billed 4 x $1.59 = $6.36/hr, which over 6.97 h is the $44.28 that
+            # `facts/cost-ledger.md` attributes to that run from RunPod's own
+            # `myself.billing`. RunPod bills PER CARD and the factor is exactly
+            # the card count.
+            #
+            # WHY THE REFUSAL HAD TO GO. script-contract rule 10 says to show
+            # the recommendation AND its cost and let the user answer. On
+            # 2026-09-08 a session was asked to commit to a 21-hour 4-card run
+            # with the cost line reading `unknown` -- a decision with the money
+            # removed from it. Hours stay `unknown` for that job and that is
+            # still the right answer (its vLLM logging -> judge API -> PPO
+            # pipeline is dominated by stretches `row_tokens` does not model;
+            # inventing a figure repeats market-exp2, estimated 9.14 h against
+            # 17.87 h actual). An hourly rate is a published price, not a
+            # guess, so it is answerable even when the hours are not.
+            #
+            # AWS is NOT multiplied this way: it sells whole machines, so the
+            # branch above reads machine prices out of the catalogue instead.
+            cards = per_pod * pods
+            lo = hi = round(gpu.usd_per_hour * cards, 4)
+            shape = (f"{pods} x one {gpu.name}" if per_pod == 1 else
+                     f"{pods} pod(s) x {per_pod} x {gpu.name}")
             options.append(Rate(
                 lo, hi,
-                f"RunPod {pods} x one {gpu.name} on-demand at "
+                f"RunPod {shape} on-demand at "
                 f"${gpu.usd_per_hour:.2f} per card-hour, which is what we paid on "
-                f"{gpu.priced_on}. Vendor prices move.",
+                f"{gpu.priced_on}"
+                + ("" if cards == 1 else
+                   f", x {cards} cards. RunPod bills per card: baseline-c's "
+                   f"4 x A100 was billed 4 x $1.59 = $6.36/hr on 2026-09-04")
+                + ". Vendor prices move.",
                 "runpod", pods))
 
     if not options:

@@ -95,13 +95,33 @@ def test_a_partly_filled_machine_carries_its_own_waste():
     assert rate.usd_per_hour_low == round(1.861 * 6, 4)
 
 
-def test_runpod_refuses_to_multiply_a_price_it_has_only_measured_once():
-    """Both RunPod prices we hold were paid for a pod holding ONE card. Charging
-    count x that assumes linear per-card billing, which is plausible and
-    unmeasured -- and an unmeasured multiplication is the market-exp2 mistake."""
-    rate = e.hourly_rate("L40S", 4, 1, ["runpod"], "on-demand")
-    assert rate.usd_per_hour_low is None
-    assert "one-card pod" in rate.basis
+def test_runpod_multiplies_by_the_card_count_because_that_is_measured():
+    """이 테스트는 2026-09-08 에 반대로 뒤집혔다. 근거가 생겼기 때문이다.
+
+    옛 판은 "one-card pod 로 낸 값을 곱하는 것은 미실측" 이라며 4장 구성을
+    None 으로 답했다. 그런데 baseline-c 가 4 x A100-SXM4-80GB 를
+    `4 x $1.59 = $6.36/hr` 로 청구받았고(2026-09-04, `facts/cost-ledger.md` 의
+    $44.28 귀속과 일치) RunPod 의 과금 단위가 카드라는 것이 실측됐다.
+
+    거부를 유지하는 비용이 그 사이 드러났다: 21시간 4장 job 을 비용 `unknown`
+    으로 결정하게 만든다. **시간은 계속 unknown 이 정답이고**, 시간당 단가는
+    published price 라 답할 수 있다 -- 그 둘은 다른 질문이다.
+    """
+    rate = e.hourly_rate("A100-80GB", 4, 1, ["runpod"], "on-demand")
+    assert rate.usd_per_hour_low == 6.36
+    assert "per card-hour" in rate.basis
+    assert "4 cards" in rate.basis
+
+
+def test_runpod_one_card_is_unchanged():
+    rate = e.hourly_rate("A100-80GB", 1, 1, ["runpod"], "on-demand")
+    assert rate.usd_per_hour_low == 1.59
+
+
+def test_runpod_multiplies_pods_and_cards_together():
+    """2 pods x 4 cards = 8 카드분. pod 마다 자기 machine 을 빌린다."""
+    rate = e.hourly_rate("A100-80GB", 4, 2, ["runpod"], "on-demand")
+    assert rate.usd_per_hour_low == round(1.59 * 8, 4)
 
 
 def test_a_card_with_no_measurement_still_answers_a_rate():

@@ -161,8 +161,17 @@ class SubmitRequest(BaseModel):
     )
     secrets: list[str] = Field(
         default_factory=list,
-        description="Names of secrets to inject. The value never travels through "
-        "this API; the server resolves the name to a Kubernetes Secret.",
+        # DDPSRUN-SECRET-NAMES. Two different names exist and a wrapper header
+        # showed both on 2026-09-04: `GITHUB_PAT (from Secret slm-rca-clone via
+        # spec.env)`. Which one goes here was written down nowhere, so a
+        # submitter had to guess between the variable their script reads and
+        # the Kubernetes object an operator created.
+        description="ENVIRONMENT VARIABLE names to inject — the names your "
+        "script reads, e.g. [\"GITHUB_PAT\"]. NOT the name of a Kubernetes "
+        "Secret: the server maps each one to a Secret and key itself. The "
+        "value never travels through this API, and neither does that internal "
+        "name. Ask `ddpsrun secrets` for the list this deployment accepts; a "
+        "name that is not on it is refused.",
     )
     gpu: GpuRequest | None = Field(
         default=None, description="Omit for a CPU-only job."
@@ -885,8 +894,18 @@ class TrainingFacts(BaseModel):
     )
     resumable: bool = Field(
         default=False,
-        description="Whether the job can restart from a checkpoint. It changes "
-        "whether losing the machine costs the whole run.",
+        # This is a CLAIM the caller makes about their own script, and nothing
+        # in PACSrun acts on it: it only changes whether spot is defensible in
+        # the advice. Said plainly here because a reader took it for a feature
+        # on 2026-09-08 and planned a 21-hour run around it.
+        description="A CLAIM ABOUT YOUR SCRIPT, not a feature the tool "
+        "provides. Nothing here saves or restores anything: after a Recovering "
+        "the container starts EMPTY and your script has to find its own "
+        "checkpoint and continue. What does survive is the result path — the "
+        "server writes `spec.resultPath` once from the job id and recovery "
+        "reuses the same PacsJob, so a script may rely on that path being the "
+        "same after a restart. Setting this true only tells the advice that "
+        "losing the machine does not cost the whole run.",
     )
 
 

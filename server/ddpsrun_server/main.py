@@ -745,7 +745,8 @@ def estimate_route(body: JudgementRequest, principal: PrincipalDep) -> EstimateR
 
 
 @app.post("/v1/validate", response_model=ValidateResponse)
-def validate_route(body: JudgementRequest, principal: PrincipalDep) -> ValidateResponse:
+def validate_route(body: JudgementRequest, request: Request,
+                   principal: PrincipalDep) -> ValidateResponse:
     """Check a job without running it.
 
     Args:
@@ -780,6 +781,12 @@ def validate_route(body: JudgementRequest, principal: PrincipalDep) -> ValidateR
         # the mode. Both go in together.
         vendors=body.vendors,
         placement_mode=body.placement_mode,
+        # DDPSRUN-SECRET-NAMES. `to_pacsjob` refuses a word the deployment does
+        # not hold, and until 2026-09-08 validate did not look at these at all
+        # -- so the only way to learn a wrong name was a submit. Both go in
+        # together: names without the bindings would make every name look wrong.
+        secrets=body.secrets,
+        known_secrets=dict(request.app.state.settings.secret_bindings),
     )
     return ValidateResponse(
         ok=result.ok,

@@ -275,3 +275,118 @@ def test_the_findings_reach_the_aggregator():
         vendors=["nebius"], placement_mode="ordered",
     )
     assert "vendor-cannot-run" in [f.code for f in result.findings]
+
+
+# ---------------------------------------------------------- E2E 1회차(2026-09-08)
+# 아래 네 뭉치는 slm-rca 세션이 실제로 부딪힌 결함이다. 판정 전문은
+# skypilot 루트의 `E2E-FINDINGS-2026-09-08.md`.
+
+
+def test_a_secret_name_the_deployment_does_not_hold_is_blocking():
+    """DDPSRUN-SECRET-NAMES. 없는 이름은 submit 이 거부하므로 여기서 error 다.
+
+    그 세션은 `secrets: ["GITHUB_PAT"]` 로 validate 를 통과했고(EXIT=0),
+    submit 에서야 거부를 봤다. 검사가 볼 수 있는 것을 안 봤다는 뜻이다.
+    """
+    result = v.validate(
+        env={}, script=None, cap=None, vram_gb=None, job_estimate=KNOWN,
+        secrets=["GITHUB_PAT"], known_secrets={},
+    )
+    finding = [f for f in result.findings if f.code == "secret-name-unknown"]
+    assert len(finding) == 1
+    assert finding[0].level == v.ERROR
+    assert "GITHUB_PAT" in finding[0].message
+    assert result.ok is False
+
+
+def test_a_secret_name_the_deployment_holds_is_silent():
+    result = v.validate(
+        env={}, script=None, cap=None, vram_gb=None, job_estimate=KNOWN,
+        secrets=["GITHUB_PAT"], known_secrets={"GITHUB_PAT": object()},
+    )
+    assert "secret-name-unknown" not in {f.code for f in result.findings}
+
+
+def test_secret_names_are_not_judged_without_the_bindings():
+    """known_secrets 를 못 주는 caller 는 검사를 아예 안 돌린다.
+
+    둘 중 하나만 주면 모든 이름이 없는 이름으로 보이고, 그것은 검사가 아니라
+    거짓말이다.
+    """
+    result = v.validate(
+        env={}, script=None, cap=None, vram_gb=None, job_estimate=KNOWN,
+        secrets=["GITHUB_PAT"],
+    )
+    assert "secret-name-unknown" not in {f.code for f in result.findings}
+
+
+def test_runpod_only_job_is_not_judged_against_the_aws_catalogue():
+    """A100 은 AWS 가 8장 machine 으로만 파는데, 그 사실이 RunPod job 과 무관하다."""
+    aws_shaped = v.check_gpu_is_buyable("A100-80GB", 1, "on-demand", 1, None, [])
+    runpod_only = v.check_gpu_is_buyable("A100-80GB", 1, "on-demand", 1, None, ["runpod"])
+    assert "gpu-count-unfillable" in {f.code for f in aws_shaped}
+    assert "gpu-count-unfillable" not in {f.code for f in runpod_only}
+
+
+def test_naming_aws_explicitly_keeps_the_size_check():
+    named = v.check_gpu_is_buyable("A100-80GB", 1, "on-demand", 1, None, ["aws", "runpod"])
+    assert "gpu-count-unfillable" in {f.code for f in named}
+
+
+def test_spot_without_aws_has_no_vendor_left():
+    """spot + vendors=[runpod] 는 힌트가 아니라 모순이다. RunPod 은 spot 을 안 판다."""
+    result = v.check_gpu_is_buyable("A100-80GB", 1, "spot", 1, None, ["runpod"])
+    finding = [f for f in result if f.code == "spot-has-no-vendor"]
+    assert len(finding) == 1
+    assert finding[0].level == v.ERROR
+    assert "spot-excludes-runpod" not in {f.code for f in result}
+
+
+def test_a_ppo_script_is_not_told_to_patch_the_dpo_trainer():
+    """DDPSRUN-TRAINER. patch 는 `trl.trainer.dpo_trainer` 를 고친다."""
+    script = "python -m trl.trainer.ppo --max-len 2048 --max-prompt-len 1024"
+    result = v.check_memory(2048, 40, alloc_on=True, patch_on=False,
+                            trainer=v.trainer_in(script))
+    codes = {f.code for f in result}
+    assert "trl-patch-missing" not in codes
+    info = [f for f in result if f.code == "trl-patch-not-applicable"]
+    assert len(info) == 1
+    assert info[0].level == v.INFO
+    assert "PPO" in info[0].message
+
+
+def test_a_dpo_script_still_gets_the_patch_warning():
+    script = "python -m trl.trainer.dpo --max-len 2048"
+    result = v.check_memory(2048, 40, alloc_on=True, patch_on=False,
+                            trainer=v.trainer_in(script))
+    assert "trl-patch-missing" in {f.code for f in result}
+
+
+def test_an_unknown_trainer_still_gets_the_patch_warning():
+    """trainer 를 못 읽으면 DPO 로 가정한다 -- 경고를 지우는 쪽이 더 위험하다."""
+    result = v.check_memory(2048, 40, alloc_on=True, patch_on=False, trainer=None)
+    assert "trl-patch-missing" in {f.code for f in result}
+
+
+def test_a_second_aws_identity_is_named_before_the_run_starts():
+    """DDPSRUN-AWS-COLLISION. Bedrock judge 와 결과 upload 가 같은 세 이름을 쓴다."""
+    result = v.check_aws_credential_collision(
+        {"JUDGE_AWS_ACCESS_KEY_ID": "AKIA..."}, [], None)
+    assert len(result) == 1
+    assert result[0].code == "aws-credential-collision"
+    assert "AWS_SESSION_TOKEN" in result[0].message
+
+
+def test_overwriting_the_result_credentials_is_named():
+    result = v.check_aws_credential_collision({"AWS_ACCESS_KEY_ID": "AKIA..."}, [], None)
+    assert result and result[0].code == "aws-credential-collision"
+
+
+def test_an_export_inside_the_script_is_named_too():
+    result = v.check_aws_credential_collision(
+        {}, [], "export AWS_SECRET_ACCESS_KEY=$SOMETHING\npython train.py")
+    assert result and result[0].code == "aws-credential-collision"
+
+
+def test_a_job_with_no_aws_identity_of_its_own_is_silent():
+    assert v.check_aws_credential_collision({"HF_TOKEN": "x"}, ["GITHUB_PAT"], "python x.py") == []
