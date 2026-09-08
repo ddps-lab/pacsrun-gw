@@ -149,6 +149,19 @@ jobs:
           print(json.dumps({"api_base": os.environ["API_BASE"].rstrip("/")}, indent=2))
           PYEOF
           cat ui/config.json
+          # DDPSRUN-UI-VERSIONED-ASSETS. index.html is uploaded with
+          # cache-control no-cache, so a browser revalidates it every load and
+          # always gets the newest one — but app.js and style.css keep the same
+          # URL forever, and a copy cached BEFORE the no-cache header existed
+          # is served from disk with no request at all. On 2026-09-08 that had a
+          # reader pressing a Sign out button whose handler was in a newer file
+          # they had never fetched. Stamping the commit into the query makes
+          # each deploy a different URL, so the always-fresh index.html can
+          # never point at a stale script.
+          V="${GITHUB_SHA::12}"
+          sed -i "s|src=\"app.js\"|src=\"app.js?v=$V\"|" ui/index.html
+          sed -i "s|href=\"style.css\"|href=\"style.css?v=$V\"|" ui/index.html
+          grep -E 'app\.js|style\.css' ui/index.html
           # --delete so a file removed from the repo disappears from the bucket
           # too; otherwise a deleted page keeps being served forever.
           #

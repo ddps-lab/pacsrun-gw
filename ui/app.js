@@ -2000,6 +2000,7 @@ async function refreshIfExpired() {
    terraform/cognito's logout_urls character for character. */
 function signOut() {
   poll.stop();
+  $("newcomer").hidden = true;
   Object.keys(localStorage)
     .filter((k) => k.startsWith("ddpsrun."))
     .forEach((k) => localStorage.removeItem(k));
@@ -2022,6 +2023,13 @@ function signOut() {
 }
 
 function showApp(on) {
+  // The newcomer card is switched OFF here and turned on only by
+  // showNewcomer(). It used to be left alone, and that is what made Sign out
+  // look broken (2026-09-08): signOut cleared the tokens and called
+  // showApp(false), the login card came back UNDERNEATH a newcomer card that
+  // nothing had hidden, and the reader saw the same "Signed in as ..." screen
+  // and concluded the button had not worked.
+  $("newcomer").hidden = true;
   $("login").hidden = on;
   $("bar").hidden = !on;
   document.querySelector("main").hidden = !on;
