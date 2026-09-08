@@ -257,12 +257,40 @@ def build_parser() -> argparse.ArgumentParser:
     add_json_flag(submit)
 
     sub.add_parser(
-        "secrets", help="which secret names this deployment accepts",
+        "secrets", help="which secret names you can use",
         description="`secrets: [NAME]` on a submit request is a word that opens "
         "the server's vault, not a field you fill with a value. This prints the "
-        "words that work. Values are never shown and cannot be set from here: "
-        "an operator stores them in the cluster.",
+        "words that work: the deployment's own, plus whatever your namespace "
+        "registered with `secret set`. Values are never shown by any command.",
     )
+
+    # DDPSRUN-USER-SECRET. Registering a value for your own namespace.
+    secret_set = sub.add_parser(
+        "secret-set", help="store a value in your namespace under a name",
+        description="Store one value so your jobs can ask for it by name. It is "
+        "kept in a Kubernetes Secret in YOUR namespace; jobs elsewhere cannot "
+        "name it, and no command ever prints it back.\n\n"
+        "★ THE VALUE IS NEVER AN ARGUMENT. It comes from a file or from stdin, "
+        "because anything on a command line is in your shell history, in `ps` "
+        "output for every user on the machine, and in any terminal recording.",
+    )
+    secret_set.add_argument(
+        "name", help="the environment variable name your script reads, e.g. HF_TOKEN"
+    )
+    secret_set.add_argument(
+        "--from-file", metavar="PATH",
+        help="read the value from this file. Use - for stdin, which is also the "
+        "default when this is omitted.",
+    )
+
+    secret_rm = sub.add_parser(
+        "secret-rm", help="forget a name your namespace registered",
+        description="Remove one registered value. Do this the moment a "
+        "credential leaks: until it is gone, every job in the namespace can "
+        "still ask for it. An operator's deployment-wide binding cannot be "
+        "removed from here.",
+    )
+    secret_rm.add_argument("name")
 
     status = sub.add_parser("status", help="how a job is doing")
     status.add_argument("job_id")
@@ -763,13 +791,71 @@ def cmd_shell(args: argparse.Namespace) -> int:
 
 
 def cmd_secrets(args: argparse.Namespace) -> int:
-    """Print the secret names this deployment accepts."""
+    """Print the secret names this caller can use, saying which are their own."""
     answer = client_from_config().secrets()
     names = answer.get("names") or []
+    own = set(answer.get("own") or [])
     for name in names:
-        print(name)
+        # Marking them matters: only the second kind can be changed from here,
+        # and only the second kind is invisible to the rest of the lab.
+        print(f"{name}  (yours)" if name in own else f"{name}  (deployment)")
     if answer.get("note"):
         print(f"\n{answer['note']}")
+    return EXIT_OK
+
+
+def cmd_secret_set(args: argparse.Namespace) -> int:
+    """Store one value under one name, for this caller's own namespace.
+
+    THE VALUE IS READ FROM A FILE OR STDIN AND NEVER FROM argv. A secret on a
+    command line is in the shell's history file, in `ps` output for every other
+    user on the machine, and in any terminal recording of the session -- three
+    copies nobody meant to make, in places nobody thinks to clear.
+
+    Returns:
+        EXIT_OK, or EXIT_USAGE when the file could not be read or is empty.
+    """
+    source = args.from_file or "-"
+    if source == "-":
+        if sys.stdin.isatty():
+            # A bare `ddpsrun secret-set NAME` on a terminal would sit there
+            # looking hung. Say what it is waiting for.
+            print(
+                f"reading the value for {args.name} from stdin. Paste it and press "
+                f"Ctrl-D, or re-run with --from-file PATH.",
+                file=sys.stderr,
+            )
+        value = sys.stdin.read()
+    else:
+        try:
+            with open(source, encoding="utf-8") as handle:
+                value = handle.read()
+        except OSError as exc:
+            print(f"cannot read {source}: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+    # A trailing newline is what `echo` and every editor add, and it is not part
+    # of a token -- a newline inside an Authorization header is a 400 from the
+    # far end, an hour into a job. Only the trailing whitespace goes; anything
+    # else could be part of a private key or a JSON blob.
+    value = value.rstrip("\r\n")
+    if not value:
+        print(
+            f"nothing to store: the value for {args.name} is empty.", file=sys.stderr
+        )
+        return EXIT_USAGE
+
+    answer = client_from_config().put_secret(args.name, value)
+    where = answer.get("namespace", "your namespace")
+    what = "stored" if answer.get("created") else "replaced"
+    print(f"{what} {answer.get('name', args.name)} in {where}.")
+    print(f"a job can now ask for it with `--secret {args.name}`.")
+    return EXIT_OK
+
+
+def cmd_secret_rm(args: argparse.Namespace) -> int:
+    """Forget one registered name."""
+    client_from_config().delete_secret(args.name)
+    print(f"{args.name} is no longer registered. Jobs asking for it are refused.")
     return EXIT_OK
 
 
@@ -942,6 +1028,8 @@ COMMANDS = {
     "validate": cmd_validate,
     "submit": cmd_submit,
     "secrets": cmd_secrets,
+    "secret-set": cmd_secret_set,
+    "secret-rm": cmd_secret_rm,
     "shell": cmd_shell,
     "status": cmd_status,
     "watch": cmd_watch,

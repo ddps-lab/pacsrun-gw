@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from . import naming
 from .auth import Principal
-from .config import PACSJOB_GROUP, PACSJOB_VERSION, Settings
+from .config import PACSJOB_GROUP, PACSJOB_VERSION, USER_SECRET_NAME, Settings
 from .stats import job_cost, job_hours
 
 # DDPSRUN-SCRIPT-SIZE. How long a `script` may be, and why there is a number at
@@ -483,11 +483,70 @@ class SecretsResponse(BaseModel):
 
     names: list[str] = Field(
         default_factory=list,
-        description="The words a job may put in `secrets`, e.g. [\"GITHUB_PAT\"].",
+        description="Every word a job may put in `secrets`, e.g. [\"GITHUB_PAT\"] "
+        "— the operator's bindings and your namespace's own registrations "
+        "together, because what a submitter needs is the list that works.",
+    )
+    own: list[str] = Field(
+        default_factory=list,
+        description="Which of `names` your namespace registered itself, through "
+        "`ddpsrun secret set`. You can replace or remove these; the rest belong "
+        "to the deployment and only an operator changes them.",
     )
     note: str = Field(
         default="",
         description="Why the list is empty when it is, and what to do about it.",
+    )
+
+
+# DDPSRUN-USER-SECRET. An environment variable name, which is also the key this
+# value gets inside the namespace's Secret. Deliberately narrower than what
+# either side accepts: POSIX says a name is letters, digits and underscore and
+# must not start with a digit, and shells only export the upper-case form
+# reliably. Kubernetes would accept `my.token` as a key and `export my.token`
+# is not a thing, so the narrow rule is the honest one.
+SECRET_NAME_PATTERN = r"^[A-Z][A-Z0-9_]*$"
+
+# One value's ceiling. A whole Secret is capped at 1 MiB by the API server and
+# this is one key among several, so the per-value limit has to be well under
+# that. 64 KiB holds any token, any private key, and any kubeconfig, and stops
+# somebody using the vault as a file store.
+SECRET_VALUE_MAX_CHARS = 64 * 1024
+
+
+class SecretPutRequest(BaseModel):
+    """The body of `PUT /v1/secrets/{name}`: one value, and nothing else.
+
+    ★ `value` CARRIES NO FIELD CONSTRAINTS AND THAT IS DELIBERATE. A pydantic
+    failure answers 422 with the offending input echoed back in
+    `detail[].input` — which for this one field would be the secret itself. The
+    length check therefore lives in the route, which raises our own message and
+    never repeats what it was given. The name is in the URL for the same
+    reason: a body holding only the value cannot have a name error echo it.
+
+    WHY THE NAME IS NOT IN HERE. `PUT /v1/secrets/{name}` is idempotent by
+    shape -- the same call twice leaves the same state -- which is what
+    "register this value under this name" actually is.
+    """
+
+    value: str = Field(
+        description="The secret. Sent once, stored in a Kubernetes Secret in "
+        "your namespace, and never returned by any route: `GET /v1/secrets` "
+        "answers names only. Max 64 KiB.",
+    )
+
+
+class SecretPutResponse(BaseModel):
+    """What `PUT /v1/secrets/{name}` answers. No value, by construction."""
+
+    name: str = Field(description="The name you can now put in `secrets`.")
+    namespace: str = Field(
+        description="Where it was stored. Only jobs in this namespace can use it."
+    )
+    created: bool = Field(
+        description="True when this was the first value registered in this "
+        "namespace, false when a name was added to or replaced in the existing "
+        "set. Says which of 'I added one' and 'I overwrote one' happened."
     )
 
 
@@ -674,6 +733,7 @@ def to_pacsjob(
     settings: Settings,
     job_id: str,
     capacity_type: str | None = None,
+    own_secrets: set[str] | frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Turn a submit request into the PacsJob object to create.
 
@@ -708,6 +768,12 @@ def to_pacsjob(
         capacity_type: "on-demand" or "spot". None writes no placement at all,
             which is stage 1's behaviour and is what the tests for the identity
             fields still exercise.
+        own_secrets: the names this namespace registered itself, from
+            `Cluster.user_secret_names`. DDPSRUN-USER-SECRET. Passed in rather
+            than read here because this function makes no cluster calls -- it
+            is pure, which is what lets every test of it run without a server.
+            None means "not looked up", and then only the operator's bindings
+            can satisfy a name.
 
     Returns:
         A dict ready to POST to the Kubernetes API.
@@ -719,24 +785,37 @@ def to_pacsjob(
         {"name": key, "value": value} for key, value in sorted(request.env.items())
     ]
 
+    registered = set(own_secrets or ())
     for secret_name in sorted(set(request.secrets)):
         binding = settings.secret_bindings.get(secret_name)
-        if binding is None:
-            allowed = ", ".join(sorted(settings.secret_bindings)) or "(none configured)"
+        if binding is not None:
+            # The operator's binding, which points at a Secret and key somebody
+            # else created for somebody else's reasons.
+            #
+            # THE OPERATOR WINS when both exist, and `PUT /v1/secrets/{name}`
+            # refuses such a name for exactly this reason: a user whose value
+            # was silently ignored in favour of a deployment-wide one would
+            # debug the wrong thing for as long as it took to give up.
+            source: dict[str, str] = {
+                "name": binding.secret_name, "key": binding.secret_key
+            }
+        elif secret_name in registered:
+            # DDPSRUN-USER-SECRET. Registered in this namespace through
+            # `PUT /v1/secrets/{name}`, so the Secret's name is fixed and the
+            # key is the environment variable name itself.
+            source = {"name": USER_SECRET_NAME, "key": secret_name}
+        else:
+            allowed = ", ".join(sorted(set(settings.secret_bindings) | registered))
             raise ValueError(
-                f"there is no secret called {secret_name!r}. Available: {allowed}"
+                f"there is no secret called {secret_name!r}. Available: "
+                f"{allowed or '(none)'}. Register one of your own with "
+                f"`ddpsrun secret set {secret_name}`, which stores it in your "
+                f"namespace and never puts the value in this job's spec."
             )
         # secretKeyRef and never a literal: the CRD's own description explains
         # that a literal here leaks through `kubectl get -o yaml`, events,
         # controller logs, backups and audit logs.
-        env_entries.append(
-            {
-                "name": secret_name,
-                "valueFrom": {
-                    "secretKeyRef": {"name": binding.secret_name, "key": binding.secret_key}
-                },
-            }
-        )
+        env_entries.append({"name": secret_name, "valueFrom": {"secretKeyRef": source}})
 
     resources: dict[str, Any] = {}
     if request.cpus:

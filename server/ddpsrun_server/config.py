@@ -33,6 +33,15 @@ PACSJOB_GROUP = "pacsrun.io"
 PACSJOB_VERSION = "v1alpha1"
 PACSJOB_PLURAL = "pacsjobs"
 
+# DDPSRUN-USER-SECRET. The ONE Kubernetes Secret per namespace that holds every
+# value that namespace's members registered through `PUT /v1/secrets/{name}`,
+# one key per environment variable name. Lives here rather than in `k8s.py`
+# because `models.to_pacsjob` writes a secretKeyRef at it and must not have to
+# import the Kubernetes SDK to know the name. Why one object and why this shape
+# is argued at the constant's other reader, `k8s.py`, and in
+# `config/deploy/rbac.yaml`.
+USER_SECRET_NAME = "ddpsrun-user-secrets"
+
 # The label PACSrun's controller puts on every pod it creates for a job, so we
 # can find the pod whose logs a user asked for.
 # Source: `internal/controller/pacsjob_controller.go:59` (`jobLabelKey`) and

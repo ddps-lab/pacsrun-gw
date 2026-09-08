@@ -82,6 +82,10 @@ from .models import (
     JobSpecResponse,
     JobView,
     NamespacesResponse,
+    SECRET_NAME_PATTERN,
+    SECRET_VALUE_MAX_CHARS,
+    SecretPutRequest,
+    SecretPutResponse,
     SecretsResponse,
     GpuSampleView,
     JudgementRequest,
@@ -331,8 +335,21 @@ def namespace_for(principal: Principal, requested: str) -> str:
 
 # The one description all seven ?namespace= parameters share, so the OpenAPI
 # page says the same thing everywhere instead of drifting into variants.
+# ★ `alias` IS LOAD-BEARING AND IS WHY THIS SHARED OBJECT IS SAFE TO SHARE.
+# One `Query()` instance is reused by every route that takes a namespace, and
+# FastAPI fills in `alias` from the PARAMETER NAME when the alias is unset --
+# on the shared instance. So the first route to bind it decides the query-string
+# key for ALL of them. On 2026-09-08 a new route took it as `namespace_query`
+# and every other route silently started looking for `?namespace_query=`:
+# `GET /v1/jobs?namespace=lab-bob` stopped seeing the parameter, fell back to
+# the caller's own namespace, and answered 200 where it had answered 403.
+# Namespace isolation was gone on every route at once, from a parameter NAME.
+# `test_asking_for_another_namespace_without_admin_is_refused` caught it.
+# Naming the alias here pins the key to `namespace` whatever a route calls its
+# parameter, so the mistake cannot be made again.
 NAMESPACE_QUERY = Query(
     default="",
+    alias="namespace",
     description="Read this namespace instead of your own. Honoured only for an "
     "operator account (admin in the token file); anyone else gets 403.",
 )
@@ -786,7 +803,17 @@ def validate_route(body: JudgementRequest, request: Request,
         # -- so the only way to learn a wrong name was a submit. Both go in
         # together: names without the bindings would make every name look wrong.
         secrets=body.secrets,
-        known_secrets=dict(request.app.state.settings.secret_bindings),
+        # Both sources, because `secret-name-unknown` must not fire on a name
+        # this namespace registered for itself. Only asked for when the request
+        # names a secret, so validate stays a no-cluster-call route otherwise.
+        known_secrets={
+            **request.app.state.settings.secret_bindings,
+            **{
+                n: "registered in this namespace"
+                for n in (_own_secret_names(request, principal.namespace)
+                          if body.secrets else [])
+            },
+        },
     )
     return ValidateResponse(
         ok=result.ok,
@@ -904,7 +931,17 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
         )
     capacity_type = body.capacity_type
     try:
-        obj = to_pacsjob(body, principal, settings, job_id, capacity_type)
+        # DDPSRUN-USER-SECRET. Looked up ONLY when the request names a secret,
+        # so an ordinary submit costs no extra cluster call. `to_pacsjob` is
+        # pure and cannot read the cluster itself, so the names come in as an
+        # argument; without them a name this namespace registered would be
+        # refused as unknown.
+        own = (
+            frozenset(_own_secret_names(request, principal.namespace))
+            if body.secrets else frozenset()
+        )
+        obj = to_pacsjob(body, principal, settings, job_id, capacity_type,
+                         own_secrets=own)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -945,7 +982,11 @@ FINISHED_PHASES = frozenset({"Succeeded", "Failed", "Compared"})
 
 
 @app.get("/v1/secrets", response_model=SecretsResponse)
-def secrets_route(request: Request, principal: PrincipalDep) -> SecretsResponse:
+def secrets_route(
+    request: Request,
+    principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
+) -> SecretsResponse:
     """Which names a job may put in `secrets` — the names only.
 
     DDPSRUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` is not a field a submitter
@@ -974,17 +1015,186 @@ def secrets_route(request: Request, principal: PrincipalDep) -> SecretsResponse:
     """
     settings: Settings = request.app.state.settings
     bindings = settings.secret_bindings
-    return SecretsResponse(
-        names=sorted(bindings),
-        note=(
-            ""
-            if bindings
-            else "no secret is stored for this deployment yet, so a job asking "
-            "for one is refused. An operator adds it in two places: the "
-            "Kubernetes Secret that holds the value, and this server's "
-            "DDPSRUN_SECRET_BINDINGS. Values never travel through this API."
-        ),
-    )
+    namespace = namespace_for(principal, namespace)
+    # DDPSRUN-USER-SECRET. Two sources answer this question and a submitter does
+    # not care which: the deployment's own bindings, and whatever this namespace
+    # registered for itself. `own` says which is which, because only the second
+    # kind can be changed from here.
+    own = _own_secret_names(request, namespace)
+    names = sorted(set(bindings) | set(own))
+    if names:
+        note = ""
+    else:
+        note = (
+            "nothing is registered for this namespace yet, so a job asking for "
+            "a secret is refused. Register your own with `ddpsrun secret set "
+            "<NAME>` — it is stored in your namespace and only jobs there can "
+            "read it. A value shared by the whole deployment is an operator's "
+            "job instead (DDPSRUN_SECRET_BINDINGS). Values are never returned "
+            "by this API."
+        )
+    return SecretsResponse(names=names, own=own, note=note)
+
+
+def _own_secret_names(request: Request, namespace: str) -> list[str]:
+    """The names this namespace registered, or an empty list when it cannot say.
+
+    WHY A 403 IS SWALLOWED HERE AND NOWHERE ELSE. Registering values is opt-in
+    per namespace: the `ddpsrun-gw-secrets` RoleBinding is a separate onboarding
+    step (`config/deploy/rbac.yaml`), and a namespace without it must still get
+    an answer from this route — the operator's bindings are perfectly usable
+    there. Turning that into a 502 would make the LIST route fail for a
+    deployment that simply has not enabled the WRITE route, which reads as "the
+    server is broken" instead of "this is not switched on for you". The write
+    route does not swallow it: there, the 403 IS the answer.
+    """
+    try:
+        return request.app.state.cluster.user_secret_names(namespace)
+    except ClusterError:
+        return []
+
+
+@app.put("/v1/secrets/{name}", response_model=SecretPutResponse)
+def put_secret(
+    name: str,
+    body: SecretPutRequest,
+    request: Request,
+    principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
+) -> SecretPutResponse:
+    """Register one value under one name, for jobs in your own namespace.
+
+    DDPSRUN-USER-SECRET. ★ THIS IS THE ONE ROUTE WHERE A SECRET VALUE CROSSES
+    THIS API, and every other part of the design says values do not. The reason
+    the exception is worth it: before this existed, using a credential in a job
+    meant asking an operator to edit `terraform.tfvars` and run `terraform
+    apply`, so a researcher who needed their own HuggingFace token could not
+    submit at all until somebody else's working day. What the exception costs is
+    written down rather than glossed:
+
+      the value passes through this process   in memory, for the length of one
+                                              request. It is not logged, not
+                                              echoed, and not stored here.
+      TLS ends at the Function URL            AWS terminates it; the hop to
+                                              kube-apiserver is TLS again.
+      a Kubernetes Secret is base64, not      anyone with `get secrets` in that
+      encryption                              namespace can read it. That is the
+                                              same exposure the operator's own
+                                              bindings have always had.
+      this server cannot read it back         the Role grants `get` on this one
+                                              Secret, so `GET /v1/secrets`
+                                              lists names -- and no route
+                                              returns a value.
+
+    SCOPED TO ONE NAMESPACE, which is the whole point. `namespace_for` gives a
+    non-admin their own and 403s any other, and the RBAC underneath is a Role
+    bound per namespace rather than the cluster-wide ClusterRoleBinding the
+    other verbs use -- so even a bug here cannot write a Secret into
+    kube-system. Jobs in another namespace cannot name what you registered.
+
+    Args:
+        name: the environment variable name your script reads, e.g. `HF_TOKEN`.
+            Upper case, digits and underscore. It is also the key inside the
+            namespace's Secret, so nothing has to map one to the other.
+        body: `{"value": "..."}`. Max 64 KiB.
+
+    Returns:
+        A `SecretPutResponse`. Never the value.
+
+    Raises:
+        HTTPException: 400 for a name that is not a legal environment variable
+            name or a value that is empty or too long; 409 for a name the
+            deployment already binds (the operator's would win at submit time,
+            so storing yours would be storing something that never gets used);
+            502 when the cluster refused -- a 403 underneath means this
+            namespace has no `ddpsrun-gw-secrets` RoleBinding yet.
+    """
+    settings: Settings = request.app.state.settings
+    namespace = namespace_for(principal, namespace)
+
+    if not re.match(SECRET_NAME_PATTERN, name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{name!r} is not usable as an environment variable name. Use "
+                f"upper-case letters, digits and underscore, starting with a "
+                f"letter — the name your script reads, e.g. HF_TOKEN."
+            ),
+        )
+    # The length check is HERE and not a pydantic constraint on the field: a
+    # pydantic failure answers 422 with the offending input echoed in
+    # `detail[].input`, and for this field that input is the secret.
+    if not body.value:
+        raise HTTPException(
+            status_code=400,
+            detail="the value is empty. To remove a name, use DELETE instead.",
+        )
+    if len(body.value) > SECRET_VALUE_MAX_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"the value is {len(body.value):,} characters and the limit is "
+                f"{SECRET_VALUE_MAX_CHARS:,}. A whole Kubernetes Secret is "
+                f"capped at 1 MiB and this is one key among several."
+            ),
+        )
+    if name in settings.secret_bindings:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{name} is already bound by this deployment, and a binding "
+                f"wins over a namespace's own value when a job asks for the "
+                f"name. Storing yours here would store something no job would "
+                f"ever read. Pick a different name, or ask an operator to "
+                f"change the binding."
+            ),
+        )
+
+    try:
+        created = request.app.state.cluster.put_user_secret(namespace, name, body.value)
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return SecretPutResponse(name=name, namespace=namespace, created=created)
+
+
+@app.delete("/v1/secrets/{name}", status_code=204)
+def delete_secret(
+    name: str,
+    request: Request,
+    principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
+) -> None:
+    """Forget one registered name in your namespace.
+
+    The other half of registering. A value put in by mistake, or one that has
+    leaked, would otherwise stay readable by every job in the namespace for as
+    long as the namespace exists.
+
+    Raises:
+        HTTPException: 404 when that name is not registered here (an operator
+            binding is not registered HERE either, and cannot be removed from
+            this route); 502 when the cluster refused.
+    """
+    settings: Settings = request.app.state.settings
+    namespace = namespace_for(principal, namespace)
+    if name in settings.secret_bindings:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"{name} is a binding this deployment holds, not something your "
+                f"namespace registered, so there is nothing here to remove. "
+                f"Only an operator changes a binding."
+            ),
+        )
+    try:
+        request.app.state.cluster.delete_user_secret(namespace, name)
+    except NotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{name} is not registered in {namespace}.",
+        ) from exc
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/v1/namespaces", response_model=NamespacesResponse)

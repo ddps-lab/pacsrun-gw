@@ -40,6 +40,10 @@ class FakeClient:
         self.metrics_result = {"window_seconds": 3600, "gpu_series": [], "note": ""}
         self.stats_result = {"team": "", "members": [], "jobs": 0, "gpu_hours": 0.0,
                              "cost_usd": 0.0, "unpriced_jobs": 0, "note": ""}
+        self.secrets_result = {"names": ["GITHUB_PAT", "HF_TOKEN"],
+                               "own": ["HF_TOKEN"], "note": ""}
+        self.put_secrets: list[tuple[str, str]] = []
+        self.deleted_secrets: list[str] = []
 
     def estimate(self, body):
         return self.estimate_result
@@ -75,6 +79,16 @@ class FakeClient:
 
     def explain(self):
         return "ddpsrun — submit a batch job.\n"
+
+    def secrets(self):
+        return self.secrets_result
+
+    def put_secret(self, name, value):
+        self.put_secrets.append((name, value))
+        return {"name": name, "namespace": "lab-alice", "created": True}
+
+    def delete_secret(self, name):
+        self.deleted_secrets.append(name)
 
     def schema(self):
         return {"properties": {"name": {}}}
@@ -684,3 +698,58 @@ def test_there_is_a_version_flag_at_all(capsys):
         cli.main(["--version"])
     assert exited.value.code == 0
     assert capsys.readouterr().out.strip() == f"ddpsrun {ddpsrun.__version__}"
+
+
+# ------------------------------------------------- DDPSRUN-USER-SECRET
+
+
+def test_the_value_is_read_from_a_file_and_never_from_argv(fake, tmp_path, capsys):
+    """★ 이 테스트가 이 명령의 존재 이유다.
+
+    command line 에 있는 값은 shell history 파일, 그 machine 의 모든 사용자가 보는
+    `ps` 출력, 그리고 터미널 녹화에 남는다. 아무도 만들 의도가 없었던 사본 셋이고
+    아무도 지울 생각을 안 하는 자리다. 그래서 값을 받는 인자가 아예 없다.
+    """
+    token = tmp_path / "t.txt"
+    token.write_text("hf_abc123\n")          # echo 와 모든 편집기가 붙이는 개행
+    assert run(["secret-set", "HF_TOKEN", "--from-file", str(token)]) == 0
+    assert fake.put_secrets == [("HF_TOKEN", "hf_abc123")], "끝의 개행은 떼고 보낸다"
+    out = capsys.readouterr().out
+    assert "hf_abc123" not in out, "성공 문구가 값을 되풀이하면 그것도 사본이다"
+    assert "--secret HF_TOKEN" in out
+
+    # 그리고 값을 인자로 받는 길이 없다.
+    with pytest.raises(SystemExit):
+        run(["secret-set", "HF_TOKEN", "hf_abc123"])
+
+
+def test_the_value_can_come_from_stdin(fake, monkeypatch):
+    import io as _io
+    monkeypatch.setattr(cli.sys, "stdin", _io.StringIO("rpa_xyz\n"))
+    assert run(["secret-set", "RUNPOD_KEY"]) == 0
+    assert fake.put_secrets == [("RUNPOD_KEY", "rpa_xyz")]
+
+
+def test_an_empty_value_stores_nothing(fake, monkeypatch):
+    import io as _io
+    monkeypatch.setattr(cli.sys, "stdin", _io.StringIO("\n"))
+    assert run(["secret-set", "HF_TOKEN"]) == cli.EXIT_USAGE
+    assert fake.put_secrets == []
+
+
+def test_a_missing_file_stores_nothing(fake):
+    assert run(["secret-set", "HF_TOKEN", "--from-file", "/nope/nothing"]) == cli.EXIT_USAGE
+    assert fake.put_secrets == []
+
+
+def test_the_list_says_which_names_are_yours(fake, capsys):
+    assert run(["secrets"]) == 0
+    out = capsys.readouterr().out
+    assert "GITHUB_PAT  (deployment)" in out
+    assert "HF_TOKEN  (yours)" in out
+
+
+def test_removing_one_names_what_it_means(fake, capsys):
+    assert run(["secret-rm", "HF_TOKEN"]) == 0
+    assert fake.deleted_secrets == ["HF_TOKEN"]
+    assert "refused" in capsys.readouterr().out

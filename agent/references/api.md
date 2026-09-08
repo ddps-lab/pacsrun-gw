@@ -36,6 +36,8 @@ Authorization: Bearer <your token>
 | GET | `/v1/schema` | Return the JSON Schema of a request. |
 | GET | `/v1/scripts` | The scripts this caller has submitted before, newest first. |
 | GET | `/v1/secrets` | Which names a job may put in `secrets` — the names only. |
+| DELETE | `/v1/secrets/{name}` | Forget one registered name in your namespace. |
+| PUT | `/v1/secrets/{name}` | Register one value under one name, for jobs in your own namespace. |
 | GET | `/v1/stats` | What this caller's team has spent. |
 | POST | `/v1/validate` | Check a job without running it. |
 
@@ -403,14 +405,33 @@ What `GET /v1/scripts` returns: this caller's own scripts, newest first.
 | `owners` |  | ★ WHO ran something in this listing, sorted. THIS is the per-person axis, and the namespace is not: a namespace is a tenancy boundary that may hold a whole team. An empty string in this list means jobs whose submitter was never recorded, which is every job created with `kubectl apply` rather than through this gateway. |
 | `scripts` |  |  |
 
+### SecretPutRequest
+
+The body of `PUT /v1/secrets/{name}`: one value, and nothing else.
+
+| field | required | description |
+|---|---|---|
+| `value` | yes | The secret. Sent once, stored in a Kubernetes Secret in your namespace, and never returned by any route: `GET /v1/secrets` answers names only. Max 64 KiB. |
+
+### SecretPutResponse
+
+What `PUT /v1/secrets/{name}` answers. No value, by construction.
+
+| field | required | description |
+|---|---|---|
+| `created` | yes | True when this was the first value registered in this namespace, false when a name was added to or replaced in the existing set. Says which of 'I added one' and 'I overwrote one' happened. |
+| `name` | yes | The name you can now put in `secrets`. |
+| `namespace` | yes | Where it was stored. Only jobs in this namespace can use it. |
+
 ### SecretsResponse
 
 What `GET /v1/secrets` returns: the accepted words, and nothing else.
 
 | field | required | description |
 |---|---|---|
-| `names` |  | The words a job may put in `secrets`, e.g. ["GITHUB_PAT"]. |
+| `names` |  | Every word a job may put in `secrets`, e.g. ["GITHUB_PAT"] — the operator's bindings and your namespace's own registrations together, because what a submitter needs is the list that works. |
 | `note` |  | Why the list is empty when it is, and what to do about it. |
+| `own` |  | Which of `names` your namespace registered itself, through `ddpsrun secret set`. You can replace or remove these; the rest belong to the deployment and only an operator changes them. |
 
 ### StatsResponse
 

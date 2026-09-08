@@ -31,6 +31,31 @@ class FakeCluster:
         self.logs: dict[tuple[str, str], list[str]] = {}
         self.execs: list[tuple[str, str, int, list[str], int]] = []
         self.exec_answer: tuple[str, int | None] = ("", 0)
+        # DDPSRUN-USER-SECRET. namespace -> {name: value}. The VALUES are kept
+        # here only so a test can assert the server passed the right one down;
+        # no route may ever return one, and `test_a_registered_value_never_
+        # comes_back` is what holds that.
+        self.secrets: dict[str, dict[str, str]] = {}
+        self.secrets_forbidden: set[str] = set()
+
+    def user_secret_names(self, namespace):
+        if namespace in self.secrets_forbidden:
+            raise k8s.ClusterError("secrets is forbidden: User cannot list resource")
+        return sorted(self.secrets.get(namespace, {}))
+
+    def put_user_secret(self, namespace, name, value):
+        if namespace in self.secrets_forbidden:
+            raise k8s.ClusterError("secrets is forbidden: User cannot patch resource")
+        created = namespace not in self.secrets
+        self.secrets.setdefault(namespace, {})[name] = value
+        return created
+
+    def delete_user_secret(self, namespace, name):
+        if namespace in self.secrets_forbidden:
+            raise k8s.ClusterError("secrets is forbidden: User cannot patch resource")
+        if name not in self.secrets.get(namespace, {}):
+            raise k8s.NotFound(name)
+        del self.secrets[namespace][name]
 
     def create_job(self, namespace, body):
         self.created.append((namespace, body))
@@ -1562,3 +1587,142 @@ def test_the_answer_is_404_and_not_403(shared_ns_client, cluster):
     # Indistinguishable from an id that never existed.
     missing = as_bob(shared_ns_client, "GET", "/v1/jobs/job-ffffffffffff")
     assert missing.status_code == 404 and missing.json()["detail"] == answer.json()["detail"]
+
+
+# ------------------------------------------------- DDPSRUN-USER-SECRET
+# 자기 namespace 에 값을 등재하는 route 셋. 2026-09-08 에 더했다. 그 전까지
+# credential 을 쓰려면 운영자가 tfvars 를 고치고 terraform apply 를 돌려야 했다.
+
+
+def test_a_registered_name_becomes_usable_and_lands_in_that_namespace(client, cluster):
+    put = as_alice(client, "PUT", "/v1/secrets/HF_TOKEN", json={"value": "hf_xxx"})
+    assert put.status_code == 200
+    assert put.json() == {"name": "HF_TOKEN", "namespace": "lab-alice", "created": True}
+    # 값은 alice 의 namespace 에만 있다.
+    assert cluster.secrets == {"lab-alice": {"HF_TOKEN": "hf_xxx"}}
+
+    # 그리고 그 이름을 job 이 쓸 수 있다.
+    submitted = as_alice(client, "POST", "/v1/jobs",
+                         json=submit_body(secrets=["HF_TOKEN"]))
+    assert submitted.status_code == 201
+    namespace, body = cluster.created[-1]
+    assert namespace == "lab-alice"
+    entry = [e for e in body["spec"]["env"] if e["name"] == "HF_TOKEN"][0]
+    assert entry == {
+        "name": "HF_TOKEN",
+        "valueFrom": {"secretKeyRef": {"name": "ddpsrun-user-secrets",
+                                       "key": "HF_TOKEN"}},
+    }
+    assert "value" not in entry, "값이 job spec 에 들어가면 etcd 와 모든 백업에 남는다"
+
+
+def test_a_registered_value_never_comes_back(client, cluster):
+    as_alice(client, "PUT", "/v1/secrets/HF_TOKEN", json={"value": "hf_secret_value"})
+    listed = as_alice(client, "GET", "/v1/secrets").json()
+    assert listed["names"] == ["GITHUB_PAT", "HF_TOKEN"]
+    assert listed["own"] == ["HF_TOKEN"], "운영자 binding 과 자기 것을 갈라 보여준다"
+    assert "hf_secret_value" not in json.dumps(listed)
+
+    spec = as_alice(client, "POST", "/v1/jobs", json=submit_body(secrets=["HF_TOKEN"]))
+    job_id = spec.json()["job_id"]
+    seen = as_alice(client, "GET", f"/v1/jobs/{job_id}/spec")
+    assert "hf_secret_value" not in seen.text
+
+
+def test_another_namespace_cannot_name_what_you_registered(client, cluster):
+    as_alice(client, "PUT", "/v1/secrets/HF_TOKEN", json={"value": "hf_xxx"})
+    # bob 은 자기 namespace 에 아무것도 없으므로 그 이름을 못 쓴다.
+    refused = client.request(
+        "POST", "/v1/jobs", headers={"Authorization": "Bearer bob-token"},
+        json=submit_body(secrets=["HF_TOKEN"]),
+    )
+    assert refused.status_code == 400
+    assert "HF_TOKEN" in refused.json()["detail"]
+    assert cluster.created == [], "거부 전에 아무것도 만들지 않았다"
+
+
+def test_a_non_admin_cannot_register_into_someone_elses_namespace(client, cluster):
+    refused = as_alice(client, "PUT", "/v1/secrets/HF_TOKEN?namespace=lab-bob",
+                       json={"value": "hf_xxx"})
+    assert refused.status_code == 403
+    assert cluster.secrets == {}, "403 에 닿기 전에 아무것도 쓰지 않았다"
+
+
+def test_an_admin_registers_where_they_asked(client, cluster):
+    ok = as_root(client, "PUT", "/v1/secrets/HF_TOKEN?namespace=lab-alice",
+                 json={"value": "hf_xxx"})
+    assert ok.status_code == 200
+    assert ok.json()["namespace"] == "lab-alice"
+    assert cluster.secrets == {"lab-alice": {"HF_TOKEN": "hf_xxx"}}
+
+
+def test_a_name_the_deployment_already_binds_is_refused(client, cluster):
+    # GITHUB_PAT 는 fixture 의 운영자 binding 이다. binding 이 submit 에서 이기므로
+    # 여기 저장하면 아무 job 도 안 읽는 값을 저장하는 것이 된다.
+    refused = as_alice(client, "PUT", "/v1/secrets/GITHUB_PAT", json={"value": "x"})
+    assert refused.status_code == 409
+    assert "already bound" in refused.json()["detail"]
+    assert cluster.secrets == {}
+
+
+def test_a_name_that_is_not_an_env_var_name_is_refused(client, cluster):
+    for bad in ("hf-token", "9TOKEN", "my.token", "hf_token"):
+        refused = as_alice(client, "PUT", f"/v1/secrets/{bad}", json={"value": "x"})
+        assert refused.status_code == 400, bad
+    assert cluster.secrets == {}
+
+
+def test_an_empty_or_oversized_value_is_refused_without_echoing_it(client, cluster):
+    empty = as_alice(client, "PUT", "/v1/secrets/HF_TOKEN", json={"value": ""})
+    assert empty.status_code == 400
+    big = as_alice(client, "PUT", "/v1/secrets/HF_TOKEN",
+                   json={"value": "z" * (64 * 1024 + 1)})
+    assert big.status_code == 400
+    # ★ 우리 메시지여야 한다. pydantic 이 길이를 거부하면 422 와 함께
+    # detail[].input 에 그 값을 그대로 돌려준다 -- 이 필드에서는 그것이 secret 이다.
+    assert "zzz" not in big.text
+    assert cluster.secrets == {}
+
+
+def test_removing_a_registration_takes_the_name_out_of_the_list(client, cluster):
+    as_alice(client, "PUT", "/v1/secrets/HF_TOKEN", json={"value": "hf_xxx"})
+    gone = as_alice(client, "DELETE", "/v1/secrets/HF_TOKEN")
+    assert gone.status_code == 204
+    assert cluster.secrets == {"lab-alice": {}}
+    assert as_alice(client, "GET", "/v1/secrets").json()["own"] == []
+    # 두 번째 삭제는 404 다.
+    assert as_alice(client, "DELETE", "/v1/secrets/HF_TOKEN").status_code == 404
+
+
+def test_an_operator_binding_cannot_be_deleted_from_this_route(client, cluster):
+    refused = as_alice(client, "DELETE", "/v1/secrets/GITHUB_PAT")
+    assert refused.status_code == 404
+    assert "only an operator" in refused.json()["detail"].lower()
+
+
+def test_a_namespace_without_the_rolebinding_still_lists_and_still_submits(client, cluster):
+    """등재는 namespace 마다 켜는 것이다. 안 켠 namespace 에서 LIST 가 죽어선 안 된다.
+
+    운영자 binding 은 거기서도 멀쩡히 쓸 수 있으므로, 403 을 502 로 바꾸면
+    "서버가 고장났다" 로 읽힌다. 쓰기 route 에서는 그 403 이 곧 답이다.
+    """
+    cluster.secrets_forbidden.add("lab-alice")
+    listed = as_alice(client, "GET", "/v1/secrets")
+    assert listed.status_code == 200
+    assert listed.json()["names"] == ["GITHUB_PAT"]
+    assert listed.json()["own"] == []
+    assert as_alice(client, "POST", "/v1/jobs",
+                    json=submit_body(secrets=["GITHUB_PAT"])).status_code == 201
+    refused = as_alice(client, "PUT", "/v1/secrets/HF_TOKEN", json={"value": "x"})
+    assert refused.status_code == 502
+    assert "forbidden" in refused.json()["detail"]
+
+
+def test_validate_accepts_a_name_this_namespace_registered(client, cluster):
+    as_alice(client, "PUT", "/v1/secrets/HF_TOKEN", json={"value": "hf_xxx"})
+    result = as_alice(client, "POST", "/v1/validate",
+                      json=submit_body(secrets=["HF_TOKEN"])).json()
+    assert "secret-name-unknown" not in {f["code"] for f in result["findings"]}
+    unknown = as_alice(client, "POST", "/v1/validate",
+                       json=submit_body(secrets=["NOPE"])).json()
+    assert "secret-name-unknown" in {f["code"] for f in unknown["findings"]}

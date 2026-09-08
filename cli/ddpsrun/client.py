@@ -146,6 +146,42 @@ class Client:
         """
         return self._call("GET", "/v1/secrets").json()
 
+    def put_secret(self, name: str, value: str) -> dict[str, Any]:
+        """Store one value under `name`, for this caller's own namespace.
+
+        DDPSRUN-USER-SECRET. The one call in this file that carries a secret.
+        It goes in the BODY and never in the path or a query string: a URL is
+        logged by every hop that touches it, and the server's own routes are
+        forbidden from putting personal data in a query string for the same
+        reason. The value is not returned by this or any other call.
+
+        Args:
+            name: the environment variable name, e.g. `HF_TOKEN`.
+            value: the secret, already read from a file or stdin by `cli.py`.
+
+        Returns:
+            `{name, namespace, created}`.
+
+        Raises:
+            ServerError: 400 for an unusable name or value, 403 for someone
+                else's namespace, 409 for a name the deployment already binds,
+                502 when the cluster refused. The server's own message says
+                which.
+        """
+        return self._call(
+            "PUT", f"/v1/secrets/{quote(name)}", json_body={"value": value}
+        ).json()
+
+    def delete_secret(self, name: str) -> None:
+        """Forget one name this caller's namespace registered.
+
+        Raises:
+            ServerError: 404 when the name is not registered here, which is
+                also the answer for an operator's binding -- those are not
+                this caller's to remove.
+        """
+        self._call("DELETE", f"/v1/secrets/{quote(name)}")
+
     def stats(self) -> dict[str, Any]:
         """Read this caller's team figures. Aggregate only."""
         return self._call("GET", "/v1/stats").json()

@@ -51,6 +51,7 @@ from .config import (
     PACSRUN_SLOT_LABEL,
     PROMETHEUS_NAMESPACE,
     PROMETHEUS_SERVICE,
+    USER_SECRET_NAME,
 )
 
 # The driver prints its own bookkeeping on the same stdout as the workload.
@@ -69,12 +70,21 @@ _KEEPALIVE_LINE = re.compile(r"^\s*PACSRUN_KEEPALIVE\s*$")
 # of this pattern required "=" immediately after PACSRUN_GPU, so the health line missed the DROP
 # rule, fell through to the token mask below, and reached the user as "<internal>=0x0000...,0"
 # between their own output lines — the exact noise this rule exists to prevent.
-_GPU_LINE = re.compile(r"^\s*PACSRUN_GPU(_HEALTH)?=")
+# `_CARD` AND `_HEALTH_CARD` WERE ADDED 2026-09-08 AND THIS PATTERN DID NOT KNOW THEM. PACSrun
+# #60 started printing one reading per card, so a four-card pod emits eight of these lines every
+# 30 seconds; none matched, all eight fell through to the token mask below, and a reader of their
+# own training output got eight `<internal>=0,94,38200,81920,71,298` lines between every couple of
+# real ones. That is precisely the noise the paragraph above says this rule exists to prevent, and
+# it is the second thing that change broke by adding a line shape without telling the code that
+# reads line shapes. `/v1/jobs/{id}/metrics` reads the log UNREDACTED and is unaffected either way.
+_GPU_LINE = re.compile(r"^\s*PACSRUN_GPU(_CARD|_HEALTH|_HEALTH_CARD)?=")
 # Any other PACSRUN_* token is an internal name (`docs/03-api.md`, first rule
 # of the "응답 규칙" / response-rules section). The line around it may be the
 # user's own output, so the token is masked
 # and the line kept, rather than the line being dropped.
 _INTERNAL_TOKEN = re.compile(r"\bPACSRUN_[A-Z0-9_]+\b")
+
+
 
 
 class NotFound(Exception):
@@ -349,6 +359,134 @@ class Cluster:
         if not pods.items:
             raise NotFound(f"no pod yet for {job_name}")
         return pods.items[0].metadata.name
+
+    def user_secret_names(self, namespace: str) -> list[str]:
+        """Which names this namespace has registered. NAMES ONLY.
+
+        DDPSRUN-USER-SECRET. `read_namespaced_secret` returns the values too --
+        there is no "keys only" read in the Kubernetes API -- so this method
+        takes `.keys()` and lets the object go. It must never be returned,
+        logged, or put in an exception: the whole promise of the submit path is
+        that a value goes from the Secret to kubelet without passing through
+        this process, and the only reason this read exists at all is that
+        `GET /v1/secrets` has to answer "what may I write" and `to_pacsjob` has
+        to know whether a name is registered before it writes a secretKeyRef
+        for it.
+
+        Args:
+            namespace: the caller's namespace.
+
+        Returns:
+            Sorted key names. Empty when nothing is registered yet, which is
+            also what a namespace with no Secret answers -- a 404 here is the
+            normal state before the first `ddpsrun secret set`, not an error.
+
+        Raises:
+            ClusterError: the API server refused for any reason other than 404.
+                A 403 means the namespace has no `ddpsrun-gw-secrets`
+                RoleBinding, which is an operator's onboarding step.
+        """
+        try:
+            secret = self._core.read_namespaced_secret(
+                name=USER_SECRET_NAME, namespace=namespace
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                return []
+            raise ClusterError(_api_message(exc)) from exc
+        return sorted((secret.data or {}).keys())
+
+    def put_user_secret(self, namespace: str, name: str, value: str) -> bool:
+        """Store one value under `name` in this namespace, replacing any it had.
+
+        Args:
+            namespace: the caller's namespace.
+            name: the environment variable name, already checked by the caller.
+            value: the secret. NOT logged, NOT echoed, and NOT included in any
+                message raised from here -- `_api_message` reads the API
+                server's own error body, which never contains the request.
+
+        Returns:
+            True when the Secret had to be created, False when it already
+            existed and one key was patched into it. The caller says which
+            happened so a user can tell "I added the first one" from "I
+            replaced the one that was there".
+
+        Raises:
+            ClusterError: the API server refused.
+
+        WHY `stringData` AND A PATCH. `stringData` is the write-only half of a
+        Secret: the API server base64-encodes it into `data` and drops it, so
+        nothing here has to encode anything. A strategic merge patch of a plain
+        map MERGES its keys, so patching one name leaves the others alone --
+        which matters because this server cannot read the Secret's values and
+        therefore could not rewrite the whole object even if it wanted to.
+        """
+        body = {"stringData": {name: value}}
+        try:
+            self._core.patch_namespaced_secret(
+                name=USER_SECRET_NAME, namespace=namespace, body=body
+            )
+            return False
+        except ApiException as exc:
+            if exc.status != 404:
+                raise ClusterError(_api_message(exc)) from exc
+        # First one in this namespace: the Secret does not exist yet. `create`
+        # is the one secrets verb the Role cannot restrict to a name, so it is
+        # granted alone and this is its only use.
+        try:
+            self._core.create_namespaced_secret(
+                namespace=namespace,
+                body=client.V1Secret(
+                    metadata=client.V1ObjectMeta(
+                        name=USER_SECRET_NAME,
+                        namespace=namespace,
+                        # So a human reading `kubectl get secret` knows who made
+                        # it and that deleting it deletes people's registrations.
+                        labels={"ddpsrun.io/managed-by": "ddpsrun-gw"},
+                        annotations={
+                            "ddpsrun.io/what": (
+                                "values registered through POST /v1/secrets by "
+                                "members of this namespace. One key per "
+                                "environment variable name."
+                            )
+                        },
+                    ),
+                    string_data={name: value},
+                ),
+            )
+            return True
+        except ApiException as exc:
+            raise ClusterError(_api_message(exc)) from exc
+
+    def delete_user_secret(self, namespace: str, name: str) -> None:
+        """Remove one registered name from this namespace.
+
+        A registration that cannot be removed is the worse half of a
+        registration: a value put in by mistake, or one that leaked, would stay
+        readable by every job in the namespace forever.
+
+        Args:
+            namespace: the caller's namespace.
+            name: the environment variable name to forget.
+
+        Raises:
+            NotFound: no such name here (or nothing registered at all).
+            ClusterError: anything else.
+
+        WHY `data` AND NOT `stringData`. The key lives in `data` once the API
+        server has encoded it; `stringData` is gone by then, so a null there
+        would delete nothing. Under a merge patch, null removes the key.
+        """
+        try:
+            self._core.patch_namespaced_secret(
+                name=USER_SECRET_NAME, namespace=namespace,
+                body={"data": {name: None}},
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                raise NotFound(name) from exc
+            raise ClusterError(_api_message(exc)) from exc
 
     def exec_in_driver(
         self,

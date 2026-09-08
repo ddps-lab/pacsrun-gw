@@ -5,9 +5,17 @@
 # of N, and it would also let the server read pods in kube-system. Binding per
 # namespace means adding a tenant is a deliberate act with a reviewable diff.
 #
-# WHAT IS DELIBERATELY ABSENT: `secrets`. The server writes a `secretKeyRef`
-# into the PacsJob and lets kubelet resolve it, so it never holds a GitHub token
-# or an API key. Somebody who takes over this pod cannot read them either.
+# WHAT IS DELIBERATELY ABSENT FROM THE ClusterRole: `secrets`. The submit path
+# writes a `secretKeyRef` into the PacsJob and lets kubelet resolve it, so it
+# never holds a GitHub token or an API key.
+#
+# ★ AND `secrets` MUST STAY OUT OF THE ClusterRole EVEN NOW THAT ONE ROUTE
+# WRITES THEM. The live cluster binds this ClusterRole with a
+# ClusterRoleBinding, not the per-namespace RoleBindings this file describes
+# (checked 2026-09-08: `kubectl get clusterrolebinding ddpsrun-gw` exists and
+# names Group `ddpsrun-gw`). So a `secrets` verb added up there would be a
+# secrets verb in kube-system. The write path gets its own Role at the bottom
+# of this file, bound one namespace at a time -- see DDPSRUN-USER-SECRET.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -124,6 +132,76 @@ subjects:
   # Binding a ServiceAccount instead grants nothing and says nothing: `kubectl apply` succeeds,
   # the binding exists, and every request is still refused. `aws eks describe-access-entry
   # --principal-arn <the lambda role>` is what settles which subject is real.
+  - kind: Group
+    name: ddpsrun-gw
+    apiGroup: rbac.authorization.k8s.io
+---
+# DDPSRUN-USER-SECRET. What `PUT /v1/secrets/{name}` needs, and not one verb more.
+#
+# WHY A SEPARATE Role AND NOT THREE MORE LINES IN THE ClusterRole ABOVE. The
+# ClusterRole is bound cluster-wide in the live cluster, so a `secrets` verb in
+# it would let this server write Secrets into kube-system. This Role is
+# namespaced and bound one namespace at a time, which is what "a member of this
+# namespace can register a value for jobs in this namespace" actually means.
+# Apply one pair of these per tenant namespace, exactly like the RoleBinding
+# above -- a namespace without them simply cannot register values, and
+# `GET /v1/secrets` still answers there with the operator's own bindings.
+#
+# THE THREE VERBS, AND WHAT EACH ONE CANNOT DO.
+#
+#   create   Cannot be restricted by name: RBAC's `resourceNames` does not
+#            apply to create, because at authorization time the object does not
+#            exist yet. So this permits creating ANY Secret in this namespace --
+#            and nothing else. It cannot overwrite `judge-bedrock` (create on an
+#            existing name is 409 AlreadyExists) and it cannot read anything.
+#            The server uses it exactly once: the first `secret set` in a
+#            namespace, when `ddpsrun-user-secrets` does not exist yet.
+#
+#   get      Restricted to `ddpsrun-user-secrets` by name. `GET /v1/secrets`
+#            needs the KEY names and the Kubernetes API has no keys-only read,
+#            so this necessarily also permits reading those values. It does NOT
+#            permit reading any other Secret in the namespace: an operator
+#            binding's Secret stays unreadable by this process, which is the
+#            promise the submit path has always made.
+#
+#   patch    Same one name. Adds or replaces one key (`stringData`), or removes
+#            one (`data: {KEY: null}`). No `update`: a full replace would need
+#            the whole object, and the server deliberately never assembles one.
+#
+# WHAT THIS DOES NOT PROTECT AGAINST, said plainly. A Kubernetes Secret is
+# base64, not encryption. Anyone who already has `get secrets` in the namespace
+# -- a cluster admin, or a pod with a ServiceAccount that grants it -- can read
+# every registered value. That is the same exposure the operator's own bindings
+# have always had, and it is why `docs/03-api.md` keeps values out of every
+# response even though the write route puts one in.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ddpsrun-gw-secrets
+  namespace: <TENANT_NAMESPACE>
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["ddpsrun-user-secrets"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ddpsrun-gw-secrets
+  namespace: <TENANT_NAMESPACE>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ddpsrun-gw-secrets
+subjects:
+  # A GROUP, for the reason spelled out at the prometheus binding above: the
+  # gateway is a Lambda, it proves who it is with an EKS access entry, and RBAC
+  # sees the kubernetesGroup that entry maps to. Binding a ServiceAccount here
+  # applies cleanly and grants nothing.
   - kind: Group
     name: ddpsrun-gw
     apiGroup: rbac.authorization.k8s.io
