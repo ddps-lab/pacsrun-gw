@@ -378,7 +378,7 @@ def namespace_suggestion(email: str, team: str = DEFAULT_TEAM) -> str:
         produce a name `kubectl create namespace` refuses.
 
     Example:
-        >>> namespace_suggestion("alice@example.com", "ddps")
+        >>> namespace_suggestion("alice@example.ac.kr", "ddps")
         'ddps-alice'
     """
     who = _label((email or "").split("@")[0]) or "unnamed"

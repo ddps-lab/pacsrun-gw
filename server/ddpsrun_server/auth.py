@@ -150,7 +150,7 @@ class TokenStore:
 
     ★★ AND IT IS A SUGGESTION, NOT A CONSTRAINT. Nothing in this file derives a
     namespace from anything: the value written here is the value used, full stop.
-    An operator who wants `lab-bo-ram` for `bo.ram@example.ac.kr` types that
+    An operator who wants `ddps-boram` for `bo.ram@example.ac.kr` types that
     and it works. The rule exists so a new person gets a name without anybody
     inventing one, not to stop anybody choosing.
     """
