@@ -498,9 +498,12 @@
 <!-- ------------------------------------------------------------ 5. Vendors -->
 
 <!-- ------------------------------------------------------------ 4b. Scripts -->
-<!-- DDPSRUN-SCRIPTS. The scripts this caller has already submitted, read back out of their own
-     jobs. Nothing is stored for this: the text is on the PacsJob for as long as the job exists,
-     so it is already durable, already scoped to this caller, and already gone when the job is
+<!-- DDPSRUN-SCRIPTS. Every run.sh in one namespace, GROUPED BY OWNER, read back out of the
+     jobs themselves. It said "this caller's own" and "already scoped to this caller" until
+     2026-09-08; the namespace never gave that, since it may hold a whole team and here it holds
+     everyone. Each section is one person, from that job's ddpsrun.io/owner label.
+     Nothing is stored for this: the text is on the PacsJob for as long as the job exists,
+     so it is already durable and already gone when the job is
      deleted. Before this screen existed the only way to find a run.sh again was to open jobs one
      at a time and read the Submitted spec panel. -->
 <section id="view-scripts" hidden>

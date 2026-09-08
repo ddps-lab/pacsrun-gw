@@ -317,7 +317,7 @@ class ScriptsResponse(BaseModel):
     scripts: list[ScriptView] = Field(default_factory=list)
     note: str = Field(
         default="",
-        description="Why the list is empty, when it is. An empty list with no note reads as "
+        description="Why the list looks as it does, in the two cases that need saying -- no recognised script at all, AND scripts that record no submitter. The second branch fires on a NON-EMPTY list, so this is not only an empty-list explanation. An empty list with no note reads as "
         "'you have never submitted a script', which is a different fact from 'none of your "
         "jobs was submitted in a shape this route recognises'.",
     )
