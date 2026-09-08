@@ -161,7 +161,13 @@ class Settings:
         return Settings(
             result_bucket=required("DDPSRUN_RESULT_BUCKET"),
             result_prefix=prefix,
-            service_account=env.get("DDPSRUN_SERVICE_ACCOUNT", "pacsrun-workload").strip(),
+            # DDPSRUN-WORKLOAD-SA. The default is the ServiceAccount PACSrun's own terraform
+            # wired to the EC2/STS role, because that role's trust policy names exactly one
+            # namespace/ServiceAccount pair. It read "pacsrun-workload" until 2026-09-08 --
+            # which is the ROLE's name, not the ServiceAccount's -- and every AWS job then
+            # died with "Not authorized to perform sts:AssumeRoleWithWebIdentity", exit 10,
+            # before renting anything. See terraform/lambda/variables.tf for the measurement.
+            service_account=env.get("DDPSRUN_SERVICE_ACCOUNT", "pacsjob-writer").strip(),
             tokens_path=required("DDPSRUN_TOKENS_PATH"),
             secret_bindings=bindings,
             log_tail_lines=tail,

@@ -46,8 +46,12 @@ spec:
             # Must match PACSrun's PACSRUN_RESULT_PREFIX_TEMPLATE, which checks
             # the same prefix a second time on the cluster side. If the two
             # disagree every job is refused at admission.
+            # The ServiceAccount the DRIVER pod runs as, and it must be the one PACSrun's
+            # terraform wired to the EC2/STS role -- that role trusts exactly one
+            # namespace/ServiceAccount pair. Naming anything else is exit 10 before a machine
+            # is rented, not a smaller failure later. See terraform/lambda/variables.tf.
             - name: DDPSRUN_SERVICE_ACCOUNT
-              value: pacsrun-workload
+              value: pacsjob-writer
             - name: DDPSRUN_TOKENS_PATH
               value: /etc/ddpsrun/tokens.json
             # Which stored secrets a user may ask for by name, and where each
