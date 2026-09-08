@@ -22,7 +22,9 @@ ddpsrun <command> [options]
 | `ddpsrun estimate` | how long it will take, what it will cost, which GPU. Submits nothing |
 | `ddpsrun validate` | what is wrong with this job. Submits nothing |
 | `ddpsrun submit` | submit a job |
-| `ddpsrun secrets` | which secret names this deployment accepts |
+| `ddpsrun secrets` | which secret names you can use |
+| `ddpsrun secret-set` | store a value in your namespace under a name |
+| `ddpsrun secret-rm` | forget a name your namespace registered |
 | `ddpsrun status` | how a job is doing |
 | `ddpsrun shell` | run commands inside a running job's workload |
 | `ddpsrun watch` | GPU usage and training progress |
@@ -150,7 +152,24 @@ Give a YAML or JSON file, or build the request from flags, or both. Flags win ov
 
 ## ddpsrun secrets
 
-`secrets: [NAME]` on a submit request is a word that opens the server's vault, not a field you fill with a value. This prints the words that work. Values are never shown and cannot be set from here: an operator stores them in the cluster.
+`secrets: [NAME]` on a submit request is a word that opens the server's vault, not a field you fill with a value. This prints the words that work: the deployment's own, plus whatever your namespace registered with `secret set`. Values are never shown by any command.
+
+## ddpsrun secret-set
+
+Store one value so your jobs can ask for it by name. It is kept in a Kubernetes Secret in YOUR namespace; jobs elsewhere cannot name it, and no command ever prints it back.  ★ THE VALUE IS NEVER AN ARGUMENT. It comes from a file or from stdin, because anything on a command line is in your shell history, in `ps` output for every user on the machine, and in any terminal recording.
+
+| argument | required | what it does |
+|---|---|---|
+| `name` | yes | the environment variable name your script reads, e.g. HF_TOKEN |
+| `--from-file PATH` |  | read the value from this file. Use - for stdin, which is also the default when this is omitted. |
+
+## ddpsrun secret-rm
+
+Remove one registered value. Do this the moment a credential leaks: until it is gone, every job in the namespace can still ask for it. An operator's deployment-wide binding cannot be removed from here.
+
+| argument | required | what it does |
+|---|---|---|
+| `name` | yes |  |
 
 ## ddpsrun status
 
