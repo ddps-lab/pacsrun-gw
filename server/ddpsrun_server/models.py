@@ -560,7 +560,7 @@ class SecretsResponse(BaseModel):
     own: list[str] = Field(
         default_factory=list,
         description="Which of `names` your namespace registered itself, through "
-        "`ddpsrun secret set`. You can replace or remove these; the rest belong "
+        "`ddpsrun secret-set`. You can replace or remove these; the rest belong "
         "to the deployment and only an operator changes them.",
     )
     note: str = Field(
@@ -906,7 +906,7 @@ def to_pacsjob(
             raise ValueError(
                 f"there is no secret called {secret_name!r}. Available: "
                 f"{allowed or '(none)'}. Register one of your own with "
-                f"`ddpsrun secret set {secret_name}`, which stores it in your "
+                f"`ddpsrun secret-set {secret_name}`, which stores it in your "
                 f"namespace and never puts the value in this job's spec."
             )
         # secretKeyRef and never a literal: the CRD's own description explains

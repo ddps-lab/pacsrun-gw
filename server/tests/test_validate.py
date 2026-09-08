@@ -565,3 +565,32 @@ def test_not_checked_says_the_time_model_is_one_recipe():
                         job_estimate=KNOWN)
     assert any("measured on ONE recipe" in line for line in result.not_checked), (
         "무엇을 못 보는지가 문장으로 있어야 한다 -- 통과가 보장이 아니다")
+
+
+def test_a_launcher_script_hears_no_recipe_finding_at_all():
+    """★ D5, 2026-09-09. launcher script 는 trainer 를 보여 주지 않는다.
+
+    옛 판은 "trainer 를 못 읽으면 DPO 로 가정한다 — 경고를 지우는 쪽이 더
+    위험하다" 였다. script 가 **학습 명령 자체**일 때는 그것이 맞다. `bash
+    jobs/run_C.sh` 처럼 **우리가 못 받은 파일로 넘길** 때는 아니다: 그 job 은
+    `utils/trl_ppo_lowmem.py` 로 같은 일을 하고 카드당 44.9GB 실측인데
+    `trl.trainer.dpo_trainer` 를 패치하라는 말을 들었다. 같은 응답의
+    `not_checked` 가 "measured on ONE recipe" 라고 스스로 적고 있었다.
+    """
+    script = "set -u\nbash jobs/run_C.sh 2>&1 | tee run.log\n"
+    result = v.validate(env={}, script=script, cap=12288, vram_gb=80,
+                        job_estimate=KNOWN, gpu_name="A100-80GB", gpu_count=4,
+                        capacity_type="on-demand")
+    codes = {f.code for f in result.findings}
+    for recipe_code in ("trl-patch-missing", "gpu-too-small", "prompt-cap-too-high"):
+        assert recipe_code not in codes, f"{recipe_code} 가 나왔다: {codes}"
+    assert any("WHICH trainer this is" in line for line in result.not_checked), (
+        "대신 무엇을 못 봤는지가 not_checked 에 문장으로 있다")
+
+
+def test_a_script_that_is_the_training_command_still_assumes_dpo():
+    """가정을 없앤 것이 아니다 — 볼 수 있을 때는 그대로 본다."""
+    result = v.validate(env={}, script="python train.py --max-len 12288\n",
+                        cap=12288, vram_gb=40, job_estimate=KNOWN,
+                        gpu_name="L40S", gpu_count=1, capacity_type="on-demand")
+    assert "trl-patch-missing" in {f.code for f in result.findings}

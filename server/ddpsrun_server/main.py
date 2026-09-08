@@ -1080,7 +1080,7 @@ def secrets_route(
     else:
         note = (
             "nothing is registered for this namespace yet, so a job asking for "
-            "a secret is refused. Register your own with `ddpsrun secret set "
+            "a secret is refused. Register your own with `ddpsrun secret-set "
             "<NAME>` — it is stored in your namespace and only jobs there can "
             "read it. A value shared by the whole deployment is an operator's "
             "job instead (DDPSRUN_SECRET_BINDINGS). Values are never returned "
@@ -1605,9 +1605,12 @@ def scripts_route(
     note = ""
     if not seen:
         note = (
-            "No job in this namespace carries a script this route recognises. It reads the text "
-            "back out of the job itself, and only a job submitted from the New job screen's "
-            "Script box (or with `--arg bash --arg -lc --arg '<text>'`) has it in that shape."
+            "No job in this namespace carries a script this route recognises. It reads the "
+            "text back out of the job itself, so the job has to have `args == [\"bash\", "
+            "\"-lc\", <text>]` -- which is what `ddpsrun submit --script run.sh` and the New "
+            "job screen's Script box both produce. A job whose args are something else (a "
+            "`kubectl apply` with its own args, or an image that runs its own ENTRYPOINT) has "
+            "no text here to give back."
         )
     elif owners == [""]:
         # Worth saying, because the screen then has one unnamed group and that

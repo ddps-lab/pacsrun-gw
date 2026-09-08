@@ -218,7 +218,14 @@ watch_checkpoints & WATCH_PID=$!
 `PACSRUN_EXIT=` 이 영영 안 찍히고, driver 가 job 이 끝난 줄 모른다.
 
 ```bash
-on_exit() { kill "$WATCH_PID" 2>/dev/null || true; upload_everything; }
+# ★ 기본값을 0 으로 두지 않는다. `kill 0` 은 PID 0 이 아니라 **프로세스 그룹 전체**이고,
+# trap 이 watcher 시작 전에 불리면(위쪽 검사에서 die 하는 경우) 스크립트가 자기를 죽인다.
+# `set -u` 를 의식해 `${WATCH_PID:-0}` 를 붙이는 것은 자연스러운 반사인데, 그 순간
+# 조용한 자살로 바뀐다. 비었는지를 먼저 본다. 2026-09-09 에 한 세션이 스스로 만들고 잡았다.
+on_exit() {
+  [ -n "${WATCH_PID:-}" ] && kill "$WATCH_PID" 2>/dev/null || true
+  upload_everything
+}
 trap on_exit EXIT
 ```
 

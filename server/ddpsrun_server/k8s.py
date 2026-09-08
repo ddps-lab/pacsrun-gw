@@ -406,7 +406,22 @@ class Cluster:
             )
         except ApiException as exc:
             if exc.status == 404:
-                return []
+                # ★ A DICT AND NOT A LIST, and getting this wrong took every
+                # secrets route down. This method returned `list[str]` until
+                # 2026-09-09 and the rename to `user_secrets` changed the type
+                # to `dict[str, str | None]` everywhere EXCEPT here. A namespace
+                # with nothing registered yet takes this branch, the route then
+                # ran `own.items()` on a list, and `GET /v1/secrets` and any
+                # `POST /v1/validate` carrying `secrets` answered a bare 500 --
+                # with no cause, no request id and nothing to act on. Reported
+                # by an outside session on 2026-09-09 as D1, and it blocked
+                # EVERY job in a fresh namespace: they all need GITHUB_PAT to
+                # clone a private repository.
+                #
+                # It passed the unit tests because the test double answers a
+                # dict on every path, including the empty one. A double that
+                # cannot take the branch the real client takes cannot test it.
+                return {}
             raise ClusterError(_api_message(exc)) from exc
         annotations = (secret.metadata.annotations or {}) if secret.metadata else {}
         return {name: annotations.get(f"{EXPIRY_ANNOTATION_PREFIX}{name}")

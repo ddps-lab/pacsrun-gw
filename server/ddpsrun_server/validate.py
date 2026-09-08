@@ -276,6 +276,20 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
     # number -- which docs/04-estimate.md says is worse than `unknown`.
     if cap is None:
         return findings
+    if deferred is not None:
+        # ★ WE CANNOT SEE THE TRAINER, SO WE CANNOT KNOW THE RECIPE APPLIES.
+        # Reported 2026-09-09 as D5 by a session submitting an OpsAgent PPO
+        # pipeline: the submitted text was a launcher (`bash jobs/run_C.sh`), so
+        # `trainer_in` found nothing, "unknown" was treated as "assume DPO", and
+        # the job was told to patch `trl.trainer.dpo_trainer` -- for a run that
+        # uses `utils/trl_ppo_lowmem.py` and measured 44.9 GB per card.
+        #
+        # The same response's `not_checked` already said our figures came from
+        # ONE recipe, so the finding contradicted our own caveat in the same
+        # payload. Assuming DPO is defensible when the script IS the training
+        # command and simply does not name its trainer; it is not defensible
+        # when the script hands the work to a file we were never sent.
+        return findings
     if trainer not in (None, "DPO"):
         # A trainer we recognised and it is not the one this arithmetic is for.
         # Nothing further is said: the honest answer is that we have not
@@ -1205,6 +1219,16 @@ def validate(
     findings.sort(key=lambda finding: order.get(finding.level, 3))
 
     not_checked = list(NOT_CHECKED)
+    if deferred is not None:
+        not_checked.insert(
+            0,
+            f"anything that depends on WHICH trainer this is: your script hands "
+            f"the work to another one ({deferred!r}) and we were not sent that "
+            f"file, so the memory arithmetic and the card recommendation are "
+            f"withheld rather than guessed. They were measured on a TRL "
+            f"preference-tuning run and would be a confident wrong number for "
+            f"anything else.",
+        )
     if deferred is not None and not alloc_on:
         not_checked.insert(
             0,

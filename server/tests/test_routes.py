@@ -41,10 +41,24 @@ class FakeCluster:
         self.expiries: dict[tuple[str, str], str] = {}
 
     def user_secrets(self, namespace):
+        # ★ THE EMPTY CASE GOES THROUGH THE SAME BRANCH THE REAL CLIENT TAKES.
+        # The real method calls `read_namespaced_secret`, which answers 404 when
+        # the namespace has registered nothing, and that branch has its own
+        # `return`. The first version of this double answered a dict on every
+        # path, so the 404 branch was never exercised -- and it was returning a
+        # LIST, which took every secrets route down with a bare 500 for exactly
+        # the namespaces that had nothing yet (D1, 2026-09-09). A double that
+        # cannot take the branch the real client takes cannot test it.
         if namespace in self.secrets_forbidden:
             raise k8s.ClusterError("secrets is forbidden: User cannot list resource")
+        if namespace not in self.secrets:
+            return self._nothing_registered_yet()
         return {name: self.expiries.get((namespace, name))
-                for name in sorted(self.secrets.get(namespace, {}))}
+                for name in sorted(self.secrets[namespace])}
+
+    def _nothing_registered_yet(self):
+        """What the real method returns from its 404 branch. Overridable in a test."""
+        return {}
 
     def put_user_secret(self, namespace, name, value, expires_at=None):
         if namespace in self.secrets_forbidden:
@@ -1294,7 +1308,11 @@ def test_a_job_whose_args_are_not_a_script_is_left_out_and_the_note_says_which_e
                        ["bash", "-lc", "   "])
     answer = as_alice(client, "GET", "/v1/scripts").json()
     assert answer["scripts"] == []
-    assert "in that shape" in answer["note"]
+    # 2026-09-09: note 가 `--script` 를 배제하는 것처럼 읽혀서(D4) 문구를 고쳤다.
+    # 지키는 사실은 "무엇이 인식되는 모양인지 말한다" 이고, 이제 그 모양과
+    # 그것을 만드는 두 길을 이름으로 적는다.
+    assert 'args == ["bash", "-lc", <text>]' in answer["note"]
+    assert "--script run.sh" in answer["note"]
 
 
 def test_scripts_are_the_callers_own_and_nobody_elses(client, cluster):
@@ -1916,3 +1934,46 @@ def test_an_unparseable_date_is_a_400_at_the_door(client, cluster):
     assert cluster.secrets == {}, (
         "읽을 수 없는 날짜는 들어오는 문에서 막는다 — 저장해 두면 영원히 만료 안 되는 "
         "이름이 되고, 그것을 나중에 거부하면 우리가 못 읽는 것으로 남의 일을 막는 것이다")
+
+
+def test_a_namespace_with_nothing_registered_still_answers(client, cluster):
+    """★ D1, 2026-09-09. 이것이 없어서 새 namespace 의 모든 job 이 막혔다.
+
+    `user_secrets` 가 404 분기에서 dict 대신 list 를 돌려줘서 route 가
+    `own.items()` 에서 터졌고, `GET /v1/secrets` 와 `secrets` 를 실은 모든
+    `POST /v1/validate` 가 **원인도 request id 도 없는 500** 을 답했다.
+    이 배포의 job 은 사실상 전부 `GITHUB_PAT` 이 필요하다(비공개 저장소 clone)
+    이라 새 namespace 는 아무것도 낼 수 없었다.
+    """
+    assert cluster.secrets == {}, "아무것도 등록되지 않은 상태에서 시작한다"
+    listed = as_alice(client, "GET", "/v1/secrets")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["names"] == ["GITHUB_PAT"], "운영자 binding 은 그래도 쓸 수 있다"
+    assert listed.json()["own"] == []
+    assert listed.json()["note"] == "", "목록이 비지 않았으므로 note 는 빈 문자열이 맞다"
+
+    for names in (["GITHUB_PAT"], ["ZZZ_NOT_A_SECRET"], []):
+        answer = as_alice(client, "POST", "/v1/validate", json=submit_body(secrets=names))
+        assert answer.status_code == 200, (names, answer.text[:200])
+    submitted = as_alice(client, "POST", "/v1/jobs", json=submit_body(secrets=["GITHUB_PAT"]))
+    assert submitted.status_code == 201, "submit 도 같은 코드 경로를 쓴다"
+
+
+def test_the_note_appears_when_the_list_really_is_empty(client, cluster):
+    """D1 의 곁가지. 500 때문에 빈 목록을 한 번도 못 봤다고 적혀 있었다.
+
+    `Settings` 는 frozen dataclass 라 monkeypatch 로 못 바꾼다. app.state 의
+    settings 를 binding 없는 사본으로 바꿔 끼우는 것이 실제 배포 상태(등록 0개)
+    를 그대로 만드는 길이다.
+    """
+    import dataclasses
+    live = client.app.state.settings
+    client.app.state.settings = dataclasses.replace(live, secret_bindings={})
+    try:
+        listed = as_alice(client, "GET", "/v1/secrets")
+        assert listed.status_code == 200, listed.text
+        assert listed.json()["names"] == []
+        assert "ddpsrun secret-set" in listed.json()["note"], (
+            "빌 때는 무엇을 하면 되는지가 문장으로 나온다")
+    finally:
+        client.app.state.settings = live
