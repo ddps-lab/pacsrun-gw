@@ -294,4 +294,4 @@ def test_a_disagreement_between_the_price_and_the_recommendation_is_said_out_lou
         gpu_name="L40S", cap=12288, pairs=1110, epochs=4, row_tokens=4100,
         mitigations_on=False,
     )
-    assert any("does not reflect that" in warning for warning in result.warnings)
+    assert any("reflects that" in warning for warning in result.warnings)

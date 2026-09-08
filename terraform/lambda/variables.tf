@@ -177,3 +177,42 @@ variable "cognito_login_domain" {
   type        = string
   default     = ""
 }
+
+
+// DDPSRUN-REGISTER. Where "somebody signed in and has no namespace" mail goes.
+//
+// EMPTY IS A SUPPORTED STATE, not a half-configured one. The server then reports
+// `registration_requests: false` on /v1/login-config, the screen draws no button
+// and tells the person to contact an operator directly, and no IAM permission is
+// created at all (the policy above has a count).
+//
+// ★ ONE MANUAL STEP THIS TERRAFORM CANNOT DO. While the SES account is in the
+// sandbox -- it is, measured 2026-09-08 (`ProductionAccessEnabled: false`, 200
+// messages a day, 1 a second, and ZERO verified identities) -- SES refuses to
+// send FROM or TO an address that has not been verified, and verification means
+// the owner of the inbox clicking a link AWS emails them. So after apply:
+//
+//   aws sesv2 create-email-identity --region <region> --email-identity <address>
+//   # AWS emails that address a confirmation link; the owner clicks it
+//   aws sesv2 get-email-identity --region <region> --email-identity <address> \
+//     --query VerifiedForSendingStatus
+//
+// Terraform cannot click the link, so `aws_ses_email_identity` would apply
+// cleanly and leave the button failing at runtime with "Email address not
+// verified" -- which is why the identity is NOT declared here. It is a person's
+// inbox, and consenting to receive from it is theirs to give.
+variable "register_notify_to" {
+  description = "Operator address that registration requests are emailed to. Empty turns the feature off."
+  type        = string
+  default     = ""
+}
+
+// Defaults to `register_notify_to` in the server (config.py), and the same
+// default is what the IAM resource ARN above falls back to. Setting them equal
+// is the cheapest working configuration: in the sandbox both ends have to be
+// verified, so one verification click covers both.
+variable "register_notify_from" {
+  description = "From address on registration emails. Empty means use register_notify_to."
+  type        = string
+  default     = ""
+}

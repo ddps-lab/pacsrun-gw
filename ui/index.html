@@ -38,6 +38,7 @@
     <button data-view="home" class="on">Home</button>
     <button data-view="jobs">Jobs</button>
     <button data-view="submit">Submit</button>
+    <button data-view="scripts">Scripts</button>
     <button data-view="team">Team</button>
     <button data-view="vendors">Vendors</button>
   </nav>
@@ -89,6 +90,36 @@
     <label><span>Token</span>
       <input id="in-token" type="password" placeholder="ddpsrun-..." autocomplete="off"></label>
     <button class="go" id="do-login">Sign in with a token</button>
+  </div>
+
+  <!-- DDPSRUN-REGISTER. The screen a first-time Google visitor lands on.
+       WHAT STATE THIS IS. Cognito verified them, so the sign-in WORKED and the
+       token in the browser is good. Every route still answers 403, because
+       nobody has given the address a namespace and only an operator can
+       (`auth.principal_for_email`). Until 2026-09-08 the app opened anyway and
+       filled with 403 errors, which reads as a broken service rather than a
+       closed one.
+       app.js unhides this after the startup probe of GET /v1/namespaces -- the
+       cheapest authenticated route there is, because it answers from the token
+       file and touches no cluster permission at all. -->
+  <div id="newcomer" class="stack" hidden>
+    <p><strong>You are signed in.</strong></p>
+    <p class="dim small">Signed in as <span id="nc-email" class="mono"></span>.
+      The sign-in itself worked, so there is nothing wrong with your Google
+      account. What is missing is a namespace on this cluster: it holds your
+      jobs and their results, it has to exist before it can be given to you,
+      and only an operator can create one.</p>
+    <!-- Drawn from login-config's `registration_requests`, NOT from `enabled`:
+         a deployment with Cognito and no notification address would otherwise
+         offer a button that answers 503. -->
+    <button class="go" id="nc-ask" hidden>Ask an operator to register me</button>
+    <p class="dim tiny" id="nc-ask-note" hidden>One email, with your address and
+      the entry the operator has to add. Pressing it twice sends nothing the
+      second time.</p>
+    <p class="dim tiny" id="nc-no-ask" hidden>This deployment cannot send that
+      email, so contact an operator directly and give them the address above.</p>
+    <div id="nc-result"></div>
+    <button class="flat small" id="nc-out">Sign out</button>
   </div>
 
   <div id="login-err"></div>
@@ -267,10 +298,21 @@
       <!-- DDPSRUN-IMAGES. A datalist and NOT a select: the addresses this lab has built are
            offered, and anything else stays typeable. A select would make a public image
            (runpod/pytorch:...) unreachable, and those are not in our registry at all. -->
+      <!-- DDPSRUN-IMAGES. A datalist ALONE was not enough and that is a measured judgement, not
+           a preference: the popup is a native widget that does not appear in a screenshot, and
+           the only thing telling a first-time user the list exists was the note beside the label
+           and a small arrow inside the box. So the addresses are also drawn as a visible list
+           below, and clicking one fills the box. The datalist stays because it filters as you
+           type, and the box stays free text because a public image (nvidia/cuda:..., runpod/...)
+           is not in our registry and must remain typeable. -->
       <label><span><b>Image *</b> <span class="dim" id="f-image-note"></span></span>
         <input id="f-image" list="f-image-list" autocomplete="off"
-               placeholder="type, or pick one this lab has built">
-        <datalist id="f-image-list"></datalist></label>
+               placeholder="type, or pick one below">
+        <datalist id="f-image-list"></datalist>
+        <div class="row" style="margin-top:2px">
+          <button class="flat tiny" id="f-image-toggle" type="button" style="padding:4px 10px">Browse this lab's images</button>
+        </div>
+        <div id="f-image-picker" hidden></div></label>
     </div>
     <!-- DDPSRUN-UI-COMMAND. One shell line, sent as args ["bash","-lc","<line>"], which is
          the idiom /v1/explain's own example uses. It used to be sent as a bare STRING into a
@@ -279,8 +321,14 @@
          empty box was the only submittable state. Sending a shell line rather than splitting
          on spaces is what makes quoting work: `python -c "import x"` is one argument to the
          shell, and four wrong tokens to a splitter. -->
-    <label><span><b>Command</b> <span class="dim">one shell line. Runs as <code>bash -lc</code>, so quotes and pipes work</span></span>
-      <textarea id="f-command" placeholder="bash /work/run.sh"></textarea></label>
+    <!-- DDPSRUN-UI-SCRIPT. The box was labelled "one shell line" and it is a textarea, so a whole
+         run.sh always pasted fine -- but the request only carried it as `args`, never as
+         `script`, and FOUR of validate's checks read `script` and nothing else. So on this
+         screen check_adapter_paths, check_partial_results, check_caps and the TRL-patch check
+         could never run, whatever anybody pasted. readForm now sends the same text as both. -->
+    <label><span><b>Script</b> <span class="dim">your whole run.sh, or one line. Runs as <code>bash -lc</code>, so quotes, pipes and newlines work</span></span>
+      <textarea id="f-command" rows="10" placeholder="set -euo pipefail&#10;&#10;python src/train.py --config configs/train.yaml&#10;python src/evaluate.py --config configs/train.yaml"></textarea>
+      <div id="f-command-note"></div></label>
     <div class="grid2">
       <label><span><b>GPU</b></span>
         <select id="f-gpu">
@@ -300,7 +348,14 @@
           <option value="B200">B200 (180 GB) - sold only as an 8-GPU machine</option>
           <option value="B300">B300 (288 GB) - sold only as an 8-GPU machine</option>
         </select></label>
-      <label><span><b>Parallelism</b></span>
+      <!-- DDPSRUN-UI-GPU-COUNT. Six of the fourteen cards in the list above are sold only as a
+           whole 8-GPU machine, and validate refuses them with `gpu-not-sold-singly` when the
+           count is 1 (validate.py's `if gpu_count == 1 and not choice.sold_singly`). Without a
+           box for the count, those six could be selected and never submitted -- the check was
+           already written to allow 8, there was just no way to ask for it. -->
+      <label><span><b>GPUs per pod</b> <span class="dim">V100/A100/H200/B200/B300 are sold only as a whole 8-card machine</span></span>
+        <input id="f-gpucount" type="number" min="1" max="8" value="1"></label>
+      <label><span><b>Parallelism</b> <span class="dim">how many independent pods</span></span>
         <input id="f-parallelism" type="number" min="1" max="256" value="1"></label>
       <label><span><b>Capacity type</b></span>
         <select id="f-capacity">
@@ -373,6 +428,9 @@
   <div class="panel" id="s2" hidden>
     <header><h2>Validate</h2><span class="dim small">The server checks the request before anything is bought.</span></header>
     <div id="s2-findings"></div>
+    <!-- DDPSRUN-UI-NOT-CHECKED. The server always answered this and the screen threw it away,
+         so "Nothing to flag." read as "everything is fine". -->
+    <div id="s2-not-checked"></div>
     <div class="row">
       <button class="go" id="s2-next">See the cost</button>
       <button class="flat" id="s2-back">Back</button>
@@ -406,6 +464,23 @@
 </section>
 
 <!-- ------------------------------------------------------------ 5. Vendors -->
+
+<!-- ------------------------------------------------------------ 4b. Scripts -->
+<!-- DDPSRUN-SCRIPTS. The scripts this caller has already submitted, read back out of their own
+     jobs. Nothing is stored for this: the text is on the PacsJob for as long as the job exists,
+     so it is already durable, already scoped to this caller, and already gone when the job is
+     deleted. Before this screen existed the only way to find a run.sh again was to open jobs one
+     at a time and read the Submitted spec panel. -->
+<section id="view-scripts" hidden>
+  <div class="head">
+    <div class="spacer">
+      <h1>Scripts</h1>
+      <p class="dim small" id="scripts-note"></p>
+    </div>
+    <button class="go" data-goto="submit">New job</button>
+  </div>
+  <div id="scripts-list"></div>
+</section>
 
 <section id="view-vendors" hidden>
   <div class="head">

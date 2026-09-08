@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from ddpsrun_server import catalogue, validate as v
+from ddpsrun_server import catalogue, measurements, validate as v
 from ddpsrun_server.estimate import Estimate
 
 
@@ -68,7 +68,45 @@ def test_a_card_sold_only_in_eights_is_refused_for_a_count_of_one():
     """The second half of the 2026-09-02 failure, and the one that survives even
     after the name is fixed. us-west-2 has zero A100-80GB rows with
     AcceleratorCount == 1.0."""
-    assert "gpu-not-sold-singly" in codes(findings("A100-80GB", count=1))
+    assert "gpu-count-unfillable" in codes(findings("A100-80GB", count=1))
+
+
+def test_the_same_ask_becomes_fillable_when_eight_pods_fill_the_machine():
+    """WHY THE OLD UNCONDITIONAL ERROR WAS WRONG. PACSrun keeps a row only when
+    `AcceleratorCount <= gpusPerPod * podCount`
+    (PACSrun/pkg/decider/skycatalog/aws.go:333), so one pod asking for one card
+    cannot have a p4de.24xlarge -- but EIGHT pods asking for one card each fill
+    it exactly, and that ask is fine."""
+    assert "gpu-count-unfillable" in codes(findings("A100-80GB", count=1))
+    assert "gpu-count-unfillable" not in codes(
+        v.check_gpu_is_buyable("A100-80GB", 1, None, 8))
+
+
+def test_a_count_no_machine_carries_is_caught_even_though_it_is_not_one():
+    """THE HAZARD THE COUNT BOX INTRODUCED on 2026-09-08. AWS sells the L40S in
+    machines of 1, 4 and 8. A pod asking for 2 is refused on both sides -- a
+    1-card machine is too small and a 4-card machine exceeds one pod's whole
+    job -- and the old check passed it because the count was not 1. Measured
+    over all fourteen cards at counts 1-8 with one pod: 82 of the 112 asks
+    cannot be filled, and the old check caught 6."""
+    unfillable = [
+        (choice.name, count)
+        for choice in catalogue.CHOOSABLE
+        for count in range(1, 9)
+        if not measurements.aws_cheapest(choice.name, count, 1)
+    ]
+    assert len(unfillable) == 82
+    assert ("L40S", 2) in unfillable
+    assert "gpu-count-unfillable" in codes(findings("L40S", count=2))
+
+
+def test_the_remedy_names_a_count_that_would_actually_work():
+    """A remedy that does not name a working value is a restatement of the
+    problem. Every size it offers has to be one AWS really sells."""
+    fix = [f for f in findings("L40S", count=2)
+           if f.code == "gpu-count-unfillable"][0].fix
+    assert "1, 4, 8" in fix
+    assert "raise parallelism to 2" in fix
 
 
 def test_the_same_card_is_fine_when_eight_are_asked_for():

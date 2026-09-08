@@ -111,7 +111,24 @@ BEFORE YOU SUBMIT
   "script". Four of its checks need that text. Its "not_checked" list says what
   no check could look at, so a clean result is not a complete one.
 
+  /v1/estimate answers an hourly RATE for every GPU on offer, including the
+  twelve nobody has run yet. That figure and the runtime are separate answers
+  that fail separately: how many hours needs a measurement of ours, one hour's
+  price is published. So "cost_usd": null next to a real "rate" means we know
+  what an hour costs and not how many hours -- and the rate belongs to a vendor,
+  because the one card both vendors supply is $0.99/hour on RunPod and
+  $1.8610/hour on AWS. Send "vendors" if you care which.
+
 WHAT IS NOT BUILT YET
-  No listing of available GPUs and prices. No cancel. No upload endpoint, so
-  your command must fetch its own code and data.
+  No upload endpoint, so your command must fetch its own code and data. What
+  there is instead: GET /v1/scripts hands back the run.sh of any job you have
+  submitted, because the text travels in "args" and stays on the PacsJob.
+
+  No price for a GPU on RunPod that we have never rented, and no price outside
+  us-west-2 -- the AWS table is that region only, which is the only region this
+  service has ever bought in.
+
+  (Two things this section claimed were missing until 2026-09-08 and were not:
+  cancelling, which is DELETE /v1/jobs/{id}, and a listing of GPUs, which is
+  GET /v1/schema.)
 """

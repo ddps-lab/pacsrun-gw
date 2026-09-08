@@ -76,6 +76,7 @@ class Settings:
         secret_bindings: name a user may write -> where it really is.
         log_tail_lines: how many lines of backlog `/v1/jobs/{id}/logs` returns
             before it starts following. 2000 is enough to see a training run's
+            most recent progress lines without downloading hours of output.
         cognito_pool_id: the Cognito user pool that signs id_tokens. Empty
             disables the Cognito branch entirely and leaves static tokens as the
             only credential.
@@ -86,7 +87,15 @@ class Settings:
             https://ddpsrun-x.auth.us-west-2.amazoncognito.com. The server never
             calls it; it hands the address to the screen and the CLI, which is
             why it is configuration and not something derived here.
-            most recent progress lines without downloading hours of output.
+        register_notify_to: DDPSRUN-REGISTER. Where a "somebody signed in and has
+            no namespace" email goes. Empty turns the endpoint off and the screen
+            then tells the person to contact an operator by other means -- which
+            is the honest answer for a deployment that has not set this up, and
+            better than a button that fails.
+        register_notify_from: the From address on that email. Defaults to
+            `register_notify_to`, because while the SES account is in the sandbox
+            BOTH ends have to be verified identities and setting them equal means
+            one verification click instead of two.
     """
 
     result_bucket: str
@@ -102,6 +111,11 @@ class Settings:
     cognito_client_id: str = ""
     cognito_region: str = ""
     cognito_login_domain: str = ""
+    # Empty means "this deployment cannot email an operator", which is a
+    # supported state for the same reason no-Cognito is: every deployment before
+    # 2026-09-08 was in it.
+    register_notify_to: str = ""
+    register_notify_from: str = ""
 
     @staticmethod
     def from_env(env: dict[str, str] | None = None) -> "Settings":
@@ -171,6 +185,14 @@ class Settings:
             tokens_path=required("DDPSRUN_TOKENS_PATH"),
             secret_bindings=bindings,
             log_tail_lines=tail,
+            # DDPSRUN-REGISTER. From defaults to To rather than to a made-up
+            # no-reply address: an unverified sender is refused by SES in the
+            # sandbox, so a default nobody verified would make the button fail
+            # on every deployment that set only one of the two.
+            register_notify_to=env.get("DDPSRUN_REGISTER_NOTIFY_TO", "").strip(),
+            register_notify_from=(
+                env.get("DDPSRUN_REGISTER_NOTIFY_FROM", "").strip()
+                or env.get("DDPSRUN_REGISTER_NOTIFY_TO", "").strip()),
             # All three empty means no Cognito. That is a supported state, not a
             # broken one: the server then accepts static tokens only, which is
             # exactly what it did before Cognito existed and is what a local run

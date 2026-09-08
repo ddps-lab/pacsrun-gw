@@ -130,6 +130,241 @@ GPUS: tuple[Gpu, ...] = (
     Gpu("A100-80GB", 80, 79.15, 1.59, "2026-08-29", aliases=("A100-SXM4-80GB",)),
 )
 
+# ---------------------------------------------------------------------------
+# DDPSRUN-AWS-PRICES. What AWS charges for the cards a user may CHOOSE.
+#
+# WHY THIS TABLE EXISTS, AND WHY IT IS NOT THE ONE ABOVE. `GPUS` above is what we
+# have RENTED, and its price is RunPod's on-demand rate at the moment we were
+# charged it. Two entries. `catalogue.CHOOSABLE` offers fourteen cards, so twelve
+# of them had no price at all and `/v1/estimate` answered `unknown` for both hours
+# AND cost. Hours genuinely cannot be answered -- see WHY WE DO NOT EXTRAPOLATE
+# below -- but the hourly RATE is a published number sitting in the same CSV that
+# `catalogue.Choice.sold_singly` was already read from.
+#
+# AND IT FIXES A WRONG NUMBER, not just a missing one. Before this table,
+# `estimate()` priced EVERY job at `GPUS.usd_per_hour`, which is RunPod's rate. An
+# AWS L40S job was quoted $0.99/hour against a published AWS on-demand rate of
+# $1.8610 -- 47% low. Underestimating by half is the same defect class as
+# market-exp2, which is the incident this whole module is shaped around.
+#
+# WHAT ONE ROW IS. The cheapest us-west-2 machine, by on-demand price, that carries
+# exactly `gpus` of `card`. Read from ~/.sky/catalogs/v8/aws/vms.csv (54,043 rows)
+# on 2026-09-08 by a generator, not by hand, because 30 rows of prices copied by
+# eye is 30 chances to shift a digit.
+#
+# ON-DEMAND IS ONE NUMBER, SPOT IS A RANGE, and that difference is not cosmetic.
+# On-demand is published per region and moves rarely. Spot is per availability
+# zone and moves continuously, so `spot_low`/`spot_high` are the cheapest and
+# dearest zone in the SAME snapshot. TWO INDEPENDENT MEASUREMENTS LAND INSIDE THAT
+# RANGE, which is why the range is carried at all rather than dropped as
+# untrustworthy -- both taken with `aws ec2 describe-spot-price-history` on
+# 2026-09-08 during the live runs in
+# experiments/runpod/raw-logs/s57-vendor-choice-and-compare-2026-09-08.md:
+#
+#   g6.xlarge     us-west-2d  measured $0.4825   this table 0.4444-0.5454   inside
+#   gr6.4xlarge   us-west-2d  measured $0.5521   (not a row: 1 L4, dearer than
+#                                                 g6.xlarge, so never the cheapest)
+#
+# The spot DISCOUNT is not a factor and must not be applied as one: it was 55-68%
+# of on-demand on g6.xlarge and 35-41% on gr6.4xlarge. That is why every row
+# carries its own spot numbers instead of one multiplier.
+#
+# ★ WHY WE DO NOT EXTRAPOLATE RUNTIME TO AN UNRENTED CARD, however tempting a
+# spec ratio looks. We have exactly ONE controlled comparison -- two runs at the
+# same cap and the same response length on two different cards:
+#
+#   aiops-exp1   A100-80GB   cap 12288   5,600 tokens   1,682 tok/s
+#   aiops-exp2   L40S        cap 12288   5,600 tokens   1,357 tok/s   ratio 1.24
+#
+# Two cards with one point each fix a line through those two cards and leave NO
+# third card to test it on. A model whose error is unmeasurable by construction is
+# not a measurement, and the last time an estimate was made anyway it was 96%
+# wrong. So `estimate.py` still answers `unknown` for hours on the other twelve
+# cards, and answers a real number for the RATE.
+#
+# WHAT THIS TABLE DOES NOT COVER. RunPod, whose prices come from `GPUS` above and
+# exist for two cards only; and every region other than us-west-2, which is the
+# only region PACSrun's AWS route has ever bought in.
+AWS_PRICE_REGION = "us-west-2"
+AWS_PRICED_ON = "2026-09-08"
+
+
+@dataclass(frozen=True)
+class AwsMachine:
+    """One AWS machine type, as the catalogue prices it.
+
+    Attributes:
+        card: the catalogue's spelling of the GPU, matching `catalogue.Choice.name`.
+        gpus: how many of that card the machine carries. This is the number
+            PACSrun compares an ask against, and the comparison is a RANGE and not
+            an equality -- see `aws_fillable`.
+        instance: the machine type. Named so a price can be checked against AWS's
+            own page.
+        usd_per_hour: on-demand, for the WHOLE machine. None when the catalogue
+            publishes no on-demand rate for it: AWS sells some of the newest cards
+            through Capacity Blocks instead, and `p5e.48xlarge` (H200) is such a
+            row in this snapshot -- it has a spot price and an empty Price column.
+        spot_low: the cheapest availability zone's spot price in this snapshot.
+        spot_high: the dearest. Equal to spot_low when only one zone offers it.
+        zones: how many availability zones the row was seen in, so a single-zone
+            card (B300, one zone) is visibly less available than a four-zone one.
+    """
+
+    card: str
+    gpus: int
+    instance: str
+    usd_per_hour: float | None
+    spot_low: float | None
+    spot_high: float | None
+    zones: int
+
+
+# DROPPED BY THE FILTERS (printed so the exclusions are visible, not implied):
+#   g6f.2xlarge      AcceleratorCount 0.25   rounds to 0
+#   g6f.4xlarge      AcceleratorCount 0.5    11.18 GiB < 16
+#   g6f.large        AcceleratorCount 0.125  rounds to 0
+#   g6f.xlarge       AcceleratorCount 0.125  rounds to 0
+#   gr6f.4xlarge     AcceleratorCount 0.5    11.18 GiB < 16
+
+AWS_MACHINES: tuple[AwsMachine, ...] = (
+    AwsMachine("T4", 1, "g4dn.xlarge", 0.5260, 0.0631, 0.2086, 5),
+    AwsMachine("T4", 4, "g4dn.12xlarge", 3.9120, 1.3937, 1.5391, 5),
+    AwsMachine("T4", 8, "g4dn.metal", 7.8240, 3.8532, 4.1120, 5),
+    AwsMachine("T4g", 1, "g5g.xlarge", 0.4200, 0.1234, 0.1571, 3),
+    AwsMachine("T4g", 2, "g5g.16xlarge", 2.7440, 0.8326, 1.1337, 3),
+    AwsMachine("L4", 1, "g6.xlarge", 0.8048, 0.4444, 0.5454, 4),
+    AwsMachine("L4", 4, "g6.12xlarge", 4.6016, 1.5794, 2.1059, 4),
+    AwsMachine("L4", 8, "g6.48xlarge", 13.3504, 5.7420, 6.8526, 4),
+    AwsMachine("A10G", 1, "g5.xlarge", 1.0060, 0.5869, 0.6680, 3),
+    AwsMachine("A10G", 4, "g5.12xlarge", 5.6720, 2.9406, 3.5339, 3),
+    AwsMachine("A10G", 8, "g5.48xlarge", 16.2880, 3.2736, 7.2926, 3),
+    AwsMachine("RTX PRO 4500", 1, "g7.2xlarge", 2.5200, 0.7692, 0.8622, 4),
+    AwsMachine("RTX PRO 4500", 2, "g7.12xlarge", 7.1283, 2.0537, 2.6974, 4),
+    AwsMachine("RTX PRO 4500", 4, "g7.24xlarge", 14.2566, 1.5131, 4.0954, 4),
+    AwsMachine("RTX PRO 4500", 8, "g7.48xlarge", 28.5133, 4.2787, 5.0269, 4),
+    AwsMachine("V100-32GB", 8, "p3dn.24xlarge", 31.2120, 5.5250, 7.7890, 2),
+    AwsMachine("L40S", 1, "g6e.xlarge", 1.8610, 1.0555, 1.2863, 4),
+    AwsMachine("L40S", 4, "g6e.12xlarge", 10.4926, 3.1110, 7.4346, 4),
+    AwsMachine("L40S", 8, "g6e.48xlarge", 30.1312, 7.3472, 12.6860, 4),
+    AwsMachine("RTXPRO6000", 1, "g7e.2xlarge", 3.3631, 1.5964, 3.3631, 4),
+    AwsMachine("RTXPRO6000", 2, "g7e.12xlarge", 8.2861, 2.5417, 8.2861, 4),
+    AwsMachine("RTXPRO6000", 4, "g7e.24xlarge", 16.5722, 6.4355, 16.5722, 4),
+    AwsMachine("RTXPRO6000", 8, "g7e.48xlarge", 33.1443, 13.9304, 33.1443, 4),
+    AwsMachine("A100", 8, "p4d.24xlarge", 21.9576, 16.2246, 17.8254, 4),
+    AwsMachine("A100-80GB", 8, "p4de.24xlarge", 27.4471, 18.9276, 21.6732, 3),
+    AwsMachine("H100", 1, "p5.4xlarge", 6.8800, 2.6295, 2.6295, 4),
+    AwsMachine("H100", 8, "p5.48xlarge", 55.0400, 19.9398, 21.0363, 4),
+    AwsMachine("H200", 8, "p5en.48xlarge", 63.2960, 27.1035, 27.1792, 3),
+    AwsMachine("B200", 8, "p6-b200.48xlarge", 113.9328, 39.9348, 40.5845, 3),
+    AwsMachine("B300", 8, "p6-b300.48xlarge", 142.4160, 43.4369, 43.4369, 1),
+)
+
+
+def aws_machines_for(card: str) -> tuple[AwsMachine, ...]:
+    """Every priced AWS machine carrying this card.
+
+    Args:
+        card: the catalogue's spelling.
+
+    Returns:
+        The matching rows, cheapest count first. Empty when us-west-2 does not
+        offer the card at all.
+    """
+    key = (card or "").strip().lower()
+    return tuple(m for m in AWS_MACHINES if m.card.lower() == key)
+
+
+def aws_counts(card: str) -> tuple[int, ...]:
+    """How many of this card AWS sells at once, in us-west-2.
+
+    Args:
+        card: the catalogue's spelling.
+
+    Returns:
+        The distinct machine sizes, ascending. `(8,)` means the card only comes
+        as a whole eight-GPU machine. This REPLACES a hand-maintained boolean:
+        `catalogue.Choice` used to carry `sold_singly`, which is just `1 in` this
+        answer, and carrying the derived form let it drift from the CSV.
+    """
+    return tuple(sorted({m.gpus for m in aws_machines_for(card)}))
+
+
+def aws_fillable(card: str, gpus_per_pod: int, pod_count: int) -> tuple[AwsMachine, ...]:
+    """Which machines PACSrun's AWS reader would actually accept for this ask.
+
+    THE RULE IS PACSrun's, COPIED NOT INVENTED. `pkg/decider/skycatalog/aws.go:333`
+    keeps a row only when
+
+        AcceleratorCount >= gpusPerPod  AND  AcceleratorCount <= gpusPerPod * podCount
+
+    A machine must carry at least one pod's worth, and no more than the whole
+    job's worth. Both halves matter and the second one is the surprising one:
+
+        count 1, parallelism 1  -> maxUsefulCards 1 -> p4de.24xlarge (8 cards) is
+                                   REFUSED. An A100-80GB cannot be had.
+        count 1, parallelism 8  -> maxUsefulCards 8 -> p4de.24xlarge is ACCEPTED,
+                                   and the eight pods fill it.
+
+    So "this card is not sold one at a time" is true or false depending on the pod
+    count, and `validate.py` used to report it as an unconditional error.
+
+    Args:
+        card: the catalogue's spelling.
+        gpus_per_pod: `gpu.count` -- how many cards one pod asks for.
+        pod_count: `parallelism`. Values below 1 are treated as 1, matching the
+            `podCount <= 0` fallback at aws.go:312 which degenerates the ceiling
+            to `gpusPerPod` alone.
+
+    Returns:
+        The acceptable machines, or empty when nothing fits.
+    """
+    per_pod = max(1, gpus_per_pod)
+    pods = max(1, pod_count)
+    ceiling = per_pod * pods
+    return tuple(
+        m for m in aws_machines_for(card) if per_pod <= m.gpus <= ceiling
+    )
+
+
+def aws_cheapest(card: str, gpus_per_pod: int,
+                 pod_count: int) -> tuple[AwsMachine, int] | None:
+    """The machine this ask would be bought on, and how many pods it seats.
+
+    WHY PER POD-HOUR AND NOT PER MACHINE-HOUR. This is the axis PACSrun's own
+    solver ranks on: `pkg/decider/skycatalog/decider.go:1211` builds every
+    alternate with `PricePerPodHour: o.PricePerHour / fits`. Picking the cheapest
+    MACHINE would answer g6e.xlarge ($1.8610, one L40S) for a four-card pod, which
+    cannot host it at all.
+
+    Worked example, L40S, one card per pod, four pods:
+
+        g6e.xlarge     $1.8610/hr   1 card   seats 1 pod    $1.8610 per pod-hour
+        g6e.12xlarge  $10.4926/hr   4 cards  seats 4 pods   $2.6232 per pod-hour
+        g6e.48xlarge  $30.1312/hr   8 cards  refused: 8 > 1*4
+
+    so four g6e.xlarge at $7.4440/hr total beats one g6e.12xlarge at $10.4926/hr,
+    and this returns g6e.xlarge with 1 seat.
+
+    Args:
+        card: the catalogue's spelling.
+        gpus_per_pod: `gpu.count`.
+        pod_count: `parallelism`.
+
+    Returns:
+        `(machine, seats)`, or None when nothing fits or nothing that fits has a
+        published on-demand price. Seats is how many pods that one machine holds,
+        which is `gpus // gpus_per_pod` -- the same integer division as
+        `PACSrun/pkg/decider/decider.go:607`.
+    """
+    per_pod = max(1, gpus_per_pod)
+    priced = [m for m in aws_fillable(card, gpus_per_pod, pod_count)
+              if m.usd_per_hour is not None]
+    if not priced:
+        return None
+    best = min(priced, key=lambda m: m.usd_per_hour / (m.gpus // per_pod))
+    return best, best.gpus // per_pod
+
+
 # Qwen3-4B's vocabulary. This is the single biggest term in the memory
 # calculation and it is a property of the MODEL, not of the GPU or the data —
 # so a different model needs a different number and `estimate.py` takes it as an

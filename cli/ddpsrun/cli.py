@@ -611,6 +611,7 @@ def cmd_estimate(args: argparse.Namespace) -> int:
         return EXIT_OK
 
     hours, cost, gpu = result["hours"], result["cost_usd"], result["gpu"]
+    rate = result.get("rate") or {}
     if result.get("steps"):
         print(f"  steps          {result['steps']:,}")
     if hours.get("low") is not None:
@@ -619,8 +620,23 @@ def cmd_estimate(args: argparse.Namespace) -> int:
         # `unknown` is a real answer, and printing a blank instead of saying so
         # is how a user ends up assuming zero.
         print(f"  time           unknown  [{hours['confidence']}]")
+    # THE RATE IS PRINTED WHETHER OR NOT THE HOURS ARE KNOWN. Twelve of the
+    # fourteen choosable cards have no throughput measurement, so their `time`
+    # is `unknown` -- and this block used to skip the money entirely for them,
+    # which is the same blank-instead-of-saying-so hazard the `time` line above
+    # was already fixed for. The rate needs no measurement of ours.
+    if rate.get("usd_per_hour_low") is not None:
+        span = ("" if rate["usd_per_hour_high"] == rate["usd_per_hour_low"]
+                else f" - ${rate['usd_per_hour_high']}")
+        machines = f" ({rate['machines']} machine(s))" if rate.get("machines", 1) > 1 else ""
+        print(f"  rate           ${rate['usd_per_hour_low']}{span} /h"
+              f"  [{rate.get('vendor') or 'unpriced'}]{machines}")
     if cost.get("low") is not None:
         print(f"  cost           ${cost['low']} - ${cost['high']}")
+    elif rate.get("usd_per_hour_low") is not None:
+        print("  cost           unknown -- the rate above is known, the hours are not")
+    if rate.get("basis"):
+        print(f"  price basis    {rate['basis']}")
     print(f"  basis          {result['basis']}")
     print(f"  GPU            {gpu.get('recommended') or 'none'}"
           f" ({gpu.get('recommended_vram_gb')} GB), logits peak {gpu['peak_logits_gib']} GiB")

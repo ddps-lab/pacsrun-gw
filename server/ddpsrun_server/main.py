@@ -51,6 +51,7 @@ from . import artifacts
 from . import naming
 from . import registry      # DDPSRUN-IMAGES: the container images this lab has built
 from . import cognito
+from . import notify
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
 from .k8s import Cluster, ClusterError, NotFound
@@ -63,6 +64,7 @@ from .models import (
     ArtifactFileView,
     ArtifactsResponse,
     CostRange,
+    RateView,
     ExecRequest,
     ExecResponse,
     EstimateResponse,
@@ -72,6 +74,8 @@ from .models import (
     JobListResponse,
     ImageView,
     ImagesResponse,
+    ScriptView,
+    ScriptsResponse,
     JobSpecResponse,
     JobView,
     NamespacesResponse,
@@ -234,6 +238,60 @@ def require_principal(
 PrincipalDep = Annotated[Principal, Depends(require_principal)]
 
 
+
+def require_signed_in(request: Request,
+                      authorization: str | None = Header(default=None)) -> cognito.CognitoIdentity:
+    """Identify a caller Cognito vouched for, WITHOUT requiring registration.
+
+    DDPSRUN-REGISTER. This is the one dependency in the file that stops at "who
+    is this" and never asks "and what may they touch". Every other route uses
+    `require_principal`, which answers 403 for an address the token file does
+    not name -- and that 403 is precisely the state this endpoint exists to
+    serve, so it cannot be behind it.
+
+    WHAT IT STILL DEMANDS, so that the endpoint is not simply open. The
+    credential has to be a JWT that passes every check in `cognito.Verifier`:
+    signature against the pool's live JWKS, issuer, audience, expiry, and
+    `email_verified`. A static token is refused outright -- somebody holding one
+    is already registered and has no use for this route.
+
+    Args:
+        request: used to reach `app.state.cognito`.
+        authorization: the `Authorization` header.
+
+    Returns:
+        The `CognitoIdentity`: the verified address and Cognito's own `sub`.
+
+    Raises:
+        HTTPException: 401 when there is no usable Cognito credential, 503 when
+            this deployment has no Cognito configured at all -- which is not the
+            caller's fault and must not read as one.
+    """
+    verifier = getattr(request.app.state, "cognito", None)
+    if verifier is None:
+        raise HTTPException(
+            status_code=503,
+            detail="this deployment has no Cognito configured, so there is no "
+                   "signed-in identity to register. Ask an operator for a token.",
+        )
+    try:
+        credential = bearer_token(authorization)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    if not cognito.looks_like_a_jwt(credential):
+        raise HTTPException(
+            status_code=401,
+            detail="this endpoint needs the id_token from a Google sign-in. A "
+                   "static token means you are already registered.",
+        )
+    try:
+        return verifier.claims(credential)
+    except cognito.TokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+SignedInDep = Annotated[cognito.CognitoIdentity, Depends(require_signed_in)]
+
 def namespace_for(principal: Principal, requested: str) -> str:
     """Which namespace this request reads.
 
@@ -345,15 +403,98 @@ def login_config(request: Request) -> dict[str, object]:
     settings: Settings = request.app.state.settings
     verifier = getattr(request.app.state, "cognito", None)
     if verifier is None:
-        return {"enabled": False}
+        return {"enabled": False, "registration_requests": False}
     return {
         "enabled": True,
         "client_id": settings.cognito_client_id,
         "issuer": verifier.issuer,
         "login_domain": settings.cognito_login_domain,
         "scopes": ["openid", "email"],
+        # DDPSRUN-REGISTER. Whether POST /v1/register-request can actually reach
+        # an operator. The screen draws its button from this and NOT from
+        # `enabled`: a deployment with Cognito but no notification address would
+        # otherwise offer a button that answers 503, and a first-time visitor
+        # cannot tell a broken service from a closed one.
+        "registration_requests": bool(settings.register_notify_to),
+        # The operator's address is deliberately NOT here. Anyone with a Google
+        # account can read this route's answer, and handing them an inbox to
+        # aim at is not something this endpoint needs to do for the button to
+        # work.
     }
 
+
+
+@app.post("/v1/register-request", status_code=202)
+def register_request(request: Request, identity: SignedInDep) -> dict[str, object]:
+    """Ask an operator to give this signed-in address a namespace.
+
+    DDPSRUN-REGISTER. The state this serves: Cognito verified somebody, so their
+    sign-in worked, and `auth.principal_for_email` still refuses them because
+    nobody has registered the address. Until 2026-09-08 that was a dead end --
+    the screen showed the 403 text and there was nothing to press.
+
+    WHY 202 AND NOT 200. Nothing has been granted. An email has been queued to a
+    human who may ignore it, and a 200 on a request whose whole content is "please
+    decide" reads as a decision.
+
+    WHY REPEATING IT SENDS NOTHING. `notify.already_asked` writes a marker with
+    `If-None-Match: *`, so the second request from the same address answers 202
+    with `emailed: false`. Reloading the screen must not mail the operator again,
+    and this endpoint is on a public URL that any Google account can reach.
+
+    Returns:
+        `emailed` true when this call sent the mail, false when an earlier one
+        already did. Both are successes from the caller's side: the operator has
+        been told either way, which is what they asked for.
+
+    Raises:
+        HTTPException: 409 when the caller is ALREADY registered -- pressing this
+        then means the screen is out of date, and telling them so is more useful
+        than emailing an operator about somebody who needs nothing. 503 when this
+        deployment has no notification address. 502 when S3 or SES refused.
+    """
+    settings: Settings = request.app.state.settings
+    if not settings.register_notify_to:
+        raise HTTPException(
+            status_code=503,
+            detail="this deployment cannot email an operator: no registration "
+                   "notification address is configured. Ask an operator directly.",
+        )
+    try:
+        request.app.state.tokens.principal_for_email(identity.email)
+    except UnknownUser:
+        pass                      # the expected case: this is why they are here
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{identity.email} is already registered. Reload the page -- "
+                   f"your sign-in works and you need nothing from an operator.",
+        )
+
+    try:
+        seen_before = notify.already_asked(settings.result_bucket, identity.email)
+        if not seen_before:
+            notify.send_registration_request(
+                email=identity.email,
+                subject_id=identity.subject,
+                notify_to=settings.register_notify_to,
+                notify_from=settings.register_notify_from,
+            )
+    except notify.NotifyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    logger.info("registration request for %s (emailed=%s)",
+                identity.email, not seen_before)
+    return {
+        "email": identity.email,
+        "emailed": not seen_before,
+        "message": (
+            "An operator has been emailed and will create a namespace for you."
+            if not seen_before else
+            "An operator was already emailed about this address. Nothing further "
+            "was sent; the decision is theirs."
+        ),
+    }
 
 @app.get("/v1/schema")
 def schema() -> dict[str, Any]:
@@ -388,6 +529,14 @@ def _estimate_for(body: JudgementRequest) -> estimator.Estimate:
         mitigations_on=all(validator.mitigations_from(body.env, body.script)),
         resumable=body.training.resumable,
         vocab=body.training.vocab,
+        # DDPSRUN-AWS-PRICES. These three reach the PRICE, not the runtime. The
+        # throughput table was measured on one-card pods on RunPod, so neither
+        # the count nor the vendor can change what we claim about step time --
+        # but both change the machine that gets rented and what it costs.
+        gpu_count=body.gpu.count if body.gpu else 1,
+        parallelism=body.parallelism,
+        vendors=body.vendors,
+        asked_capacity=body.capacity_type,
     )
 
 
@@ -413,6 +562,13 @@ def estimate_route(body: JudgementRequest, principal: PrincipalDep) -> EstimateR
             confidence=result.duration.confidence,
         ),
         cost_usd=CostRange(low=result.cost_low_usd, high=result.cost_high_usd),
+        rate=RateView(
+            usd_per_hour_low=result.rate.usd_per_hour_low,
+            usd_per_hour_high=result.rate.usd_per_hour_high,
+            vendor=result.rate.vendor,
+            machines=result.rate.machines,
+            basis=result.rate.basis,
+        ),
         basis=result.duration.basis,
         gpu=GpuAdviceView(
             recommended=result.gpu.recommended,
@@ -449,6 +605,11 @@ def validate_route(body: JudgementRequest, principal: PrincipalDep) -> ValidateR
         gpu_name=gpu_name_for(body),
         gpu_count=(body.gpu.count if body.gpu else 1),
         capacity_type=body.capacity_type,
+        # THE POD COUNT IS PART OF "can this be bought". PACSrun refuses a
+        # machine carrying more cards than the WHOLE job needs, so one pod
+        # asking for one A100-80GB is unfillable and eight pods asking for one
+        # each fill a p4de.24xlarge exactly (aws.go:333).
+        parallelism=body.parallelism,
         # DDPSRUN-VENDOR-CHOICE. Four of the six vendor names can be priced and
         # not rented, so whether the list the caller sent is sensible depends on
         # the mode. Both go in together.
@@ -800,6 +961,76 @@ def get_job_spec(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return JobSpecResponse.from_pacsjob(obj)
+
+
+@app.get("/v1/scripts", response_model=ScriptsResponse)
+def scripts_route(
+    request: Request,
+    principal: PrincipalDep,
+    namespace: str | None = Query(default=None),
+) -> ScriptsResponse:
+    """The scripts this caller has submitted before, newest first.
+
+    DDPSRUN-SCRIPTS-ROUTE. The Script box on the New job screen is where a run.sh goes, and until
+    this route existed there was no way to get one back: the screen sent it, the job ran it, and
+    finding it again meant opening jobs one at a time and reading the Submitted spec panel.
+
+    IT COSTS ONE CLUSTER CALL AND STORES NOTHING. `list_jobs` already returns whole objects --
+    /v1/jobs throws the specs away and keeps the status -- so the scripts are in hand before this
+    function starts. Nothing is written anywhere; deleting a job deletes its script with it.
+
+    THE SHAPE IT RECOGNISES is the one the screen sends: args == ["bash", "-lc", <text>]. A
+    kubectl job, an argv list or an image running its own entrypoint carries no script by that
+    definition, and those are left out rather than guessed at -- which is why an empty answer
+    comes with a note saying which of the two emptinesses it is.
+
+    Returns:
+        A `ScriptsResponse`, newest first, one entry per DISTINCT text.
+    """
+    cluster: Cluster = request.app.state.cluster
+    try:
+        objects = cluster.list_jobs(namespace_for(principal, namespace))
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # Keyed by the text itself, so the same run.sh submitted five times is one entry. dict keeps
+    # insertion order and the objects are walked newest first, so the first sighting of a text is
+    # also its most recent job -- which is the one worth naming.
+    seen: dict[str, ScriptView] = {}
+    ordered = sorted(
+        objects,
+        key=lambda o: (o.get("metadata") or {}).get("creationTimestamp") or "",
+        reverse=True,
+    )
+    for obj in ordered:
+        args = ((obj.get("spec") or {}).get("args")) or []
+        if len(args) != 3 or args[0] != "bash" or args[1] != "-lc":
+            continue
+        text = args[2]
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if text in seen:
+            seen[text].used += 1
+            continue
+        meta = obj.get("metadata") or {}
+        labels = meta.get("labels") or {}
+        seen[text] = ScriptView(
+            script=text,
+            job_id=labels.get(naming.JOB_ID_LABEL, ""),
+            name=labels.get(naming.DISPLAY_NAME_LABEL, "") or meta.get("name", ""),
+            created_at=meta.get("creationTimestamp"),
+            used=1,
+            lines=len(text.splitlines()) or 1,
+        )
+
+    note = ""
+    if not seen:
+        note = (
+            "None of your jobs carries a script this route recognises. It reads the text back "
+            "out of the job itself, and only a job submitted from the New job screen's Script "
+            "box (or with `--arg bash --arg -lc --arg '<text>'`) has it in that shape."
+        )
+    return ScriptsResponse(scripts=list(seen.values()), note=note)
 
 
 @app.get("/v1/images", response_model=ImagesResponse)
