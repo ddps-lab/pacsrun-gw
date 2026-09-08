@@ -312,3 +312,44 @@ def test_an_unrecognised_mode_is_refused_rather_than_defaulted():
     """
     with pytest.raises(ValidationError):
         SubmitRequest(name="n", image="img", placement_mode="cheapets")
+
+# ---------------------------------------------------------------- DDPSRUN-WORKLOAD-SA
+
+
+def test_the_default_service_account_is_the_one_the_role_trusts(monkeypatch):
+    """The default was an IAM ROLE's name in a ServiceAccount's slot, and it broke every AWS job.
+
+    WHAT spec.serviceAccountName IS FOR, which is where the mistake started. It is put on the
+    job's DRIVER POD, and the driver pod's identity is what RENTS THE MACHINE -- not, as
+    config/deploy/workload-sa.yaml used to say, merely what lets the workload upload its
+    results. So a name no role trusts is not a smaller failure later; it is exit 10 before
+    anything is bought:
+
+        configuration error: PACSRUN_AWS_ZONE is unusable: ... AccessDenied ... Not authorized
+        to perform sts:AssumeRoleWithWebIdentity
+
+    MEASURED 2026-09-08 on job ddpsrun-24547306294e, submitted from the New job screen. The
+    solve was clean (`aws g6.xlarge usw2-az4`) and the driver died at +0.31s in its own
+    configuration check. The same request with `pacsjob-writer` reached Running and rented a
+    gr6.4xlarge.
+
+    WHY THE NAME CANNOT BE CHOSEN FREELY. The role is assumed through EKS Pod Identity and the
+    association is `default/pacsjob-writer -> role/pacsrun-workload`; the role's trust policy
+    names exactly one namespace/ServiceAccount pair. PACSrun's own config/deploy/README.md step
+    3: "role의 trust policy가 그 namespace/ServiceAccount 조합 하나만 신뢰하므로, 다른 SA로
+    돌리면 STS가 거절한다."
+    """
+    monkeypatch.setenv("DDPSRUN_RESULT_BUCKET", "b")
+    monkeypatch.setenv("DDPSRUN_TOKENS_PATH", "/etc/ddpsrun/tokens.json")
+    monkeypatch.delenv("DDPSRUN_SERVICE_ACCOUNT", raising=False)
+
+    settings = Settings.from_env()
+    assert settings.service_account == "pacsjob-writer", (
+        "the default must be the ServiceAccount PACSrun's terraform wired to the role, not the "
+        "role's own name"
+    )
+
+    # AND IT IS STILL A SETTING. A deployment whose terraform output differs has to be able to
+    # say so, which is why this is a default and not a constant.
+    monkeypatch.setenv("DDPSRUN_SERVICE_ACCOUNT", "some-other-sa")
+    assert Settings.from_env().service_account == "some-other-sa"

@@ -1,21 +1,42 @@
 # DDPSRUN-WORKLOAD-SA
 #
-# The identity every job's pods run as. `models.to_pacsjob` writes
-# `serviceAccountName: pacsrun-workload` into every PacsJob it creates, and
-# kubernetes refuses to create a pod naming a ServiceAccount that does not
-# exist — so without this, a submitted job reaches Pending and stops.
+# ★ THIS FILE NO LONGER CREATES ANYTHING, AND THE PARAGRAPH IT USED TO CARRY WAS WRONG ABOUT
+# WHAT ITS ABSENCE COSTS. It created a ServiceAccount named `pacsrun-workload` with this note:
 #
-# NO IRSA ANNOTATION YET, ON PURPOSE. Adding
-# `eks.amazonaws.com/role-arn` here is what would let a job's pod call AWS and
-# write its results to S3. That needs a decision this file cannot make on its
-# own: one IAM role per tenant namespace or one shared, whether read is granted
-# alongside write, and how it lines up with fetch mode where the driver pod
-# uploads instead of the remote. Until that is settled, a job can run and stream
-# its logs but cannot upload anything.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: pacsrun-workload
-  namespace: default
-  labels:
-    app.kubernetes.io/managed-by: ddpsrun
+#     NO IRSA ANNOTATION YET, ON PURPOSE. ... Until that is settled, a job can run and stream
+#     its logs but cannot upload anything.
+#
+# WHAT IS ACTUALLY TRUE. `spec.serviceAccountName` on a PacsJob is put on the job's DRIVER POD,
+# and the driver pod's identity is what RENTS THE MACHINE. Without a usable one the job does not
+# "run without uploading" -- it does not run at all:
+#
+#     configuration error: PACSRUN_AWS_ZONE is unusable: the availability zone id 'usw2-az4'
+#     could not be resolved in region 'us-west-2': An error occurred (AccessDenied) when calling
+#     the AssumeRoleWithWebIdentity operation: Not authorized to perform
+#     sts:AssumeRoleWithWebIdentity
+#
+# exit 10, terminal, before anything is bought. Measured 2026-09-08 on job ddpsrun-24547306294e
+# submitted from the New job screen: the solve was clean (`aws g6.xlarge usw2-az4`) and the
+# driver died in its own configuration check at +0.31s.
+#
+# WHY CREATING AN SA HERE COULD NEVER HAVE HELPED. The role is assumed through EKS Pod Identity,
+# and the association is `default/pacsjob-writer -> role/pacsrun-workload`. The role's trust
+# policy names exactly ONE namespace/ServiceAccount pair -- PACSrun's own config/deploy/README.md
+# step 3 says so: "role의 trust policy가 그 namespace/ServiceAccount 조합 하나만 신뢰하므로,
+# 다른 SA로 돌리면 STS가 거절한다". So a second ServiceAccount, annotated or not, is an identity
+# nothing trusts. And `pacsrun-workload` is the ROLE's name; this file put it in the
+# ServiceAccount's slot.
+#
+# WHAT REPLACES IT. Nothing to apply. DDPSRUN_SERVICE_ACCOUNT defaults to `pacsjob-writer`, the
+# ServiceAccount PACSrun's terraform already creates and wires, and a deployment whose name
+# differs sets the variable to match its own `workload_service_account` output.
+#
+# THE ORPHAN IS LEFT ALONE. The `pacsrun-workload` ServiceAccount this file created is still in
+# the cluster. It is harmless -- no role trusts it and nothing names it any more -- and deleting
+# a cluster object to tidy up is not worth the risk. `kubectl delete sa pacsrun-workload -n
+# default` is the command if it is ever wanted.
+#
+# THE OPEN DESIGN QUESTION THE OLD NOTE RAISED IS STILL OPEN, and it is a DIFFERENT question:
+# whether the WORKLOAD out on the rented machine gets its own AWS identity, one role per tenant
+# namespace or one shared. Today it does not need one -- fetch mode has the driver pod upload the
+# results (PACSRUN_FETCH_MODE=on), so nothing on the rented machine calls S3.
