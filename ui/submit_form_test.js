@@ -100,6 +100,7 @@ function setForm(o) {
   $("f-env").value = o.env ?? "";
   $("f-mode").value = o.mode ?? "";
   $("f-gpucount").value = o.gpucount ?? "";
+  $("f-regions").value = o.regions ?? "";
   vendorBoxes.forEach((b) => {
     b.checked = (o.vendors || []).includes(b.dataset.vendor);
   });
@@ -322,6 +323,42 @@ check(!c.winner && !c.runnerUp && c.raw === "placement failed: no candidate answ
 
 c = parseCompare(undefined);
 check(c.raw === "" && !c.winner, "and an absent message does not throw");
+
+// ---------------------------------------------------------------------------------------------
+// DDPSRUN-REGIONS. Blank is not "anywhere", and the request has to say so.
+//
+// WHY THIS IS THE MOST EXPENSIVE FIELD ON THE FORM TO GET WRONG. PACSrun gives an AWS ask that
+// names no region exactly ONE region -- the operator's default (placement.go:376,
+// PACSRUN-AWS-ONE-REGION). Until 2026-09-08 the screen sent nothing at all, so every job it ever
+// submitted ran in us-west-2 and no one could ask otherwise. The H100 is $6.88/hour there and
+// $8.60 in ap-northeast-1.
+// ---------------------------------------------------------------------------------------------
+setForm({ image: IMAGE, regions: "" });
+check(readForm().regions === undefined,
+      "an empty Regions box sends NO regions key, which the server reads as the operator's one " +
+      "default -- not as a request to search everywhere");
+
+setForm({ image: IMAGE, regions: "aws/us-east-1" });
+check(JSON.stringify(readForm().regions) === '["aws/us-east-1"]',
+      "one region is sent as a one-element list");
+
+setForm({ image: IMAGE, regions: "aws/us-east-1, aws/ap-northeast-2  aws/eu-west-1" });
+check(JSON.stringify(readForm().regions) ===
+        '["aws/us-east-1","aws/ap-northeast-2","aws/eu-west-1"]',
+      "commas and stray whitespace both separate, because a person typing three regions will " +
+      "use whichever they think of first");
+
+setForm({ image: IMAGE, regions: "  ,, aws/us-east-1 ,, " });
+check(JSON.stringify(readForm().regions) === '["aws/us-east-1"]',
+      "empty fragments are dropped rather than sent as \"\", which the server would have to " +
+      "reject as a region name");
+
+setForm({ image: IMAGE, regions: "AWS/US-East-1" });
+check(JSON.stringify(readForm().regions) === '["AWS/US-East-1"]',
+      "the text is sent VERBATIM and not normalised -- PACSrun compares region names exactly, " +
+      "so a silent lowercasing would hide the one mistake the server can name precisely");
+
+setForm({ image: IMAGE, regions: "" });
 
 // ---------------------------------------------------------------------------------------------
 // DDPSRUN-REGISTER. The address on the first-time visitor's screen.

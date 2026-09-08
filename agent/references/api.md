@@ -30,6 +30,7 @@ Authorization: Bearer <your token>
 | GET | `/v1/login-config` | Where to send someone to sign in. |
 | GET | `/v1/metrics/query` | Ask the in-cluster Prometheus one instant query. |
 | GET | `/v1/namespaces` | Which namespaces this caller may read — the screen's namespace picker. |
+| GET | `/v1/prices` | What every GPU the catalogue knows costs, in every region it prices. |
 | POST | `/v1/register-request` | Ask an operator to give this signed-in address a namespace. |
 | GET | `/v1/schema` | Return the JSON Schema of a request. |
 | GET | `/v1/scripts` | The scripts this caller has submitted before, newest first. |
@@ -248,6 +249,7 @@ A submit request plus the facts needed to judge it.
 | `name` | yes | A name for your own benefit. It appears in the result path and in the job listing. It does not have to be unique. |
 | `parallelism` |  | How many pods run at once. They are INDEPENDENT workers that never talk to each other, so this is for a batch you can split, not for distributed training. The placement decides the machines: several pods may land on one multi-GPU box or on one box each. Combine with gpu.count, which is GPUs PER POD. |
 | `placement_mode` |  | What the walk does with its candidates. 'ordered' (the default when omitted) asks them in order and stops at the first that answers, comparing nothing. 'cheapest' asks every candidate and buys the cheapest answer. 'compare' asks every candidate, ranks them, and then STOPS -- nothing is bought, and the job ends in the terminal phase Compared with the winner, the runner-up and the margin in its message. 'compare' is the only mode that costs nothing to run. |
+| `regions` |  | Which regions may answer, as PACSrun's placement.regions spells them: a bare vendor ('gcp'), or a vendor and region ('aws/us-east-1'). EMPTY IS NOT 'anywhere' FOR AWS -- it is the operator's one default region, us-west-2 in this deployment (PACSrun's placement.go:376, grep PACSRUN-AWS-ONE-REGION). So a job that wants a cheaper region has to name it. GET /v1/prices lists every region the catalogue prices. |
 | `script` |  | The text of your run.sh. Optional, and four checks are skipped without it. It is read and thrown away, never stored. |
 | `secrets` |  | Names of secrets to inject. The value never travels through this API; the server resolves the name to a Kubernetes Secret. |
 | `training` |  |  |
@@ -302,6 +304,36 @@ What `GET /v1/namespaces` returns: the caller's namespace picker.
 | `own` | yes | The caller's home namespace — what every request without an explicit ?namespace= reads, and the picker's initial value. |
 | `selectable` | yes | Whether this caller may ask for a namespace other than their own. The server enforces this with 403 regardless; the field only tells the screen whether to draw the picker at all. |
 
+### PriceView
+
+One row of the catalogue's price table.
+
+| field | required | description |
+|---|---|---|
+| `basis` | yes | WHAT THE PRICE COVERS, and the two values must not be compared. 'machine' (AWS) is the whole instance including its GPUs, and `instance` names it. 'accelerator' (GCP) is the cards ALONE -- a GPU on GCP attaches to a machine type and the catalogue prices the two separately, so the VM is extra and the catalogue does not say which VM. |
+| `card` | yes |  |
+| `flags` |  | 'spot_above_ondemand' when this row's spot price exceeds its own on-demand price. 38 GCP rows do, consistently and with both zones of a region agreeing, which is the catalogue's own content. No AWS row does. Nothing ranks a flagged row. |
+| `gpus` | yes | How many of that card this row covers. |
+| `instance` | yes | Machine type. Empty on every GCP row. |
+| `region` | yes |  |
+| `spot_high` |  | Spot is per zone and moves, so it is a range across the zones in one snapshot, not a number. |
+| `spot_low` |  |  |
+| `usd_per_hour` |  | On-demand. Null when the catalogue publishes none: AWS sells some of the newest cards through Capacity Blocks instead. |
+| `vendor` | yes | 'aws' or 'gcp'. |
+| `zones` | yes | How many zones carried this row. |
+
+### PricesResponse
+
+What GET /v1/prices returns.
+
+| field | required | description |
+|---|---|---|
+| `default_region` | yes | Where an ask that names NO region actually buys: the operator's one AWS default. Not a preference -- PACSrun gives an unqualified AWS ask exactly one region (PACSRUN-AWS-ONE-REGION). |
+| `note` | yes |  |
+| `priced_on` | yes | When the catalogue was read. |
+| `regions` | yes | Every AWS region here, which is also the list `placement.regions` accepts as 'aws/<region>'. |
+| `rows` | yes |  |
+
 ### ProgressView
 
 Where the training run has got to, by its own reckoning.
@@ -336,6 +368,7 @@ One script this caller has submitted before.
 | field | required | description |
 |---|---|---|
 | `created_at` |  | When that job was created, newest first in the listing. |
+| `filename` |  | A name to save this script under, built from the job's own display name. Downloading needs a filename and 'download' is not one; the job name is what the person who wrote the script will recognise. |
 | `job_id` |  | The most recent job that ran it. |
 | `lines` |  | How many lines it has, so the screen can say so. |
 | `name` |  | That job's display name. |
@@ -348,6 +381,7 @@ What `GET /v1/scripts` returns: this caller's own scripts, newest first.
 
 | field | required | description |
 |---|---|---|
+| `namespace` | yes | WHOSE scripts these are. Every listing is one namespace's and never a mixture: the caller's own unless an operator asked for another with ?namespace=. Said out loud because a list of scripts with no owner on it reads as 'everybody's', and on a shared cluster that is the wrong thing to assume about somebody else's training run. |
 | `note` |  | Why the list is empty, when it is. An empty list with no note reads as 'you have never submitted a script', which is a different fact from 'none of your jobs was submitted in a shape this route recognises'. |
 | `scripts` |  |  |
 

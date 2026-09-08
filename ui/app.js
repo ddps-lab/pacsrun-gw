@@ -210,9 +210,10 @@ async function route() {
       show("detail"); await drawDetail(jobId, jobNs || "");
     }
     else if (head === "jobs")   { show("jobs");   drawJobs(); }
-    else if (head === "submit") { show("submit"); drawImages(); }
+    else if (head === "submit") { show("submit"); drawImages(); drawRegionChoices(); }
     else if (head === "scripts") { show("scripts"); drawScripts(); }
     else if (head === "team")   { show("team");   drawTeam(); }
+    else if (head === "prices") { show("prices"); drawPrices(); }
     else if (head === "vendors") { show("vendors"); drawVendors(); }
     else                        { show("home");   drawHome(); }
   } catch (err) {
@@ -795,14 +796,39 @@ function drawCompare(job) {
    NOTHING IS STORED FOR THIS. The server reads the text back out of the jobs themselves, so this
    screen shows exactly what is still on the cluster and nothing that is not. */
 async function drawScripts() {
+  // DDPSRUN-SCRIPTS-NAMESPACE. The listing is one namespace's, so it carries the
+  // operator's namespace picker exactly as the Jobs screen does -- without it an
+  // operator could only ever see their own, and `nsView` is already loaded.
+  const sel = $("scripts-ns");
+  if (nsView.loaded) {
+    sel.hidden = !(nsView.selectable && nsView.list.length > 1);
+    if (!sel.options.length) {
+      sel.innerHTML = nsView.list.map((n) =>
+        `<option value="${esc(n)}"${n === nsView.own ? " selected" : ""}>${esc(n)}</option>`
+      ).join("");
+      sel.onchange = () => {
+        nsView.current = sel.value === nsView.own ? "" : sel.value;
+        drawScripts();
+      };
+    }
+  } else {
+    sel.hidden = true;
+  }
+
   let answer;
-  try { answer = await call("/v1/scripts"); }
+  const query = nsView.current ? "?namespace=" + encodeURIComponent(nsView.current) : "";
+  try { answer = await call("/v1/scripts" + query); }
   catch (err) { $("scripts-list").innerHTML = note("err", err.message); return; }
 
   const rows = answer.scripts || [];
-  $("scripts-note").textContent = rows.length
-    ? `${rows.length} script(s) you have submitted before`
+  // WHOSE list this is, always, even when it is your own. A list of somebody's
+  // training scripts with no owner on it reads as "everybody's".
+  const whose = answer.namespace
+    ? `in ${answer.namespace}` + (answer.namespace === nsView.own ? " (yours)" : "")
     : "";
+  $("scripts-note").textContent = rows.length
+    ? `${rows.length} script(s) ${whose}`
+    : whose;
   if (!rows.length) {
     $("scripts-list").innerHTML = note("info",
       answer.note || "You have not submitted a script yet.",
@@ -819,10 +845,20 @@ async function drawScripts() {
         <span class="dim small">${s.lines} line(s)${esc(times)}${last ? "  last run " + esc(last) : ""}</span>
         <div class="spacer"></div>
         <button class="go tiny use-script" data-i="${i}" style="padding:4px 10px">Use this</button>
+        <button class="flat tiny get-script" data-i="${i}" style="padding:4px 10px">Download</button>
       </header>
       <pre class="spec">${esc(s.script)}</pre>
     </div>`;
   }).join("");
+
+  $("scripts-list").querySelectorAll("button.get-script").forEach((b) => {
+    b.onclick = () => {
+      const row = rows[Number(b.dataset.i)];
+      // The filename comes from the server, built from the job's display name --
+      // a browser download needs a name and "download" is not one.
+      saveText(row.script, row.filename || "run.sh");
+    };
+  });
 
   $("scripts-list").querySelectorAll("button.use-script").forEach((b) => {
     b.onclick = () => {
@@ -835,6 +871,162 @@ async function drawScripts() {
       go("submit");
     };
   });
+}
+
+
+/* DDPSRUN-SCRIPT-FILE. Load a run.sh off the machine into the Script box.
+
+   Entirely in the browser: FileReader reads the chosen file and the text goes
+   into the same textarea a paste would fill. Nothing is uploaded, because
+   nothing is stored -- the script rides on the job inside `args`, which is what
+   lets the Scripts screen hand it back afterwards.
+
+   A SIZE CEILING, because the script travels in the job object. A PacsJob lives
+   in etcd and Kubernetes refuses an object over roughly 1.5 MB; a script that
+   big is a data file somebody picked by mistake, and finding out at submit time
+   would mean a 400 from the apiserver about object size. 256 KB is far above any
+   real run.sh (the largest in this lab is under 4 KB) and far below the ceiling. */
+const SCRIPT_FILE_MAX = 256 * 1024;
+
+function wireScriptFile() {
+  const input = $("f-script-file");
+  const noteAt = $("f-script-file-note");
+
+  input.onchange = () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (file.size > SCRIPT_FILE_MAX) {
+      noteAt.textContent =
+        `${file.name} is ${humanSize(file.size)} — too big for a script.`;
+      input.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => { noteAt.textContent = `Could not read ${file.name}.`; };
+    reader.onload = () => {
+      $("f-command").value = String(reader.result || "");
+      const lines = $("f-command").value.split("\n").length;
+      noteAt.textContent = `${file.name} — ${lines} line(s) loaded`;
+      $("f-command-note").innerHTML = note("info",
+        "Loaded from a file. The text is what gets submitted, so edits here are "
+        + "what runs — the file on your machine is not read again.");
+    };
+    reader.readAsText(file);
+  };
+
+  $("f-script-save").onclick = () => {
+    const text = $("f-command").value;
+    if (!text.trim()) { noteAt.textContent = "The Script box is empty."; return; }
+    const name = ($("f-name").value.trim() || "run").replace(/[^A-Za-z0-9._-]+/g, "-");
+    saveText(text, `${name}.sh`);
+    noteAt.textContent = `Saved as ${name}.sh`;
+  };
+}
+
+/* Hand the browser a file to save. Used by the Script box and by every entry on
+   the Scripts screen.
+
+   The object URL is revoked on the next tick rather than immediately: the click
+   only STARTS the save, and revoking in the same statement can cancel it in
+   some browsers. */
+function saveText(text, filename) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+
+/* ------------------------------------------------------------------ Prices */
+
+/* DDPSRUN-PRICES. The catalogue's price table, every region of it.
+
+   ONE FETCH, then filtered in the browser. The answer is about 610 rows and some
+   70 KB, which is deliberate: a price table is used by sorting and narrowing it,
+   and a round trip per card would make every narrowing feel slow for no benefit.
+
+   NOTHING IS COMPUTED HERE. Every number is the server's, and the two price
+   BASES are kept in separate tables — an AWS row is a whole machine, a GCP row is
+   the accelerators alone — because ranking them together would put GCP on top
+   whenever it is not actually cheaper. */
+let priceRows = null;
+
+async function drawPrices() {
+  if (!priceRows) {
+    try {
+      const answer = await call("/v1/prices");
+      priceRows = answer;
+    } catch (err) {
+      $("prices-body").innerHTML = note("err", err.message);
+      return;
+    }
+    const cards = [...new Set(priceRows.rows.map((r) => r.card))].sort();
+    const regions = [...new Set(priceRows.rows.map((r) => r.region))].sort();
+    $("prices-card").innerHTML =
+      `<option value="">Every GPU</option>` +
+      cards.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+    $("prices-region").innerHTML =
+      `<option value="">Every region</option>` +
+      regions.map((r) => `<option value="${esc(r)}"${
+        r === priceRows.default_region ? " selected" : ""
+      }>${esc(r)}${r === priceRows.default_region ? "  (default)" : ""}</option>`).join("");
+    $("prices-card").onchange = drawPrices;
+    $("prices-region").onchange = drawPrices;
+  }
+
+  const card = $("prices-card").value;
+  const region = $("prices-region").value;
+  const rows = priceRows.rows.filter(
+    (r) => (!card || r.card === card) && (!region || r.region === region));
+
+  $("prices-note").textContent =
+    `${rows.length} of ${priceRows.rows.length} rows. Read ${priceRows.priced_on}.`;
+
+  const money = (v) => (v == null ? "-" : "$" + Number(v).toFixed(4));
+  const spot = (r) => (r.spot_low == null ? "-"
+    : r.spot_low === r.spot_high ? money(r.spot_low)
+    : `${money(r.spot_low)} - ${money(r.spot_high)}`);
+
+  const table = (title, subtitle, list) => {
+    if (!list.length) return "";
+    return `<div class="panel"><header><h2>${esc(title)}</h2>` +
+      `<span class="dim small">${esc(subtitle)}</span></header>` +
+      `<div style="overflow-x:auto"><table><thead><tr>` +
+      ["GPU", "Cards", "Region", "Machine", "On-demand /h", "Spot /h", "Zones"]
+        .map((h) => `<th>${h}</th>`).join("") +
+      `</tr></thead><tbody>` +
+      list.map((r) => `<tr>` +
+        `<td>${esc(r.card)}</td>` +
+        `<td class="num">${r.gpus}</td>` +
+        `<td>${esc(r.region)}${
+          r.region === priceRows.default_region ? ' <span class="dim tiny">default</span>' : ""
+        }</td>` +
+        `<td>${esc(r.instance || "-")}</td>` +
+        `<td class="num">${money(r.usd_per_hour)}</td>` +
+        `<td class="num">${spot(r)}${
+          r.flags === "spot_above_ondemand"
+            ? ' <span class="dim tiny" title="This row&#39;s spot price is above its own on-demand price. That is what the catalogue says; nothing ranks this row.">above on-demand</span>'
+            : ""
+        }</td>` +
+        `<td class="num">${r.zones}</td>` +
+        `</tr>`).join("") +
+      `</tbody></table></div></div>`;
+  };
+
+  $("prices-body").innerHTML =
+    note("info", priceRows.note) +
+    table("AWS — whole machine",
+          "The price covers the instance and its GPUs. This is what a job pays.",
+          rows.filter((r) => r.vendor === "aws")) +
+    table("GCP — the cards alone",
+          "A GPU on GCP attaches to a machine type and the catalogue prices the "
+          + "two separately, so the VM is extra and is not in these numbers. "
+          + "Shown for reference; this service cannot rent GCP.",
+          rows.filter((r) => r.vendor === "gcp"));
 }
 
 /* ------------------------------------------------------------------ 4. Submit */
@@ -906,6 +1098,13 @@ function readForm() {
     .filter((b) => b.checked).map((b) => b.dataset.vendor);
   if (vendors.length) body.vendors = vendors;
   if ($("f-mode").value) body.placement_mode = $("f-mode").value;
+  // DDPSRUN-REGIONS. Comma or whitespace separated, sent verbatim: PACSrun's own
+  // spelling is either a bare vendor ("gcp") or a vendor and region
+  // ("aws/us-east-1"), and rewriting what somebody typed would hide a typo that
+  // the server can name precisely.
+  const regions = ($("f-regions").value || "")
+    .split(/[\s,]+/).map((r) => r.trim()).filter(Boolean);
+  if (regions.length) body.regions = regions;
 
   const t = body.training;
   if (num("f-pairs")) t.pairs = num("f-pairs");
@@ -937,6 +1136,26 @@ function readForm() {
    built nothing", which would send an operator looking in the wrong place when what is actually
    missing is the IAM policy (DDPSRUN-IMAGES-READ in terraform/lambda). */
 let imagesDrawn = false;
+
+/* DDPSRUN-REGIONS. Offer the region names that exist, from the same answer the
+   Prices screen reads. Free text stays free text: `placement.regions` also takes
+   a bare vendor word, which is not in this list. Failure is silent on purpose --
+   the box works without the suggestions, and a person filling in a form does not
+   need a network error about a dropdown. */
+async function drawRegionChoices() {
+  const list = $("f-region-list");
+  if (list.options.length) return;
+  try {
+    const answer = priceRows || await call("/v1/prices");
+    priceRows = answer;
+    list.innerHTML = (answer.regions || [])
+      .map((r) => `<option value="aws/${esc(r)}">`).join("");
+    $("f-regions-note").innerHTML = note("info",
+      `Blank means ${esc(answer.default_region)} and nothing else \u2014 an AWS ask `
+      + `that names no region gets the operator's one default, not a search. `
+      + `${(answer.regions || []).length} AWS regions are on offer; see Prices.`);
+  } catch { /* the box is free text and works without suggestions. */ }
+}
 
 async function drawImages(force) {
   if (imagesDrawn && !force) return;
@@ -1699,6 +1918,7 @@ $("cognito-login").onclick = () => startCognitoLogin().catch((err) => {
 
 $("logout").onclick = signOut;
 $("nc-out").onclick = signOut;
+wireScriptFile();
 
 $("nc-ask").onclick = async () => {
   $("nc-ask").disabled = true;
