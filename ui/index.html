@@ -40,7 +40,6 @@
     <button data-view="submit">Submit</button>
     <button data-view="scripts">Scripts</button>
     <button data-view="team">Team</button>
-    <button data-view="prices">Prices</button>
     <button data-view="vendors">Vendors</button>
   </nav>
   <div class="spacer"></div>
@@ -518,28 +517,6 @@
     <button class="go" data-goto="submit">New job</button>
   </div>
   <div id="scripts-list"></div>
-</section>
-
-<!-- DDPSRUN-PRICES. What every GPU costs in every region the catalogue prices.
-     WHAT THIS FIXES. The service could only speak about us-west-2: the estimate
-     priced it, this screen showed it, and "what does an H100 cost in Seoul" had
-     no answer anywhere -- while placement.regions sat unused in the CRD, so
-     there was no way to ask for another region either. The H100 is $6.88/hour in
-     us-west-2 and $8.60 in ap-northeast-1, a 25% difference that was invisible.
-     THE TWO BASES ARE NOT COMPARABLE, so they are drawn in separate tables and
-     never sorted together: an AWS row prices a whole machine, a GCP row prices
-     the cards alone because a GPU there attaches to a machine type the catalogue
-     prices separately. -->
-<section id="view-prices" hidden>
-  <div class="head">
-    <div class="spacer">
-      <h1>Prices</h1>
-      <p class="dim small" id="prices-note"></p>
-    </div>
-    <select id="prices-card" title="GPU"></select>
-    <select id="prices-region" title="Region"></select>
-  </div>
-  <div id="prices-body"></div>
 </section>
 
 <section id="view-vendors" hidden>

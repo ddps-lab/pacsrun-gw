@@ -185,10 +185,12 @@ const poll = {
 
 /* The screens, DERIVED FROM THE MARKUP rather than listed by hand. It was a
    hand-written array until 2026-09-08, and the Prices screen shipped without
-   being added to it: nav lit up, route() ran drawPrices, the data arrived (610
-   rows, 10,702 characters of HTML in the section) — and show("prices") never
-   unhid the section, because a name absent from this array is a name it does
-   not touch. The page looked completely empty. Reading the ids off the DOM
+   being added to it: nav lit up, route() ran its draw function, the data
+   arrived (610 rows, 10,702 characters of HTML in the section) — and
+   show("prices") never unhid the section, because a name absent from this
+   array is a name it does not touch. The page looked completely empty. (That
+   screen was removed the same day for a different reason; the lesson stands.)
+   Reading the ids off the DOM
    means adding a <section id="view-x"> is enough, and the three places that
    used to have to agree (markup, this array, route()) are now two. */
 const VIEWS = [...document.querySelectorAll('main section[id^="view-"]')]
@@ -222,7 +224,6 @@ async function route() {
     else if (head === "submit") { show("submit"); drawImages(); drawRegionChoices(); }
     else if (head === "scripts") { show("scripts"); drawScripts(); }
     else if (head === "team")   { show("team");   drawTeam(); }
-    else if (head === "prices") { show("prices"); drawPrices(); }
     else if (head === "vendors") { show("vendors"); drawVendors(); }
     else                        { show("home");   drawHome(); }
   } catch (err) {
@@ -1066,82 +1067,6 @@ function saveText(text, filename) {
    BASES are kept in separate tables — an AWS row is a whole machine, a GCP row is
    the accelerators alone — because ranking them together would put GCP on top
    whenever it is not actually cheaper. */
-let priceRows = null;
-
-async function drawPrices() {
-  if (!priceRows) {
-    try {
-      const answer = await call("/v1/prices");
-      priceRows = answer;
-    } catch (err) {
-      $("prices-body").innerHTML = note("err", err.message);
-      return;
-    }
-    const cards = [...new Set(priceRows.rows.map((r) => r.card))].sort();
-    const regions = [...new Set(priceRows.rows.map((r) => r.region))].sort();
-    $("prices-card").innerHTML =
-      `<option value="">Every GPU</option>` +
-      cards.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
-    $("prices-region").innerHTML =
-      `<option value="">Every region</option>` +
-      regions.map((r) => `<option value="${esc(r)}"${
-        r === priceRows.default_region ? " selected" : ""
-      }>${esc(r)}${r === priceRows.default_region ? "  (default)" : ""}</option>`).join("");
-    $("prices-card").onchange = drawPrices;
-    $("prices-region").onchange = drawPrices;
-  }
-
-  const card = $("prices-card").value;
-  const region = $("prices-region").value;
-  const rows = priceRows.rows.filter(
-    (r) => (!card || r.card === card) && (!region || r.region === region));
-
-  $("prices-note").textContent =
-    `${rows.length} of ${priceRows.rows.length} rows. Read ${priceRows.priced_on}.`;
-
-  const money = (v) => (v == null ? "-" : "$" + Number(v).toFixed(4));
-  const spot = (r) => (r.spot_low == null ? "-"
-    : r.spot_low === r.spot_high ? money(r.spot_low)
-    : `${money(r.spot_low)} - ${money(r.spot_high)}`);
-
-  const table = (title, subtitle, list) => {
-    if (!list.length) return "";
-    return `<div class="panel"><header><h2>${esc(title)}</h2>` +
-      `<span class="dim small">${esc(subtitle)}</span></header>` +
-      `<div style="overflow-x:auto"><table><thead><tr>` +
-      ["GPU", "Cards", "Region", "Machine", "On-demand /h", "Spot /h", "Zones"]
-        .map((h) => `<th>${h}</th>`).join("") +
-      `</tr></thead><tbody>` +
-      list.map((r) => `<tr>` +
-        `<td>${esc(r.card)}</td>` +
-        `<td class="num">${r.gpus}</td>` +
-        `<td>${esc(r.region)}${
-          r.region === priceRows.default_region ? ' <span class="dim tiny">default</span>' : ""
-        }</td>` +
-        `<td>${esc(r.instance || "-")}</td>` +
-        `<td class="num">${money(r.usd_per_hour)}</td>` +
-        `<td class="num">${spot(r)}${
-          r.flags === "spot_above_ondemand"
-            ? ' <span class="dim tiny" title="This row&#39;s spot price is above its own on-demand price. That is what the catalogue says; nothing ranks this row.">above on-demand</span>'
-            : ""
-        }</td>` +
-        `<td class="num">${r.zones}</td>` +
-        `</tr>`).join("") +
-      `</tbody></table></div></div>`;
-  };
-
-  $("prices-body").innerHTML =
-    note("info", priceRows.note) +
-    table("AWS — whole machine",
-          "The price covers the instance and its GPUs. This is what a job pays.",
-          rows.filter((r) => r.vendor === "aws")) +
-    table("GCP — the cards alone",
-          "A GPU on GCP attaches to a machine type and the catalogue prices the "
-          + "two separately, so the VM is extra and is not in these numbers. "
-          + "Shown for reference; this service cannot rent GCP.",
-          rows.filter((r) => r.vendor === "gcp"));
-}
-
 /* ------------------------------------------------------------------ 4. Submit */
 
 let draft = null;   // built in step 1; steps 2 and 3 send the same object again.
@@ -1250,11 +1175,18 @@ function readForm() {
    missing is the IAM policy (DDPSRUN-IMAGES-READ in terraform/lambda). */
 let imagesDrawn = false;
 
-/* DDPSRUN-REGIONS. Offer the region names that exist, from the same answer the
-   Prices screen reads. Free text stays free text: `placement.regions` also takes
-   a bare vendor word, which is not in this list. Failure is silent on purpose --
-   the box works without the suggestions, and a person filling in a form does not
-   need a network error about a dropdown. */
+/* The one row of /v1/prices this screen still keeps: the REGION NAMES. The
+   Prices screen that used to draw the whole table is gone (2026-09-08) —
+   two vendors out of the many that exist is not a price comparison, and
+   GPU Compass reads the same SkyPilot catalogue we do — but the names are
+   still what `placement.regions` accepts, and a datalist of real ones beats
+   a free-text box that silently takes a typo. */
+let priceRows = null;
+
+/* DDPSRUN-REGIONS. Free text stays free text: `placement.regions` also takes a
+   bare vendor word, which is not in this list. Failure is silent on purpose --
+   the box works without the suggestions, and a person filling in a form does
+   not need a network error about a dropdown. */
 async function drawRegionChoices() {
   const list = $("f-region-list");
   if (list.options.length) return;
@@ -1266,7 +1198,10 @@ async function drawRegionChoices() {
     $("f-regions-note").innerHTML = note("info",
       `Blank means ${esc(answer.default_region)} and nothing else \u2014 an AWS ask `
       + `that names no region gets the operator's one default, not a search. `
-      + `${(answer.regions || []).length} AWS regions are on offer; see Prices.`);
+      + `${(answer.regions || []).length} AWS regions are on offer. `
+      + `Comparing prices across vendors: <a href="https://gpus.skypilot.co/" `
+      + `target="_blank" rel="noopener">GPU Compass</a>, which reads the same `
+      + `SkyPilot catalogue this service does.`);
   } catch { /* the box is free text and works without suggestions. */ }
 }
 
