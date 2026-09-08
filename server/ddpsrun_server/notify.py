@@ -17,6 +17,10 @@ END-TO-END FLOW of one registration request:
   5. `send_registration_request()` calls SES `SendEmail` once, to the operator's
      address, with the exact JSON the operator has to paste into the token file
      and the command that puts it back in Secrets Manager.
+  6. If step 5 FAILS, `release_marker()` deletes what step 4 wrote. Without that
+     the marker outlives a send that never happened, and the next press answers
+     202 "an operator was already emailed" when nobody was -- see WHY THE CLAIM
+     IS GIVEN BACK below.
 
 WHY EXACTLY ONCE PER ADDRESS, AND WHAT IT DOES NOT PROTECT. This endpoint is on a
 public Lambda URL and the only thing it demands is a valid Cognito id_token, which
@@ -24,6 +28,23 @@ ANY Google account can obtain: `allow_admin_create_user_only` blocks the built-i
 username/password sign-up, not a federated first sign-in. So without a marker, one
 person reloading the screen sends one email per reload. The marker bounds it to
 one email per distinct address, forever.
+
+★ WHY THE CLAIM IS GIVEN BACK WHEN THE SEND FAILS, and why the marker is written
+FIRST anyway. The marker has to be claimed before the send, or a reload mails the
+operator again while the first request is still in flight -- the claim is what
+makes "once" true. But a claim that survives a failed send is worse than no claim
+at all: the person is locked out AND told they succeeded.
+
+MEASURED 2026-09-08, right after the IAM apply: this path is not hypothetical, it
+is the ONLY path, because the operator's address is not yet a verified SES
+identity and every send therefore fails. The first person to press the button
+would have got 502, and the second press 202 with "An operator was already
+emailed about this address" -- which would have been false.
+
+So the send is wrapped and the marker deleted on failure. `s3:DeleteObject` is
+granted on `ddpsrun-register/*` and nowhere else, verified with
+`simulate-principal-policy` after the apply: the same action on the results
+prefix and on the bucket root is implicitDeny.
 
 It does NOT bound an attacker holding many Google accounts. Two things do: SES's
 own quota, which is 200 messages a day and 1 a second while the account is in the
@@ -167,6 +188,28 @@ def already_asked(bucket: str, email: str, client=None) -> bool:
         ) from exc
 
 
+def release_marker(bucket: str, email: str, client=None) -> None:
+    """Undo `already_asked`, so a failed send can be retried.
+
+    WHY THIS IS BEST-EFFORT AND SWALLOWS ITS OWN ERRORS. It runs while an
+    exception is already on its way to the caller -- the send failed and they are
+    about to get a 502 naming the real cause. Raising a second error here would
+    replace that message with a less useful one about S3, and the state it leaves
+    behind (a marker for a send that did not happen) is exactly what the 502
+    already tells them to escalate. So it logs and returns.
+
+    Args:
+        bucket: the results bucket.
+        email: the verified address whose marker to remove.
+        client: an S3 client, for tests. Built when omitted.
+    """
+    try:
+        client = client or s3_client()
+        client.delete_object(Bucket=bucket, Key=marker_key(email))
+    except Exception as exc:                                      # noqa: BLE001
+        logger.warning("could not release the registration marker for %s: %s. "
+                       "A retry will report 'already emailed' until it is "
+                       "deleted by hand.", email, exc)
 def registration_body(email: str, subject_id: str, namespace_hint: str) -> str:
     """The email's text: what happened, and the two steps that answer it.
 

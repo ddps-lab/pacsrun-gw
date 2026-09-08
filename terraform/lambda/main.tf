@@ -224,9 +224,29 @@ data "aws_iam_policy_document" "register_notify" {
   }
 
   statement {
-    sid       = "WriteRegistrationMarkersOnly"
-    effect    = "Allow"
-    actions   = ["s3:PutObject"]
+    sid    = "WriteRegistrationMarkersOnly"
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      // ★ DeleteObject IS FOR GIVING A FAILED CLAIM BACK, not for tidying up.
+      // The marker is written BEFORE the send, because that is what stops a
+      // reload mailing the operator twice while the first request is in flight.
+      // A marker that outlives a send which never happened is worse than no
+      // marker: the address is locked out AND the next press is told an operator
+      // was already emailed.
+      //
+      // MEASURED 2026-09-08, minutes after this policy was first applied: that
+      // was the ONLY reachable path, because the operator's address is not yet a
+      // verified SES identity and every send therefore failed. The first person
+      // to press the button would have got 502 and the second a 202 about an
+      // email nobody sent.
+      //
+      // Scoped to the same prefix as the write and no wider. Verified with
+      // simulate-principal-policy after the first apply: PutObject on the
+      // results prefix and on the bucket root are both implicitDeny, and this
+      // adds nothing outside ddpsrun-register/.
+      "s3:DeleteObject",
+    ]
     resources = ["arn:aws:s3:::${var.result_bucket}/ddpsrun-register/*"]
   }
 }

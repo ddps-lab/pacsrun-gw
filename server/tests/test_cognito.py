@@ -329,6 +329,7 @@ def register_client(tmp_path, monkeypatch, verifier):
     class FakeS3:
         def __init__(self):
             self.puts = []
+            self.deletes = []
             self.existing = set()
 
         def put_object(self, Bucket, Key, Body, IfNoneMatch=None):
@@ -339,11 +340,18 @@ def register_client(tmp_path, monkeypatch, verifier):
                 raise error
             self.existing.add(Key)
 
+        def delete_object(self, Bucket, Key):
+            self.deletes.append((Bucket, Key))
+            self.existing.discard(Key)
+
     class FakeSES:
         def __init__(self):
             self.sent = []
+            self.refuse = ""          # set to a message to make every send fail
 
         def send_email(self, **kwargs):
+            if self.refuse:
+                raise Exception(self.refuse)
             self.sent.append(kwargs)
 
     s3, ses = FakeS3(), FakeSES()
@@ -484,3 +492,54 @@ def test_the_operators_address_is_not_handed_out(register_client):
     without knowing where the mail goes, so the address is not in the answer."""
     client, _s3, _ses = register_client
     assert "operator@example.ac.kr" not in client.get("/v1/login-config").text
+
+
+def test_a_failed_send_gives_the_claim_back_so_the_person_can_retry(register_client, keypair):
+    """★ THE ONLY REACHABLE PATH ON 2026-09-08, and it was broken.
+
+    The marker is claimed BEFORE the send, because that is what stops a reload
+    mailing the operator twice while the first request is still in flight. But a
+    marker that outlives a send which never happened is worse than no marker: the
+    address is locked out AND the next press is told an operator was already
+    emailed.
+
+    This was not hypothetical when it was found. The IAM apply had just landed and
+    the operator's address was not a verified SES identity, so EVERY send failed --
+    the first person to press the button would have got 502 and the second a
+    cheerful 202 about an email that was never sent.
+    """
+    client, s3, ses = register_client
+    ses.refuse = "Email address not verified"
+    token = mint(keypair, email="newcomer@example.ac.kr")
+
+    first = post_register(client, token)
+    assert first.status_code == 502
+    assert "verified" in first.json()["detail"]
+    # The claim was taken and then given back, so nothing is left behind.
+    assert s3.deletes == [("<RESULT_BUCKET>", "ddpsrun-register/newcomer@example.ac.kr")]
+    assert s3.existing == set()
+
+    # And the retry is a real retry: it sends, rather than reporting a success
+    # that never happened.
+    ses.refuse = ""
+    second = post_register(client, token)
+    assert second.status_code == 202
+    assert second.json()["emailed"] is True
+    assert len(ses.sent) == 1
+
+
+def test_a_delete_that_also_fails_does_not_replace_the_useful_error(register_client, keypair, caplog):
+    """`release_marker` runs while a 502 is already on its way to the caller. If S3
+    refuses the delete too, the caller must still get the message about SES -- the
+    real cause -- and not a second, less useful one about S3."""
+    client, s3, ses = register_client
+    ses.refuse = "Email address not verified"
+
+    def refuse_delete(Bucket, Key):
+        raise Exception("AccessDenied")
+    s3.delete_object = refuse_delete
+
+    answer = post_register(client, mint(keypair, email="newcomer@example.ac.kr"))
+    assert answer.status_code == 502
+    assert "verified" in answer.json()["detail"]
+    assert "deleted by hand" in caplog.text
