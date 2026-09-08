@@ -586,25 +586,40 @@ def test_the_emailed_commands_are_not_folded_onto_one_line(register_client, keyp
 # ------------------------------- DDPSRUN-REGISTER: one namespace naming rule
 
 
-def test_the_namespace_rule_is_the_address_and_not_anything_else():
-    """★ IT WAS WRITTEN DOWN THREE DIFFERENT WAYS and all three were in use at
-    once on 2026-09-08:
+def test_the_namespace_rule_is_the_team_then_the_address():
+    """★ IT WAS WRITTEN DOWN THREE DIFFERENT WAYS and all three were in use on
+    2026-09-08:
 
         auth.py's docstring   "<team>-<user>"                 -> ddps-alice
         the registration mail "lab-" + the address local part -> lab-alice
         a migration script    "lab-" + the `user` field       -> lab-alice-gmail
 
-    The third one produced `lab-alice` for an address with no "operator" in
-    it, which is how the disagreement surfaced. ONE RULE: the address, because
-    `user` is typed by an operator and can be anything while the address is what
-    the person presents at every sign-in.
+    The third produced `lab-alice` for an address with no "operator" in it,
+    which is how the disagreement surfaced.
+
+    ONE RULE: the TEAM, then the address's local part. The team because it is
+    decided at the same moment and a prefix that carries it says something true
+    on a shared cluster; the address rather than `user` because `user` is typed
+    by an operator and can be anything, while the address is what the person
+    presents at every sign-in.
     """
     from ddpsrun_server.notify import namespace_suggestion
 
-    assert namespace_suggestion("alice@example.com") == "lab-alice"
-    assert namespace_suggestion("bo.ram@example.ac.kr") == "lab-bo-ram"
-    # Nothing of the team, and nothing of any `user` field, reaches the name.
-    assert "ddps" not in namespace_suggestion("alice@example.ac.kr")
+    assert namespace_suggestion("alice@example.com", "ddps") == "ddps-alice"
+    assert namespace_suggestion("bo.ram@example.ac.kr", "ddps") == "ddps-bo-ram"
+    # A different team gives a different namespace for the same person.
+    assert namespace_suggestion("alice@example.ac.kr", "vision") == "vision-alice"
+    # And nothing of the `user` field can reach the name: it is not an argument.
+    assert namespace_suggestion("alice@example.ac.kr", "ddps") == "ddps-alice"
+
+
+def test_a_team_with_a_dash_in_it_still_produces_one_valid_name():
+    """`auth.py` uses "ddps-lab" as the example of why a namespace must never be
+    SPLIT to recover a team. Building the name in the safe direction has to keep
+    working for such a team."""
+    from ddpsrun_server.notify import namespace_suggestion
+
+    assert namespace_suggestion("alice@example.ac.kr", "ddps-lab") == "ddps-lab-alice"
 
 
 def test_the_suggested_namespace_is_always_a_name_kubectl_accepts():
@@ -617,18 +632,66 @@ def test_the_suggested_namespace_is_always_a_name_kubectl_accepts():
     from ddpsrun_server.notify import namespace_suggestion
 
     label = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
-    for address in ("bo.ram+x@example.ac.kr", "A.B@Example.COM",
-                    "alice@example.com", "_leading@x.com", "trailing_@x.com",
-                    "@nolocalpart.com"):
-        got = namespace_suggestion(address)
-        assert label.fullmatch(got), (address, got)
-        assert len(got) <= 63, (address, got)
+    cases = [("bo.ram+x@example.ac.kr", "ddps"), ("A.B@Example.COM", "DDPS"),
+             ("alice@example.com", "ddps"), ("_leading@x.com", "ddps"),
+             ("trailing_@x.com", "ddps"), ("@nolocalpart.com", "ddps"),
+             ("a@b.com", ""), ("a@b.com", "-weird-"),
+             ("x" * 80 + "@b.com", "ddps")]
+    for address, team in cases:
+        got = namespace_suggestion(address, team)
+        assert label.fullmatch(got), (address, team, got)
+        assert len(got) <= 63, (address, team, got)
 
 
-def test_an_address_with_no_usable_local_part_still_yields_a_name():
-    """`lab-unnamed` rather than a bare `lab-` or a crash: the operator gets a
-    name they can see is wrong and change, instead of a command that fails."""
-    from ddpsrun_server.notify import namespace_suggestion
+def test_an_address_or_team_with_nothing_usable_still_yields_a_name():
+    """A name the operator can see is wrong and change, rather than a command
+    that fails or one beginning with a hyphen."""
+    from ddpsrun_server.notify import DEFAULT_TEAM, namespace_suggestion
 
-    assert namespace_suggestion("@x.com") == "lab-unnamed"
-    assert namespace_suggestion("") == "lab-unnamed"
+    assert namespace_suggestion("@x.com", "ddps") == "ddps-unnamed"
+    assert namespace_suggestion("", "ddps") == "ddps-unnamed"
+    assert namespace_suggestion("a@b.com", "") == f"{DEFAULT_TEAM}-a"
+
+
+def test_the_email_asks_for_the_team_and_lists_the_ones_that_exist(
+        register_client, keypair):
+    """★ THE SERVER CANNOT KNOW THE TEAM -- which one somebody belongs to is a
+    fact about the lab, not about the sign-in. So the mail asks, and listing what
+    already exists is the difference between a question the operator answers in a
+    second and one they have to go and look up.
+
+    The fixture's token file names team `lab`, so that is what the mail offers.
+    """
+    client, _s3, ses = register_client
+    post_register(client, mint(keypair, email="newcomer@example.ac.kr"))
+    body = ses.sent[0]["Content"]["Simple"]["Body"]["Text"]["Data"]
+
+    assert "DECIDE THE TEAM FIRST" in body
+    assert "Teams already in the token file" in body
+    assert "lab" in body
+    # The commands are concrete, using that team, or they are not runnable.
+    assert "kubectl create namespace lab-newcomer" in body
+    assert '"team": "lab"' in body
+    # And it says what to change if the team is wrong.
+    assert "ALL FOUR steps" in body
+
+
+def test_the_token_store_lists_its_teams_commonest_first():
+    """A new member almost always joins the team that already has the most
+    people, so the first entry is the one worth pre-filling into the commands."""
+    store = auth.TokenStore.from_document({"tokens": [
+        {"sha256": auth.hash_token("a"), "user": "a", "namespace": "ddps-a", "team": "ddps"},
+        {"sha256": auth.hash_token("b"), "user": "b", "namespace": "ddps-b", "team": "ddps"},
+        {"sha256": auth.hash_token("c"), "user": "c", "namespace": "vision-c", "team": "vision"},
+        {"sha256": auth.hash_token("d"), "user": "d", "namespace": "solo"},
+    ]})
+    assert store.teams() == ["ddps", "vision"]
+
+
+def test_a_token_file_with_no_team_at_all_lists_none():
+    """A real state -- `team` is optional -- and the mail then asks for one
+    outright instead of offering a list of none."""
+    store = auth.TokenStore.from_document({"tokens": [
+        {"sha256": auth.hash_token("a"), "user": "a", "namespace": "solo"},
+    ]})
+    assert store.teams() == []

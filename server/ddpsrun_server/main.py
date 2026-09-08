@@ -561,6 +561,11 @@ def register_request(request: Request, identity: SignedInDep) -> dict[str, objec
                 subject_id=identity.subject,
                 notify_to=settings.register_notify_to,
                 notify_from=settings.register_notify_from,
+                # DDPSRUN-REGISTER. The mail ASKS for the team, because the
+                # server cannot know which one somebody belongs to. Listing the
+                # ones that already exist turns that into a question the
+                # operator answers in a second.
+                known_teams=request.app.state.tokens.teams(),
             )
         except notify.NotifyError as exc:
             # ★ GIVE THE CLAIM BACK. The marker was written a moment ago to stop a

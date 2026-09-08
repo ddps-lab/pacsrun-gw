@@ -115,11 +115,19 @@ class TokenStore:
         email            "lab-" + the email's local part -> lab-alice
         a migration      "lab-" + the `user` field       -> lab-alice-gmail
 
-    ONE RULE NOW: `lab-` plus the local part of the address the person signs in
-    with, scrubbed to an RFC 1123 label (lowercase, digits and hyphens only, so
-    `bo.ram+x@...` becomes `lab-bo-ram-x`). `notify.namespace_suggestion` is
-    the only implementation of it, and the registration email prints what it
-    answers, so an operator following that mail cannot drift from it.
+    ONE RULE NOW: the TEAM, then the local part of the address the person signs
+    in with, both scrubbed to RFC 1123 labels (lowercase, digits and hyphens, so
+    `ddps` + `bo.ram+x@...` becomes `ddps-bo-ram-x`).
+    `notify.namespace_suggestion` is the only implementation of it, and the
+    registration email prints what it answers, so an operator following that
+    mail cannot drift from it.
+
+    ★ THE TEAM IS ASKED FOR, NOT GUESSED. The server cannot know which team a
+    new person belongs to -- that is a fact about the lab, not about the
+    sign-in -- so the mail lists the teams already in this file (`teams()`) and
+    puts the commonest into its example commands for the operator to confirm or
+    change. `team` and `namespace` are decided together at the moment somebody
+    is added, which is the only moment either is decided at all.
 
     WHY THE ADDRESS AND NOT THE `user` FIELD, which is what a migration reached
     for once. `user` is typed by an operator and can be anything -- it was
@@ -127,11 +135,18 @@ class TokenStore:
     what the person actually presents at every sign-in. A name derived from the
     thing that identifies them cannot go stale against it.
 
-    WHY `lab-` AND NOT THE TEAM. Because nothing may derive one from the other:
-    splitting a namespace on a dash to find the team breaks the moment a team is
-    called "ddps-lab", and guessing wrong would put a person's numbers in the
-    wrong team's total. `team` stays its own field. `lab-` is a fixed prefix, not
-    a value, so it cannot be mistaken for one.
+    ★★ THE TEAM IS IN THE NAME AND MUST STILL NEVER BE READ BACK OUT OF IT.
+    These are two different directions and only one is safe:
+
+        team -> namespace   fine. The team is known at the moment a person is
+                            added, and building a name from it is what makes the
+                            prefix mean something on a shared cluster.
+        namespace -> team   NEVER. Splitting on a dash breaks the moment a team
+                            is called "ddps-lab", and guessing wrong puts a
+                            person's numbers in another team's total.
+
+    So `team` stays its own field and every reader uses THAT. No code in this
+    file, or anywhere else, splits a namespace to find a team.
 
     ★★ AND IT IS A SUGGESTION, NOT A CONSTRAINT. Nothing in this file derives a
     namespace from anything: the value written here is the value used, full stop.
@@ -247,6 +262,32 @@ class TokenStore:
                 f"you to the token file."
             )
         return principal
+
+    def teams(self) -> list[str]:
+        """Every team name this store knows, commonest first.
+
+        ★ FOR THE REGISTRATION EMAIL, which has to ASK. The namespace of a new
+        person is `<team>-<address local part>`, and the server cannot work out
+        which team somebody belongs to -- that is a fact about the lab, not about
+        the sign-in. So the mail lists the teams that already exist and puts the
+        commonest one into its example commands, and the operator changes it when
+        the new person is on another team.
+
+        Commonest first rather than alphabetical: a new member almost always
+        joins the team that already has the most people, so the first entry is
+        the one worth pre-filling.
+
+        Returns:
+            The names, deduplicated. Empty when nobody has a team, which is a
+            real state -- the `team` field is optional -- and the mail then asks
+            for one outright instead of offering a list of none.
+        """
+        counted: dict[str, int] = {}
+        for principal in set(self._by_hash.values()) | set(self._by_email.values()):
+            if principal.team:
+                counted[principal.team] = counted.get(principal.team, 0) + 1
+        return [name for name, _ in
+                sorted(counted.items(), key=lambda pair: (-pair[1], pair[0]))]
 
     def namespaces_in_team(self, team: str) -> list[str]:
         """Every namespace belonging to one team, sorted.

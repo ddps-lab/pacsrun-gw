@@ -76,6 +76,11 @@ MARKER_PREFIX = "ddpsrun-register/"
 # The subject line. Fixed so the operator can filter on it.
 SUBJECT = "[ddpsrun] registration request"
 
+# The team used in the example commands when the token file names none. Not a
+# policy -- just a value that makes the emailed command runnable instead of one
+# beginning with a hyphen. The operator changes it.
+DEFAULT_TEAM = "ddps"
+
 
 class NotifyError(RuntimeError):
     """Sending failed. Carries a sentence written for the person who pressed the
@@ -210,7 +215,8 @@ def release_marker(bucket: str, email: str, client=None) -> None:
         logger.warning("could not release the registration marker for %s: %s. "
                        "A retry will report 'already emailed' until it is "
                        "deleted by hand.", email, exc)
-def registration_body(email: str, subject_id: str, namespace_hint: str) -> str:
+def registration_body(email: str, subject_id: str, namespace_hint: str,
+                      known_teams: list[str] | None = None) -> str:
     """The email's text: what happened, and the two steps that answer it.
 
     WHY THE SNIPPET IS IN THE MAIL. The operator's job is to add one object to the
@@ -224,16 +230,31 @@ def registration_body(email: str, subject_id: str, namespace_hint: str) -> str:
         subject_id: Cognito's `sub` for them. Included because an address can be
             changed and this cannot, so it is the durable identifier if the
             mapping ever has to be reconstructed.
-        namespace_hint: a namespace name derived from the address, offered as a
-            suggestion only -- the namespace has to EXIST in the cluster before
-            it works, and only the operator can see whether it does
-            (`docs/16-login.md` 16.2).
+        namespace_hint: the name `namespace_suggestion` answered for this
+            address and the team below. A suggestion only: the namespace has to
+            EXIST in the cluster before it works, and only the operator can see
+            whether it does (`docs/16-login.md` 16.2).
+        known_teams: the teams already in the token file, commonest first
+            (`auth.TokenStore.teams`). ★ THE MAIL ASKS FOR THE TEAM because the
+            server cannot know it -- which team somebody belongs to is a fact
+            about the lab, not about the sign-in. Listing what exists is the
+            difference between a question the operator can answer in a second
+            and one they have to go and look up.
 
     Returns:
         The plain-text body.
     """
+    teams = [t for t in (known_teams or []) if t]
+    team = teams[0] if teams else DEFAULT_TEAM
     entry = json.dumps({"email": email, "user": email, "namespace": namespace_hint,
-                        "team": "lab"}, indent=2)
+                        "team": team}, indent=2)
+    if teams:
+        roster = ("Teams already in the token file, commonest first: "
+                  + ", ".join(teams) + ".")
+    else:
+        roster = ("No team is named in the token file yet, so `" + DEFAULT_TEAM
+                  + "` is used below. Pick the name you want; it only has to be "
+                  + "consistent with itself.")
     return f"""{email} signed in with Google and is not registered with ddpsrun.
 
 Cognito verified them, so the sign-in itself worked. Every route still answers 403
@@ -248,6 +269,15 @@ namespace is what separates people here, and it separates more than the job list
 one namespace write their results into one prefix and each can read the other's.
 Sharing a namespace is a deliberate choice for a team that wants it, not the
 default for a new person.
+
+★ DECIDE THE TEAM FIRST. Everything below is written for team `{team}`, because
+the namespace is `<team>-<the local part of their address>` and the commands need
+a concrete name to be runnable. {roster}
+
+If this person is on a different team, change it in ALL FOUR steps and in the
+`team` field of the entry -- the namespace name and the `team` field have to
+agree, and nothing checks that they do. The two are decided together at this
+moment and at no other, so this is the moment to get them right.
 
 TO REGISTER THEM, FOUR STEPS IN THIS ORDER. Steps 1-3 are all needed before the
 first job can rent a machine; step 4 is what lets them in.
@@ -305,26 +335,60 @@ that object if you want the reminder again.
 """
 
 
-def namespace_suggestion(email: str) -> str:
-    """A namespace name derived from an address, for the operator to accept or ignore.
+def _label(raw: str) -> str:
+    """Squash a string into an RFC 1123 label, or "" when nothing survives.
+
+    Kubernetes namespaces are RFC 1123 labels: lowercase letters, digits and
+    hyphens, starting and ending with one of the first two. An address may hold
+    dots, plus signs and capitals and `kubectl create namespace` refuses all
+    three, so `bo.ram+x@x.com` has to become `bo-ram-x` before it can reach a
+    command somebody pastes.
+    """
+    cleaned = "".join(c if c.isalnum() else "-" for c in (raw or "").strip().lower())
+    return cleaned.strip("-")
+
+
+def namespace_suggestion(email: str, team: str = DEFAULT_TEAM) -> str:
+    """The namespace a new person gets: their team, then their address.
+
+    ★ THE RULE, and it took the team on 2026-09-08. It was `lab-<local part>`,
+    with `lab-` a fixed prefix that meant nothing. A prefix that carries the TEAM
+    says something true about the person on a shared cluster, and `team` is being
+    decided at that same moment anyway -- both fields are written by the operator
+    when somebody is added, and neither is decided at any other time.
+
+    THE TEAM IS ASKED FOR, NOT GUESSED. This function cannot know it; the caller
+    supplies it, and `registration_body` lists the teams already in the token
+    file so the operator confirms one rather than inventing it.
+
+    AND IT IS NEVER READ BACK OUT. Nothing splits a namespace on a dash to
+    recover the team -- that breaks the moment a team is called "ddps-lab", and
+    guessing wrong puts a person's figures in another team's total. `team` stays
+    its own field. See `auth.TokenStore`'s docstring.
 
     Args:
-        email: the verified address.
+        email: the verified address the person signs in with.
+        team: the team they belong to. Defaults to `DEFAULT_TEAM` so a caller
+            with nothing to say still gets a runnable name rather than one
+            starting with a hyphen.
 
     Returns:
-        `lab-<local part>`, lowercased, with everything a Kubernetes name cannot
-        hold replaced by a hyphen. Kubernetes namespaces are RFC 1123 labels:
-        lowercase letters, digits and hyphens, starting and ending with one of the
-        first two. A dotted address like `bo.ram@x.com` would otherwise produce
-        `lab-bo.ram`, which `kubectl create namespace` refuses.
+        `<team>-<local part>`, both squashed to RFC 1123 labels. Truncated to 63
+        characters, which is the label limit -- a long address would otherwise
+        produce a name `kubectl create namespace` refuses.
+
+    Example:
+        >>> namespace_suggestion("alice@example.com", "ddps")
+        'ddps-alice'
     """
-    local = (email or "").strip().lower().split("@")[0]
-    cleaned = "".join(c if c.isalnum() else "-" for c in local).strip("-")
-    return f"lab-{cleaned}" if cleaned else "lab-unnamed"
+    who = _label((email or "").split("@")[0]) or "unnamed"
+    where = _label(team) or DEFAULT_TEAM
+    return f"{where}-{who}"[:63].strip("-")
 
 
 def send_registration_request(*, email: str, subject_id: str, notify_to: str,
-                              notify_from: str, region: str = "", client=None) -> None:
+                              notify_from: str, region: str = "", client=None,
+                              known_teams: list[str] | None = None) -> None:
     """Send the operator one email about one person.
 
     Args:
@@ -338,13 +402,17 @@ def send_registration_request(*, email: str, subject_id: str, notify_to: str,
             click covers both.
         region: SES region, or empty for the function's own.
         client: an SES client, for tests.
+        known_teams: the teams already in the token file, for the mail to offer.
 
     Raises:
         NotifyError: SES refused. The message names the address, because the
             overwhelmingly likely cause is that it was never verified.
     """
     client = client or ses_client(region)
-    body = registration_body(email, subject_id, namespace_suggestion(email))
+    teams = [t for t in (known_teams or []) if t]
+    team = teams[0] if teams else DEFAULT_TEAM
+    body = registration_body(email, subject_id,
+                             namespace_suggestion(email, team), teams)
     try:
         client.send_email(
             FromEmailAddress=notify_from,
