@@ -1327,7 +1327,6 @@ function setLoginStage(stage) {
   if (stage !== "ready") {
     $("cognito-box").hidden = true;
     $("token-box").hidden = true;
-    $("token-toggle").hidden = true;
   }
 }
 
@@ -1484,14 +1483,6 @@ $("cognito-login").onclick = () => startCognitoLogin().catch((err) => {
 
 $("logout").onclick = signOut;
 
-// The token box is hidden when Cognito is on, but not removed: someone holding
-// a static token for a script still has to be able to get in from a browser.
-$("token-toggle").onclick = () => {
-  const box = $("token-box");
-  box.hidden = !box.hidden;
-  $("token-toggle").textContent = box.hidden ? "Use a token instead" : "Hide";
-};
-
 window.addEventListener("hashchange", route);
 
 /* Startup, in this order:
@@ -1574,8 +1565,12 @@ window.addEventListener("hashchange", route);
 
   setLoginStage("ready");
   $("cognito-box").hidden = !cognitoOn;
+  // Token sign-in is gone from the UI (2026-09-08, user decision: "oauth로만").
+  // With Cognito on, the only way in is Google. The token box survives ONLY as
+  // the sole fallback for a deployment that has no user pool at all — there it
+  // is the only way in, so hiding it would lock everyone out. It never appears
+  // alongside Cognito, and the "Use a token instead" toggle is gone entirely.
   $("token-box").hidden = cognitoOn;
-  $("token-toggle").hidden = !cognitoOn;
   // With the address known, the field is one less thing to get wrong.
   $("server-row").hidden = Boolean(apiBase);
   $("in-server").value = apiBase;
