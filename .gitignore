@@ -24,3 +24,11 @@ ui/config.json
 # Copied in at build time from the repository root; see cli/Makefile.
 cli/README.md
 cli/LICENSE
+# ★ docs/ 는 커밋하지 않는다 (2026-09-08 운영자 결정)
+#
+# 이 저장소는 PUBLIC 이다. docs/ 는 이 배포 하나에 대한 운영 문서라 namespace 이름, 계정,
+# 주소, 값 같은 실제 값이 들어가기 쉽고, 실제로 그렇게 됐다 — 사람 둘의 email 주소가 다섯
+# 파일에 실려 공개됐다. 자리표시자로 바꾸는 것으로는 다음 번을 막지 못하므로 디렉터리째 막는다.
+#
+# 문서는 저장소 밖에 둔다. 필요하면 운영자의 노션이나 git 밖 경로로.
+docs/

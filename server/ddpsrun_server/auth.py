@@ -131,7 +131,7 @@ class TokenStore:
 
     WHY THE ADDRESS AND NOT THE `user` FIELD, which is what a migration reached
     for once. `user` is typed by an operator and can be anything -- it was
-    "second-account" for an address with no "operator" in it -- while the address is
+    a name with no relation to the address it belonged to -- while the address is
     what the person actually presents at every sign-in. A name derived from the
     thing that identifies them cannot go stale against it.
 

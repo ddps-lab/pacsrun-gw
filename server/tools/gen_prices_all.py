@@ -23,17 +23,19 @@ with every row, and anything that RANKS rows may only rank within one basis.
 
 Run: python gen_prices_all.py > .../ddpsrun_server/prices.csv
 """
+import os
+import pathlib
 import collections
 import csv
 import re
 import sys
 
-AWS = "/Users/me/.sky/catalogs/v8/aws/vms.csv"
-GCP = "/Users/me/.sky/catalogs/v8/gcp/vms.csv"
+AWS = os.path.expanduser("~/.sky/catalogs/v8/aws/vms.csv")
+GCP = os.path.expanduser("~/.sky/catalogs/v8/gcp/vms.csv")
 READ_ON = "2026-09-08"
 MIN_GIB = 16.0
 
-sys.path.insert(0, "/Users/me/ddps-projects/pacsrun-gw/server")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from ddpsrun_server.catalogue import CHOOSABLE            # noqa: E402
 
 CARDS = {c.name for c in CHOOSABLE}

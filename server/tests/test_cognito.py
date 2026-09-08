@@ -594,7 +594,7 @@ def test_the_namespace_rule_is_the_team_then_the_address():
         the registration mail "lab-" + the address local part -> lab-alice
         a migration script    "lab-" + the `user` field       -> lab-alice-gmail
 
-    The third produced `lab-alice` for an address with no "operator" in it,
+    The third produced a namespace named after a `user` field that had no
     which is how the disagreement surfaced.
 
     ONE RULE: the TEAM, then the address's local part. The team because it is
