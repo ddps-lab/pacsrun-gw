@@ -1130,13 +1130,23 @@ def test_cancelling_needs_a_token(client):
 # ---------------------------------------------------------------- DDPSRUN-SCRIPTS
 
 
-def seed_job_with_args(cluster, namespace, name, args, job_id="", display="", created=""):
-    """A PacsJob shaped like the ones the screen creates, with the args it would carry."""
+def seed_job_with_args(cluster, namespace, name, args, job_id="", display="", created="",
+                       owner=""):
+    """A PacsJob shaped like the ones the screen creates, with the args it would carry.
+
+    `owner` defaults to EMPTY so the old callers keep testing the shape they meant
+    to -- a job with no submitter recorded, which is what `kubectl apply` makes.
+    Every job this gateway creates carries one (`models.to_pacsjob` stamps
+    `ddpsrun.io/owner` from principal.user), so a test about the normal path has
+    to pass it.
+    """
     labels = {}
     if job_id:
         labels["ddpsrun.io/job-id"] = job_id
     if display:
         labels["ddpsrun.io/name"] = display
+    if owner:
+        labels["ddpsrun.io/owner"] = owner
     cluster.objects[(namespace, name)] = {
         "metadata": {"name": name, "namespace": namespace, "labels": labels,
                      "creationTimestamp": created},
@@ -1158,6 +1168,7 @@ def test_a_script_is_read_back_out_of_the_job_that_ran_it(client, cluster):
         cluster, "lab-alice", "ddpsrun-aaaaaaaaaaaa",
         ["bash", "-lc", "set -euo pipefail\npython train.py"],
         job_id="job-aaaaaaaaaaaa", display="train", created="2026-09-08T01:00:00Z",
+        owner="alice",
     )
     answer = as_alice(client, "GET", "/v1/scripts").json()
     assert len(answer["scripts"]) == 1
@@ -1167,6 +1178,8 @@ def test_a_script_is_read_back_out_of_the_job_that_ran_it(client, cluster):
     assert only["name"] == "train"
     assert only["lines"] == 2
     assert only["used"] == 1
+    assert only["owner"] == "alice"
+    assert answer["owners"] == ["alice"]
     assert answer["note"] == ""
 
 
@@ -1282,3 +1295,81 @@ def test_regions_reach_the_estimate_through_the_route(client):
     assert home["usd_per_hour_low"] == 6.88
     assert seoul["usd_per_hour_low"] == 8.60
     assert "us-west-2" in home["basis"] and "ap-northeast-1" in seoul["basis"]
+
+
+# ------------------------------------- DDPSRUN-SCRIPTS: who ran what, per person
+
+
+def test_two_people_running_the_same_script_are_two_entries(client, cluster):
+    """★ THE QUESTION THIS ROUTE IS ASKED is "which scripts has each person run",
+    and keying on the text alone could not answer it. Two people with the same
+    run.sh collapsed into ONE entry that kept the first job's metadata and merely
+    counted the second, so the listing named one of them and silently dropped the
+    other."""
+    shared = "python train.py --config shared.yaml"
+    seed_job_with_args(cluster, "lab-alice", "ddpsrun-aaaaaaaaaaaa",
+                       ["bash", "-lc", shared], job_id="job-aaaaaaaaaaaa",
+                       display="alice-run", created="2026-09-08T01:00:00Z", owner="alice")
+    seed_job_with_args(cluster, "lab-alice", "ddpsrun-bbbbbbbbbbbb",
+                       ["bash", "-lc", shared], job_id="job-bbbbbbbbbbbb",
+                       display="bob-run", created="2026-09-08T02:00:00Z", owner="bob")
+
+    answer = as_alice(client, "GET", "/v1/scripts").json()
+    assert len(answer["scripts"]) == 2
+    assert answer["owners"] == ["alice", "bob"]
+    by_owner = {s["owner"]: s for s in answer["scripts"]}
+    assert set(by_owner) == {"alice", "bob"}
+    # Each is one run of it, not one entry claiming two.
+    assert by_owner["alice"]["used"] == 1 and by_owner["bob"]["used"] == 1
+    assert by_owner["alice"]["name"] == "alice-run"
+    assert by_owner["bob"]["name"] == "bob-run"
+
+
+def test_one_person_running_it_five_times_is_still_one_entry(client, cluster):
+    """The count is per (person, text). Splitting on the person must not undo the
+    de-duplication that made the screen readable in the first place."""
+    same = "python train.py"
+    for n, stamp in enumerate(["01", "02", "03", "04", "05"]):
+        seed_job_with_args(cluster, "lab-alice", f"ddpsrun-cccccccccc{n}0",
+                           ["bash", "-lc", same], job_id=f"job-cccccccccc{n}0",
+                           display=f"run-{n}", created=f"2026-09-08T{stamp}:00:00Z",
+                           owner="alice")
+    answer = as_alice(client, "GET", "/v1/scripts").json()
+    assert len(answer["scripts"]) == 1
+    assert answer["scripts"][0]["used"] == 5
+    assert answer["owners"] == ["alice"]
+    # The newest run is the one named: the objects are walked newest first.
+    assert answer["scripts"][0]["name"] == "run-4"
+
+
+def test_a_job_with_no_owner_says_so_rather_than_guessing(client, cluster):
+    """A job made with `kubectl apply` carries no owner and the submitter cannot be
+    recovered afterwards. The field stays EMPTY rather than holding "unknown",
+    which would sit in the owner column looking like somebody's username -- and
+    the note explains the unnamed group, so it reads as jobs predating the
+    labelling rather than as broken grouping."""
+    seed_job_with_args(cluster, "lab-alice", "ddpsrun-dddddddddddd",
+                       ["bash", "-lc", "python train.py"],
+                       job_id="job-dddddddddddd", created="2026-09-08T01:00:00Z")
+    answer = as_alice(client, "GET", "/v1/scripts").json()
+    assert answer["scripts"][0]["owner"] == ""
+    assert answer["owners"] == [""]
+    assert "ddpsrun.io/owner" in answer["note"]
+    assert "kubectl apply" in answer["note"]
+
+
+def test_the_namespace_is_reported_as_a_namespace_and_not_as_a_person(client, cluster):
+    """★ A NAMESPACE IS NOT A PERSON, and treating it as one was the defect. It is
+    a tenancy boundary that may hold a whole team, and in this deployment it does:
+    all three principals in the deployed token file sit in `default`. So the
+    answer reports the namespace it READ and the people it FOUND as two separate
+    fields."""
+    seed_job_with_args(cluster, "lab-alice", "ddpsrun-eeeeeeeeeeee",
+                       ["bash", "-lc", "a"], job_id="job-eeeeeeeeeeee",
+                       created="2026-09-08T01:00:00Z", owner="alice")
+    seed_job_with_args(cluster, "lab-alice", "ddpsrun-ffffffffffff",
+                       ["bash", "-lc", "b"], job_id="job-ffffffffffff",
+                       created="2026-09-08T02:00:00Z", owner="bob")
+    answer = as_alice(client, "GET", "/v1/scripts").json()
+    assert answer["namespace"] == "lab-alice"      # one namespace
+    assert answer["owners"] == ["alice", "bob"]    # two people in it

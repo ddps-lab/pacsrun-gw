@@ -20,12 +20,36 @@
 # driver died in its own configuration check at +0.31s.
 #
 # WHY CREATING AN SA HERE COULD NEVER HAVE HELPED. The role is assumed through EKS Pod Identity,
-# and the association is `default/pacsjob-writer -> role/pacsrun-workload`. The role's trust
-# policy names exactly ONE namespace/ServiceAccount pair -- PACSrun's own config/deploy/README.md
-# step 3 says so: "role의 trust policy가 그 namespace/ServiceAccount 조합 하나만 신뢰하므로,
-# 다른 SA로 돌리면 STS가 거절한다". So a second ServiceAccount, annotated or not, is an identity
-# nothing trusts. And `pacsrun-workload` is the ROLE's name; this file put it in the
+# and only one namespace/ServiceAccount pair can assume it: `default/pacsjob-writer ->
+# role/pacsrun-workload`. So a second ServiceAccount, annotated or not, is an identity nothing
+# can assume with. And `pacsrun-workload` is the ROLE's name; this file put it in the
 # ServiceAccount's slot.
+#
+# ★ WHICH OBJECT ENFORCES THAT, corrected 2026-09-08. This paragraph said "the role's trust
+# policy names exactly ONE namespace/ServiceAccount pair", quoting PACSrun's
+# config/deploy/README.md step 3. THE TRUST POLICY NAMES NO NAMESPACE AT ALL. Measured with
+# `aws iam get-role --role-name pacsrun-workload --query Role.AssumeRolePolicyDocument`:
+#
+#     Principal { "Service": "pods.eks.amazonaws.com" }
+#     Action    [ "sts:TagSession", "sts:AssumeRole" ]
+#
+# and no Condition block. What binds the pair is the ASSOCIATION, a separate EKS object, and
+# `aws eks list-pod-identity-associations --cluster-name pacsrun` shows exactly one for this
+# role: `default / pacsjob-writer`.
+#
+# THE EFFECT IS THE SAME AND THE COST OF EXTENDING IT IS NOT, which is why the distinction
+# matters. Running jobs in a SECOND namespace does NOT need the trust policy touched -- it needs
+# a `pacsjob-writer` ServiceAccount in that namespace and ONE more association:
+#
+#     kubectl create namespace lab-someone
+#     kubectl -n lab-someone create serviceaccount pacsjob-writer
+#     aws eks create-pod-identity-association --cluster-name pacsrun \
+#       --namespace lab-someone --service-account pacsjob-writer \
+#       --role-arn arn:aws:iam::<ACCOUNT_ID>:role/pacsrun-workload
+#
+# The gateway itself needs nothing: its permissions come from a ClusterRoleBinding
+# (`ClusterRole/ddpsrun-gw -> Group:ddpsrun-gw`) with create/get/list/delete on `pacsjobs`
+# cluster-wide, so it can already submit into a namespace that does not exist yet.
 #
 # WHAT REPLACES IT. Nothing to apply. DDPSRUN_SERVICE_ACCOUNT defaults to `pacsjob-writer`, the
 # ServiceAccount PACSrun's terraform already creates and wires, and a deployment whose name

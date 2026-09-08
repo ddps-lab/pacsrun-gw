@@ -650,3 +650,37 @@ def test_an_unknown_mode_is_refused_by_argparse():
     and a job that ran the old failover walk while its owner believed it compared prices."""
     with pytest.raises(SystemExit):
         args_for(["submit", "--name", "x", "--image", "img", "--placement-mode", "cheapets"])
+
+
+def test_the_version_comes_from_the_install_and_not_from_a_literal():
+    """★ THE LITERAL HAD ALREADY DRIFTED, AND SHIPPED. `__init__.py` said "0.1.0"
+    while pyproject.toml said 0.1.1, and the published wheel carried BOTH:
+    ddpsrun-0.1.1.dist-info/METADATA says `Version: 0.1.1` and the module inside
+    that same wheel said 0.1.0. Two answers to "which version am I running" is
+    the one thing that has to be right when a bug is reported against an install.
+
+    So the version is read from the installed metadata, and pyproject.toml is the
+    single place it is written.
+    """
+    from importlib.metadata import version
+
+    import ddpsrun
+
+    assert ddpsrun.__version__ == version("ddpsrun")
+    assert ddpsrun.__version__ != "0+unknown", (
+        "the fallback is for a source tree with nothing installed; a test run "
+        "has the package installed, so reaching it means the metadata lookup broke"
+    )
+
+
+def test_there_is_a_version_flag_at_all(capsys):
+    """There was none before 2026-09-08, so somebody who installed from PyPI had
+    no way to say which build they were on. It sits on the TOP-LEVEL parser,
+    unlike --json: it is a question about the install, not about a command."""
+    import ddpsrun
+    from ddpsrun import cli
+
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["--version"])
+    assert exited.value.code == 0
+    assert capsys.readouterr().out.strip() == f"ddpsrun {ddpsrun.__version__}"
