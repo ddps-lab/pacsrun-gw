@@ -340,6 +340,80 @@ NAMESPACE_QUERY = Query(
 K8S_NAME = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")
 
 
+
+def owned_by_caller(obj: dict[str, Any], principal: Principal) -> bool:
+    """Does this PacsJob belong to the caller.
+
+    ★ DDPSRUN-OWNER-GATE. WHY THIS EXISTS AT ALL, given every route already scopes
+    to a namespace. Because the namespace is a TENANCY boundary and not a person,
+    and seven route docstrings in this file said otherwise -- "someone else's job
+    reads as 404", "it cannot contain anyone else's work". Those sentences were
+    written against `auth.py`'s convention that a namespace holds one person
+    ("<team>-<user>"), which nothing enforces and which this deployment does not
+    follow: all three principals in the token file sit in `default`.
+
+    MEASURED 2026-09-08 with two principals in one namespace, through the real
+    routes, before this function existed:
+
+        GET  /v1/jobs             200   the other person's job in the list
+        GET  /v1/jobs/{id}        200   their detail
+        GET  /v1/jobs/{id}/spec   200   their run.sh, verbatim
+        POST /v1/jobs/{id}/exec   200   a shell line inside their RUNNING container
+        DELETE /v1/jobs/{id}      204   their job gone, and with it the only copy
+                                        of that script (nothing else stores it)
+
+    So this is not a new policy. It is the property the docstrings already
+    promised, finally implemented, and it closes a path that the /v1/scripts
+    per-person grouping could otherwise be walked around: `spec.args` on the job
+    detail is the same text.
+
+    THREE DELIBERATE EXEMPTIONS, each for a reason that is not convenience:
+
+      an operator            `admin` in the token file. They can already name any
+                             namespace with ?namespace=, so gating them here would
+                             remove the only way to help somebody with a stuck job
+                             while changing nothing about what they can reach.
+      an unowned job         no `ddpsrun.io/owner` label at all. Every one of the
+                             35 jobs on this cluster is in that state -- they were
+                             applied with kubectl, before the label existed -- and
+                             nobody owns them, so locking everyone out of them
+                             would break the screen for the jobs it mostly shows.
+      the caller's own       the ordinary case.
+
+    Args:
+        obj: the PacsJob, as fetched.
+        principal: the caller.
+
+    Returns:
+        True when the caller may touch it.
+    """
+    if principal.admin:
+        return True
+    owner = ((obj.get("metadata") or {}).get("labels") or {}).get(naming.OWNER_LABEL, "")
+    return not owner or owner == principal.user
+
+
+def require_owner(obj: dict[str, Any], principal: Principal) -> dict[str, Any]:
+    """`owned_by_caller`, or 404.
+
+    404 AND NOT 403, which is what the docstrings promised and is the right answer
+    anyway: a 403 confirms that a job with that id exists and belongs to somebody,
+    which is one bit more than the caller is entitled to.
+
+    Args:
+        obj: the PacsJob, as fetched.
+        principal: the caller.
+
+    Returns:
+        The same object, so this can wrap a fetch in one expression.
+
+    Raises:
+        HTTPException: 404 when it is somebody else's.
+    """
+    if not owned_by_caller(obj, principal):
+        raise HTTPException(status_code=404, detail="no such job")
+    return obj
+
 def resolve_object_name(job_id: str) -> str:
     """The Kubernetes object behind a path's {job_id} — two spellings.
 
@@ -714,9 +788,15 @@ def validate_route(body: JudgementRequest, principal: PrincipalDep) -> ValidateR
 def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
     """What this caller's team has spent.
 
-    Aggregate only. A caller asking for their team's figures does not thereby
-    get to read another member's job names or results — those stay in each
-    member's own namespace, which is where the isolation lives.
+    Aggregate only. A caller asking for their team's figures does not thereby get
+    to read another member's job names or results: this route returns totals, and
+    the routes that return job detail check the job's `ddpsrun.io/owner` label
+    (DDPSRUN-OWNER-GATE).
+
+    THE OLD WORDING SAID THE ISOLATION LIVED IN "each member's own namespace",
+    which is a convention `auth.py` documents and nothing enforces -- and this
+    deployment does not follow it. The isolation is the owner check; the namespace
+    is a tenancy boundary that may hold a whole team.
 
     The team's namespaces come from the server's own token file rather than from
     a label on the namespaces, which means this route needs no cluster-wide
@@ -890,8 +970,16 @@ def list_jobs(
 ) -> JobListResponse:
     """This caller's own jobs, newest first.
 
-    The screen's first view. Read from the token's namespace, so it cannot
-    contain anyone else's work.
+    The screen's first view. Read from the token's namespace and then filtered to
+    the caller's own jobs by `owned_by_caller`, so it cannot contain anyone else's
+    work.
+
+    DDPSRUN-OWNER-GATE. THE SECOND SENTENCE WAS FALSE UNTIL 2026-09-08. It rested
+    on one namespace holding one person, which nothing enforces and this
+    deployment does not do -- all three principals sit in `default`. So this route
+    handed every namespace-mate's job, with their owner name and their S3 result
+    prefix on each row, to anyone in the namespace. That is where the exposure
+    started: no id had to be guessed.
 
     Filtering happens here rather than in the browser because the whole list
     crosses the network otherwise: at 1 KB per job, a namespace with 500 jobs
@@ -914,6 +1002,13 @@ def list_jobs(
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    # DDPSRUN-OWNER-GATE. The list is where the exposure STARTED: nobody had to
+    # guess an id, because this route handed every namespace-mate's job -- with
+    # their owner name and their S3 result prefix on each row -- to anyone in the
+    # namespace, under a docstring saying "it cannot contain anyone else's work".
+    # Filtering here is what makes that sentence true. `owned_by_caller` keeps an
+    # operator seeing everything and keeps the unowned kubectl-era jobs visible.
+    objects = [obj for obj in objects if owned_by_caller(obj, principal)]
     views = [JobView.from_pacsjob(obj) for obj in objects]
 
     if phase == "active":
@@ -942,10 +1037,14 @@ def get_job(
 
     Args:
         job_id: an id this server issued.
-        principal: the caller. The lookup happens in their namespace only
-            (an operator may name another with ?namespace=), so a job belonging
-            to someone else reads as 404, not 403 — we do not confirm that
-            another user's job exists.
+        principal: the caller. The lookup is scoped to their namespace AND
+            checked against the job's own `ddpsrun.io/owner` label (an operator
+            may name another namespace with ?namespace=), so a job belonging
+            to someone else reads as 404, not 403 -- we do not confirm that
+            another user's job exists. DDPSRUN-OWNER-GATE: true since 2026-09-08 and not before,
+            when it
+            rested on one namespace holding one person -- which nothing
+            enforces and this deployment does not do.
 
     Raises:
         HTTPException: 404 for an unknown or malformed id; 502 on a cluster error.
@@ -954,7 +1053,8 @@ def get_job(
     name = resolve_object_name(job_id)
 
     try:
-        obj: dict[str, Any] = cluster.get_job(namespace_for(principal, namespace), name)
+        obj: dict[str, Any] = require_owner(
+            cluster.get_job(namespace_for(principal, namespace), name), principal)
     except NotFound as exc:
         raise HTTPException(status_code=404, detail="no such job") from exc
     except ClusterError as exc:
@@ -989,8 +1089,15 @@ def cancel_job(
 
     Args:
         job_id: an id this server issued.
-        principal: the caller. The delete happens in their namespace only, so
-            someone else's job reads as 404 and cannot be cancelled by guessing.
+        principal: the caller. The job is FETCHED and its owner checked before
+            anything is deleted, so someone else's job reads as 404 and cannot
+            be cancelled by guessing. DDPSRUN-OWNER-GATE: true since 2026-09-08 and not before, when
+            it
+            rested on one namespace holding one person -- which nothing
+            enforces and this deployment does not do. Before it, any
+            caller sharing the namespace could cancel a running job of
+            somebody else's -- measured 204 -- and deleting a job destroys the
+            only copy of its script.
 
     Returns:
         204 with no body. There is nothing useful to say about a thing that is
@@ -1003,7 +1110,14 @@ def cancel_job(
     name = resolve_object_name(job_id)
 
     try:
-        cluster.delete_job(namespace_for(principal, namespace), name)
+        # FETCH BEFORE DESTROYING, added 2026-09-08. This route used to delete
+        # straight away, so any caller sharing the namespace could cancel
+        # somebody else's running job by its id -- measured 204 -- and deleting a
+        # job destroys the only copy of its script. One extra read on a
+        # destructive route is the cheapest possible price for that.
+        where = namespace_for(principal, namespace)
+        require_owner(cluster.get_job(where, name), principal)
+        cluster.delete_job(where, name)
     except NotFound as exc:
         raise HTTPException(status_code=404, detail="no such job") from exc
     except ClusterError as exc:
@@ -1028,8 +1142,14 @@ def get_job_spec(
 
     Args:
         job_id: an id this server issued.
-        principal: the caller. The lookup is in their namespace only, so someone
-            else's job reads as 404.
+        principal: the caller. The lookup is scoped to their namespace and to
+            the job's owner, so someone else's job reads as 404. DDPSRUN-OWNER-GATE: true since
+            2026-09-08 and not before, when it
+            rested on one namespace holding one person -- which nothing
+            enforces and this deployment does not do.
+            This route is the SECOND path to a script -- `spec.args` is the
+            same text the Scripts screen groups by person -- so gating one
+            and not the other gated nothing.
 
     Raises:
         HTTPException: 404 for an unknown or malformed id; 502 on a cluster error.
@@ -1038,7 +1158,8 @@ def get_job_spec(
     name = resolve_object_name(job_id)
 
     try:
-        obj: dict[str, Any] = cluster.get_job(namespace_for(principal, namespace), name)
+        obj: dict[str, Any] = require_owner(
+            cluster.get_job(namespace_for(principal, namespace), name), principal)
     except NotFound as exc:
         raise HTTPException(status_code=404, detail="no such job") from exc
     except ClusterError as exc:
@@ -1232,7 +1353,8 @@ def get_artifacts(
     cluster: Cluster = request.app.state.cluster
     name = resolve_object_name(job_id)
     try:
-        obj: dict[str, Any] = cluster.get_job(namespace_for(principal, namespace), name)
+        obj: dict[str, Any] = require_owner(
+            cluster.get_job(namespace_for(principal, namespace), name), principal)
     except NotFound as exc:
         raise HTTPException(status_code=404, detail="no such job") from exc
     except ClusterError as exc:
@@ -1303,7 +1425,7 @@ def exec_in_job(
     name = resolve_object_name(job_id)
     ns = namespace_for(principal, namespace)
     try:
-        obj: dict[str, Any] = cluster.get_job(ns, name)
+        obj: dict[str, Any] = require_owner(cluster.get_job(ns, name), principal)
     except NotFound as exc:
         raise HTTPException(status_code=404, detail="no such job") from exc
     except ClusterError as exc:
@@ -1423,9 +1545,17 @@ def get_metrics(
     cluster: Cluster = request.app.state.cluster
     name = resolve_object_name(job_id)
 
+    # DDPSRUN-OWNER-GATE. Neither of these routes fetched the job, so both
+    # read straight from the driver pod behind an id -- another person's
+    # training output in one case and their GPU samples in the other. The
+    # owner is written on the JOB and nowhere else, so the object has to be
+    # read to know whose pod this is. One small GET against a log window or
+    # a Prometheus range query is not a cost worth trading for it.
+    where = namespace_for(principal, namespace)
     try:
+        require_owner(cluster.get_job(where, name), principal)
         lines = cluster.recent_log_lines(
-            namespace_for(principal, namespace), name, window_seconds
+            where, name, window_seconds
         )
     except NotFound as exc:
         raise HTTPException(
@@ -1521,9 +1651,17 @@ def get_logs(
     cluster: Cluster = request.app.state.cluster
     name = resolve_object_name(job_id)
 
+    # DDPSRUN-OWNER-GATE. Neither of these routes fetched the job, so both
+    # read straight from the driver pod behind an id -- another person's
+    # training output in one case and their GPU samples in the other. The
+    # owner is written on the JOB and nowhere else, so the object has to be
+    # read to know whose pod this is. One small GET against a log window or
+    # a Prometheus range query is not a cost worth trading for it.
+    where = namespace_for(principal, namespace)
     try:
+        require_owner(cluster.get_job(where, name), principal)
         lines = cluster.job_log_window(
-            namespace_for(principal, namespace), name, window_seconds, max_lines
+            where, name, window_seconds, max_lines
         )
     except NotFound as exc:
         raise HTTPException(

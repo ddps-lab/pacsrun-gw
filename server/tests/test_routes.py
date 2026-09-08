@@ -1373,3 +1373,161 @@ def test_the_namespace_is_reported_as_a_namespace_and_not_as_a_person(client, cl
     answer = as_alice(client, "GET", "/v1/scripts").json()
     assert answer["namespace"] == "lab-alice"      # one namespace
     assert answer["owners"] == ["alice", "bob"]    # two people in it
+
+
+# ---------------------------------------------- DDPSRUN-OWNER-GATE: two people,
+#                                                one namespace
+#
+# ★ WHAT THESE MEASURE, AND WHY NONE OF THE 390 TESTS ABOVE CAUGHT IT. Every
+# fixture in this file puts alice and bob in DIFFERENT namespaces, so the
+# namespace scoping did all the work and the missing owner check never showed.
+# The DEPLOYED token file puts all three principals in `default`. With two
+# principals in one namespace, before the gate existed, measured through these
+# same routes:
+#
+#     GET  /v1/jobs             200   the other person's job, with their owner
+#                                     name and S3 result prefix on the row
+#     GET  /v1/jobs/{id}        200   their detail
+#     GET  /v1/jobs/{id}/spec   200   their run.sh, verbatim
+#     POST /v1/jobs/{id}/exec   200   a shell line inside their RUNNING container
+#     DELETE /v1/jobs/{id}      204   their job gone, and the only copy of that
+#                                     script with it
+#
+# while seven docstrings in main.py said "someone else's job reads as 404".
+
+
+@pytest.fixture
+def shared_ns_client(tmp_path, monkeypatch, cluster):
+    """alice and bob in ONE namespace, which is the deployed shape."""
+    tokens = tmp_path / "tokens.json"
+    tokens.write_text(json.dumps({"tokens": [
+        {"sha256": auth.hash_token("alice-token"), "user": "alice",
+         "namespace": "shared", "team": "lab"},
+        {"sha256": auth.hash_token("bob-token"), "user": "bob",
+         "namespace": "shared", "team": "lab"},
+        {"sha256": auth.hash_token("root-token"), "user": "root",
+         "namespace": "shared", "team": "lab", "admin": True},
+    ]}))
+    monkeypatch.setenv("DDPSRUN_RESULT_BUCKET", "<RESULT_BUCKET>")
+    monkeypatch.setenv("DDPSRUN_TOKENS_PATH", str(tokens))
+    monkeypatch.setenv("DDPSRUN_SECRET_BINDINGS", "{}")
+    monkeypatch.setattr(main.Cluster, "connect", staticmethod(lambda: cluster))
+    with TestClient(main.app) as test_client:
+        yield test_client
+
+
+ALICE_SCRIPT = "python train.py --data /alice/private.jsonl"
+
+
+def _alice_job(cluster, phase="Running"):
+    """One job of alice's, in the shared namespace, labelled as hers."""
+    cluster.objects[("shared", "ddpsrun-a11ce0000001")] = {
+        "metadata": {"name": "ddpsrun-a11ce0000001", "namespace": "shared",
+                     "labels": {"ddpsrun.io/job-id": "job-a11ce0000001",
+                                "ddpsrun.io/name": "alice-secret",
+                                "ddpsrun.io/owner": "alice"},
+                     "creationTimestamp": "2026-09-08T01:00:00Z"},
+        "spec": {"image": "img", "args": ["bash", "-lc", ALICE_SCRIPT],
+                 "resultPath": "s3://b/pacsrun/shared/alice-secret-a11ce0000001/"},
+        "status": {"phase": phase},
+    }
+    return "job-a11ce0000001"
+
+
+def as_bob(client, method, path, **kwargs):
+    return client.request(method, path,
+                          headers={"Authorization": "Bearer bob-token"}, **kwargs)
+
+
+def test_a_namespace_mate_cannot_see_the_job_in_the_list(shared_ns_client, cluster):
+    """This is where it started: nobody had to guess an id, because the list
+    handed over every namespace-mate's job with their owner name on it."""
+    _alice_job(cluster)
+    seen = as_bob(shared_ns_client, "GET", "/v1/jobs").json()["jobs"]
+    assert seen == []
+    mine = as_alice(shared_ns_client, "GET", "/v1/jobs").json()["jobs"]
+    assert [j["user"] for j in mine] == ["alice"]
+
+
+def test_a_namespace_mate_cannot_read_the_job(shared_ns_client, cluster):
+    job = _alice_job(cluster)
+    assert as_bob(shared_ns_client, "GET", f"/v1/jobs/{job}").status_code == 404
+    assert as_alice(shared_ns_client, "GET", f"/v1/jobs/{job}").status_code == 200
+
+
+def test_a_namespace_mate_cannot_read_the_script_off_the_spec(shared_ns_client, cluster):
+    """★ THE PATH THAT WALKED AROUND THE /v1/scripts FIX. `spec.args` on the job
+    detail is the same text the Scripts screen groups by person, so gating one and
+    not the other gated nothing."""
+    job = _alice_job(cluster)
+    answer = as_bob(shared_ns_client, "GET", f"/v1/jobs/{job}/spec")
+    assert answer.status_code == 404
+    assert ALICE_SCRIPT not in answer.text
+    assert ALICE_SCRIPT in as_alice(shared_ns_client, "GET", f"/v1/jobs/{job}/spec").text
+
+
+def test_a_namespace_mate_cannot_exec_in_the_running_container(shared_ns_client, cluster):
+    """The worst of them: an arbitrary shell line inside somebody else's running
+    training job, on a machine their money is renting."""
+    job = _alice_job(cluster)
+    answer = as_bob(shared_ns_client, "POST", f"/v1/jobs/{job}/exec",
+                    json={"command": "cat /alice/private.jsonl"})
+    assert answer.status_code == 404
+    assert cluster.execs == []
+
+
+def test_a_namespace_mate_cannot_cancel_the_job(shared_ns_client, cluster):
+    """Deleting a job destroys the only copy of its script -- nothing else stores
+    it -- so this was unrecoverable loss of someone else's work."""
+    job = _alice_job(cluster)
+    assert as_bob(shared_ns_client, "DELETE", f"/v1/jobs/{job}").status_code == 404
+    assert ("shared", "ddpsrun-a11ce0000001") in cluster.objects
+    assert as_alice(shared_ns_client, "DELETE", f"/v1/jobs/{job}").status_code == 204
+    assert ("shared", "ddpsrun-a11ce0000001") not in cluster.objects
+
+
+def test_a_namespace_mate_cannot_read_the_logs(shared_ns_client, cluster):
+    """Logs and metrics never fetched the job, so they read straight from the
+    driver pod behind an id -- another person's training output, and their GPU
+    samples. The owner is written on the JOB and nowhere else."""
+    job = _alice_job(cluster)
+    assert as_bob(shared_ns_client, "GET", f"/v1/jobs/{job}/logs").status_code == 404
+    assert as_bob(shared_ns_client, "GET", f"/v1/jobs/{job}/metrics").status_code == 404
+
+
+def test_an_operator_still_reaches_everything(shared_ns_client, cluster):
+    """DELIBERATE EXEMPTION. An operator can already name any namespace with
+    ?namespace=, so gating them would remove the only way to help somebody with a
+    stuck job while changing nothing about what they can reach."""
+    job = _alice_job(cluster)
+    assert as_root(shared_ns_client, "GET", f"/v1/jobs/{job}").status_code == 200
+    assert ALICE_SCRIPT in as_root(shared_ns_client, "GET", f"/v1/jobs/{job}/spec").text
+    assert len(as_root(shared_ns_client, "GET", "/v1/jobs").json()["jobs"]) == 1
+
+
+def test_a_job_with_no_owner_stays_readable_by_anyone_in_the_namespace(
+        shared_ns_client, cluster):
+    """DELIBERATE EXEMPTION, and it is not laxness. Every one of the 35 jobs on
+    this cluster carries no owner label -- they were applied with kubectl, before
+    the label existed -- so nobody owns them, and gating them would empty the
+    screen of the jobs it mostly shows. A job created through this service always
+    has an owner (`models.to_pacsjob` stamps it), so the exemption shrinks to
+    nothing as the old jobs age out."""
+    seed_job_with_args(cluster, "shared", "ddpsrun-0000000000ab",
+                       ["bash", "-lc", "echo legacy"], job_id="job-0000000000ab",
+                       created="2026-09-01T00:00:00Z")          # no owner=
+    assert as_bob(shared_ns_client, "GET", "/v1/jobs/job-0000000000ab").status_code == 200
+    assert len(as_bob(shared_ns_client, "GET", "/v1/jobs").json()["jobs"]) == 1
+
+
+def test_the_answer_is_404_and_not_403(shared_ns_client, cluster):
+    """403 would confirm that a job with that id exists and belongs to somebody,
+    which is one bit more than the caller is entitled to -- and 404 is what the
+    docstrings promised all along."""
+    job = _alice_job(cluster)
+    answer = as_bob(shared_ns_client, "GET", f"/v1/jobs/{job}")
+    assert answer.status_code == 404
+    assert answer.json()["detail"] == "no such job"
+    # Indistinguishable from an id that never existed.
+    missing = as_bob(shared_ns_client, "GET", "/v1/jobs/job-ffffffffffff")
+    assert missing.status_code == 404 and missing.json()["detail"] == answer.json()["detail"]

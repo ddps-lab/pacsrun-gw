@@ -787,7 +787,12 @@ function drawCompare(job) {
 
 /* ------------------------------------------------------------ 3b. Scripts */
 
-/* DDPSRUN-SCRIPTS. The scripts this caller has submitted before.
+/* DDPSRUN-SCRIPTS. Every run.sh in one namespace, GROUPED BY THE PERSON WHO RAN IT.
+
+   THIS SAID "the scripts this caller has submitted" until 2026-09-08, and the namespace
+   never guaranteed that: it is a tenancy boundary that may hold a whole team, and in this
+   deployment it holds everyone. The per-person fact is each job's own ddpsrun.io/owner
+   label, which the route ignored.
 
    WHY IT IS WORTH A SCREEN. The Script box takes a whole run.sh, and a run.sh that survived one
    job is the thing somebody wants for the next one. Without this the only way back to it was to

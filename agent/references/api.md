@@ -383,7 +383,7 @@ What `GET /v1/scripts` returns: this caller's own scripts, newest first.
 | field | required | description |
 |---|---|---|
 | `namespace` | yes | WHICH NAMESPACE was read. Not the same thing as whose scripts these are -- see `owners`. One namespace can hold several people and in this deployment it does: all three principals in the token file sit in `default`, so scoping by namespace separates nobody. |
-| `note` |  | Why the list is empty, when it is. An empty list with no note reads as 'you have never submitted a script', which is a different fact from 'none of your jobs was submitted in a shape this route recognises'. |
+| `note` |  | Why the list looks as it does, in the two cases that need saying -- no recognised script at all, AND scripts that record no submitter. The second branch fires on a NON-EMPTY list, so this is not only an empty-list explanation. An empty list with no note reads as 'you have never submitted a script', which is a different fact from 'none of your jobs was submitted in a shape this route recognises'. |
 | `owners` |  | ★ WHO ran something in this listing, sorted. THIS is the per-person axis, and the namespace is not: a namespace is a tenancy boundary that may hold a whole team. An empty string in this list means jobs whose submitter was never recorded, which is every job created with `kubectl apply` rather than through this gateway. |
 | `scripts` |  |  |
 

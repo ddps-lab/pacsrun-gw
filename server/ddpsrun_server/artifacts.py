@@ -7,6 +7,15 @@ END-TO-END FLOW of one `GET /v1/jobs/{id}/artifacts`:
      (`models.result_path_for`), never one the caller typed. That is the whole
      scoping story: a caller can only ever reach the prefix their own job was
      given, because the prefix comes off the job object, not off the request.
+
+     ★ AND WHICH JOBS ARE "THEIR OWN" IS A SEPARATE QUESTION, answered elsewhere.
+     `is_ours()` below checks only the bucket and the deployment-wide prefix --
+     no namespace and no owner -- so the sentence above holds only as far as the
+     route's own fetch does. Until 2026-09-08 that fetch was scoped to a
+     NAMESPACE alone, and with two people in one namespace either could list and
+     download the other's result files. The route now runs its fetch through
+     `main.require_owner` (DDPSRUN-OWNER-GATE); this module is unchanged and was
+     never the place to fix it.
   2. `split_result_path()` turns "s3://bucket/pacsrun/ns/job/" into
      (bucket, "pacsrun/ns/job/"), and the route refuses anything outside this
      deployment's own bucket and prefix (`is_ours()`), so a PacsJob written by
