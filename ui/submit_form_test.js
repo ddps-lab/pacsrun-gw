@@ -99,6 +99,7 @@ function setForm(o) {
   $("f-gpu").value = o.gpu ?? "";
   $("f-env").value = o.env ?? "";
   $("f-mode").value = o.mode ?? "";
+  $("f-gpucount").value = o.gpucount ?? "";
   vendorBoxes.forEach((b) => {
     b.checked = (o.vendors || []).includes(b.dataset.vendor);
   });
@@ -243,6 +244,53 @@ check(
 );
 
 // ---------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
+console.log("\nthe script box, and the four checks that could never run");
+
+setForm({ image: IMAGE, command: "set -euo pipefail\npython train.py\npython eval.py" });
+body = readForm();
+check(
+  body.script === "set -euo pipefail\npython train.py\npython eval.py",
+  "the same text is sent as `script` too. Four of validate's checks read `script` and nothing " +
+    "else -- the adapter-path pair, the exit trap, the two length caps, the TRL patch -- so " +
+    "sending only args meant those four could never run from this screen, whatever was pasted"
+);
+check(
+  JSON.stringify(body.args) ===
+    JSON.stringify(["bash", "-lc", "set -euo pipefail\npython train.py\npython eval.py"]),
+  "and the same text still runs, newlines and all: a whole run.sh in one args element is what " +
+    "`bash -lc` reads, so no file has to be written anywhere first"
+);
+
+setForm({ image: IMAGE });
+body = readForm();
+check(
+  !("script" in body) && !("args" in body),
+  "an empty box sends neither, so a job that means to use the image's own entrypoint still can"
+);
+
+// ---------------------------------------------------------------------------------------------
+console.log("\nGPUs per pod, which six of the fourteen cards need");
+
+setForm({ image: IMAGE, gpu: "A100-80GB", gpucount: 8 });
+body = readForm();
+check(
+  body.gpu && body.gpu.count === 8,
+  "the count reaches the request. validate refuses a card that is sold only as a whole 8-GPU " +
+    "machine when the count is 1 (`gpu_count == 1 && !sold_singly`), so without this box six " +
+    "of the fourteen options could be selected and never submitted"
+);
+
+setForm({ image: IMAGE, gpu: "L4" });
+check(readForm().gpu.count === 1, "and it defaults to 1, which is every job that does not pack");
+
+setForm({ image: IMAGE, gpucount: 4 });
+check(
+  !("gpu" in readForm()),
+  "a count with no GPU chosen sends no gpu block at all -- 'let the server recommend one' has " +
+    "no count to carry, and inventing one would pin a card the user did not pick"
+);
+
 console.log("\nthe compare panel, reading the operator's own sentence");
 
 /* The real shape, from internal/controller/placement.go's `mode == placementModeCompare`

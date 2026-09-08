@@ -72,6 +72,8 @@ from .models import (
     JobListResponse,
     ImageView,
     ImagesResponse,
+    ScriptView,
+    ScriptsResponse,
     JobSpecResponse,
     JobView,
     NamespacesResponse,
@@ -800,6 +802,76 @@ def get_job_spec(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return JobSpecResponse.from_pacsjob(obj)
+
+
+@app.get("/v1/scripts", response_model=ScriptsResponse)
+def scripts_route(
+    request: Request,
+    principal: PrincipalDep,
+    namespace: str | None = Query(default=None),
+) -> ScriptsResponse:
+    """The scripts this caller has submitted before, newest first.
+
+    DDPSRUN-SCRIPTS-ROUTE. The Script box on the New job screen is where a run.sh goes, and until
+    this route existed there was no way to get one back: the screen sent it, the job ran it, and
+    finding it again meant opening jobs one at a time and reading the Submitted spec panel.
+
+    IT COSTS ONE CLUSTER CALL AND STORES NOTHING. `list_jobs` already returns whole objects --
+    /v1/jobs throws the specs away and keeps the status -- so the scripts are in hand before this
+    function starts. Nothing is written anywhere; deleting a job deletes its script with it.
+
+    THE SHAPE IT RECOGNISES is the one the screen sends: args == ["bash", "-lc", <text>]. A
+    kubectl job, an argv list or an image running its own entrypoint carries no script by that
+    definition, and those are left out rather than guessed at -- which is why an empty answer
+    comes with a note saying which of the two emptinesses it is.
+
+    Returns:
+        A `ScriptsResponse`, newest first, one entry per DISTINCT text.
+    """
+    cluster: Cluster = request.app.state.cluster
+    try:
+        objects = cluster.list_jobs(namespace_for(principal, namespace))
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # Keyed by the text itself, so the same run.sh submitted five times is one entry. dict keeps
+    # insertion order and the objects are walked newest first, so the first sighting of a text is
+    # also its most recent job -- which is the one worth naming.
+    seen: dict[str, ScriptView] = {}
+    ordered = sorted(
+        objects,
+        key=lambda o: (o.get("metadata") or {}).get("creationTimestamp") or "",
+        reverse=True,
+    )
+    for obj in ordered:
+        args = ((obj.get("spec") or {}).get("args")) or []
+        if len(args) != 3 or args[0] != "bash" or args[1] != "-lc":
+            continue
+        text = args[2]
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if text in seen:
+            seen[text].used += 1
+            continue
+        meta = obj.get("metadata") or {}
+        labels = meta.get("labels") or {}
+        seen[text] = ScriptView(
+            script=text,
+            job_id=labels.get(naming.JOB_ID_LABEL, ""),
+            name=labels.get(naming.DISPLAY_NAME_LABEL, "") or meta.get("name", ""),
+            created_at=meta.get("creationTimestamp"),
+            used=1,
+            lines=len(text.splitlines()) or 1,
+        )
+
+    note = ""
+    if not seen:
+        note = (
+            "None of your jobs carries a script this route recognises. It reads the text back "
+            "out of the job itself, and only a job submitted from the New job screen's Script "
+            "box (or with `--arg bash --arg -lc --arg '<text>'`) has it in that shape."
+        )
+    return ScriptsResponse(scripts=list(seen.values()), note=note)
 
 
 @app.get("/v1/images", response_model=ImagesResponse)

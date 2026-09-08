@@ -1126,3 +1126,92 @@ def test_cancelling_an_unknown_id_is_404(client):
 
 def test_cancelling_needs_a_token(client):
     assert client.delete("/v1/jobs/job-0000000000a1").status_code == 401
+
+# ---------------------------------------------------------------- DDPSRUN-SCRIPTS
+
+
+def seed_job_with_args(cluster, namespace, name, args, job_id="", display="", created=""):
+    """A PacsJob shaped like the ones the screen creates, with the args it would carry."""
+    labels = {}
+    if job_id:
+        labels["ddpsrun.io/job-id"] = job_id
+    if display:
+        labels["ddpsrun.io/name"] = display
+    cluster.objects[(namespace, name)] = {
+        "metadata": {"name": name, "namespace": namespace, "labels": labels,
+                     "creationTimestamp": created},
+        "spec": {"image": "img", "args": args},
+        "status": {"phase": "Succeeded"},
+    }
+
+
+def test_a_script_is_read_back_out_of_the_job_that_ran_it(client, cluster):
+    """DDPSRUN-SCRIPTS. Nothing is stored; the text is on the PacsJob already.
+
+    The Script box sends the same text twice -- as `args` (what runs) and as `script` (what
+    validate reads) -- and the server throws `script` away, exactly as its field description
+    promises. `args` stays for as long as the job does, so the script is already durable,
+    already scoped to the caller's namespace, and already deleted when the job is. A bucket for
+    scripts would be a second copy that can disagree with the first.
+    """
+    seed_job_with_args(
+        cluster, "lab-alice", "ddpsrun-aaaaaaaaaaaa",
+        ["bash", "-lc", "set -euo pipefail\npython train.py"],
+        job_id="job-aaaaaaaaaaaa", display="train", created="2026-09-08T01:00:00Z",
+    )
+    answer = as_alice(client, "GET", "/v1/scripts").json()
+    assert len(answer["scripts"]) == 1
+    only = answer["scripts"][0]
+    assert only["script"] == "set -euo pipefail\npython train.py"
+    assert only["job_id"] == "job-aaaaaaaaaaaa"
+    assert only["name"] == "train"
+    assert only["lines"] == 2
+    assert only["used"] == 1
+    assert answer["note"] == ""
+
+
+def test_the_same_script_five_times_is_one_entry(client, cluster):
+    """A list where every retry is its own row is a list nobody scrolls.
+
+    And the entry names the MOST RECENT job that ran it, because that is the one worth opening.
+    """
+    for i, day in enumerate(("05", "06", "07")):
+        seed_job_with_args(
+            cluster, "lab-alice", f"ddpsrun-bbbbbbbbbbb{i}",
+            ["bash", "-lc", "python same.py"],
+            job_id=f"job-bbbbbbbbbbb{i}", display=f"run-{day}",
+            created=f"2026-09-{day}T01:00:00Z",
+        )
+    answer = as_alice(client, "GET", "/v1/scripts").json()
+    assert len(answer["scripts"]) == 1
+    assert answer["scripts"][0]["used"] == 3
+    assert answer["scripts"][0]["name"] == "run-07", "the newest job of the three names it"
+
+
+def test_a_job_whose_args_are_not_a_script_is_left_out_and_the_note_says_which_emptiness(
+    client, cluster
+):
+    """An empty list with no note reads as "you have never submitted a script".
+
+    That is a different fact from "none of your jobs was submitted in a shape this route
+    recognises", and a kubectl job or an argv list is the second one. Guessing which part of an
+    arbitrary argv is "the script" would put text in front of somebody as if we knew.
+    """
+    seed_job_with_args(cluster, "lab-alice", "ddpsrun-cccccccccccc",
+                       ["python", "train.py", "--epochs", "4"])
+    seed_job_with_args(cluster, "lab-alice", "ddpsrun-dddddddddddd", [])
+    seed_job_with_args(cluster, "lab-alice", "ddpsrun-eeeeeeeeeeee",
+                       ["bash", "-lc", "   "])
+    answer = as_alice(client, "GET", "/v1/scripts").json()
+    assert answer["scripts"] == []
+    assert "in that shape" in answer["note"]
+
+
+def test_scripts_are_the_callers_own_and_nobody_elses(client, cluster):
+    """The same boundary every other route uses: read from the token's namespace and nowhere else."""
+    seed_job_with_args(cluster, "lab-bob", "ddpsrun-ffffffffffff",
+                       ["bash", "-lc", "bob's private thing"])
+    assert as_alice(client, "GET", "/v1/scripts").json()["scripts"] == []
+    mine = as_alice(client, "GET", "/v1/scripts")
+    assert mine.status_code == 200
+    assert client.get("/v1/scripts").status_code == 401

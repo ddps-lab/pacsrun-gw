@@ -242,6 +242,50 @@ class SubmitResponse(BaseModel):
     )
 
 
+class ScriptView(BaseModel):
+    """One script this caller has submitted before.
+
+    DDPSRUN-SCRIPTS. WHY THIS IS READ BACK OUT OF THE JOBS AND NOT STORED ANYWHERE. The screen's
+    Script box sends the same text twice -- as `args` (what runs) and as `script` (what validate
+    reads) -- and the server throws `script` away, exactly as its own field description promises.
+    But `args` is on the PacsJob for as long as the job exists, so the script a job ran is
+    already durable, already scoped to the caller's namespace, and already deletable by deleting
+    the job. Adding a bucket for scripts would create a second copy that can disagree with the
+    first, need its own lifecycle, and need write permission this service does not have.
+
+    SO THE ONLY SHAPE THIS ROUTE RECOGNISES is the one the screen sends:
+    `args == ["bash", "-lc", <text>]`. A job whose args are anything else -- a kubectl job, an
+    argv list, an image with its own entrypoint -- carries no script by this definition and is
+    left out rather than guessed at.
+    """
+
+    script: str = Field(description="The text, exactly as it was submitted.")
+    job_id: str = Field(default="", description="The most recent job that ran it.")
+    name: str = Field(default="", description="That job's display name.")
+    created_at: str | None = Field(
+        default=None, description="When that job was created, newest first in the listing."
+    )
+    used: int = Field(
+        default=1,
+        description="How many of this caller's jobs ran this exact text. The same run.sh "
+        "submitted five times is one entry with used=5, not five entries -- a list where "
+        "every retry is its own row is a list nobody scrolls.",
+    )
+    lines: int = Field(default=1, description="How many lines it has, so the screen can say so.")
+
+
+class ScriptsResponse(BaseModel):
+    """What `GET /v1/scripts` returns: this caller's own scripts, newest first."""
+
+    scripts: list[ScriptView] = Field(default_factory=list)
+    note: str = Field(
+        default="",
+        description="Why the list is empty, when it is. An empty list with no note reads as "
+        "'you have never submitted a script', which is a different fact from 'none of your "
+        "jobs was submitted in a shape this route recognises'.",
+    )
+
+
 class ImageView(BaseModel):
     """One container repository this lab has built, as the Image box offers it.
 

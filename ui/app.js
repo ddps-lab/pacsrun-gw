@@ -183,7 +183,7 @@ const poll = {
 
 /* ------------------------------------------------------------------ routing */
 
-const VIEWS = ["home", "jobs", "detail", "submit", "team", "vendors"];
+const VIEWS = ["home", "jobs", "detail", "submit", "scripts", "team", "vendors"];
 
 function show(view) {
   VIEWS.forEach((v) => { $("view-" + v).hidden = v !== view; });
@@ -211,6 +211,7 @@ async function route() {
     }
     else if (head === "jobs")   { show("jobs");   drawJobs(); }
     else if (head === "submit") { show("submit"); drawImages(); }
+    else if (head === "scripts") { show("scripts"); drawScripts(); }
     else if (head === "team")   { show("team");   drawTeam(); }
     else if (head === "vendors") { show("vendors"); drawVendors(); }
     else                        { show("home");   drawHome(); }
@@ -783,6 +784,59 @@ function drawCompare(job) {
       : `Nothing was rented and the workload did not run. ${c.raw}`);
 }
 
+/* ------------------------------------------------------------ 3b. Scripts */
+
+/* DDPSRUN-SCRIPTS. The scripts this caller has submitted before.
+
+   WHY IT IS WORTH A SCREEN. The Script box takes a whole run.sh, and a run.sh that survived one
+   job is the thing somebody wants for the next one. Without this the only way back to it was to
+   remember which job used it and read that job's Submitted spec panel.
+
+   NOTHING IS STORED FOR THIS. The server reads the text back out of the jobs themselves, so this
+   screen shows exactly what is still on the cluster and nothing that is not. */
+async function drawScripts() {
+  let answer;
+  try { answer = await call("/v1/scripts"); }
+  catch (err) { $("scripts-list").innerHTML = note("err", err.message); return; }
+
+  const rows = answer.scripts || [];
+  $("scripts-note").textContent = rows.length
+    ? `${rows.length} script(s) you have submitted before`
+    : "";
+  if (!rows.length) {
+    $("scripts-list").innerHTML = note("info",
+      answer.note || "You have not submitted a script yet.",
+      "Paste a run.sh into the Script box on the New job screen and it appears here.");
+    return;
+  }
+
+  $("scripts-list").innerHTML = rows.map((s, i) => {
+    const last = s.created_at ? when(s.created_at) : "";
+    const times = s.used > 1 ? `, used ${s.used} times` : "";
+    return `<div class="panel">
+      <header>
+        <h2>${esc(s.name || "(unnamed)")}</h2>
+        <span class="dim small">${s.lines} line(s)${esc(times)}${last ? "  last run " + esc(last) : ""}</span>
+        <div class="spacer"></div>
+        <button class="go tiny use-script" data-i="${i}" style="padding:4px 10px">Use this</button>
+      </header>
+      <pre class="spec">${esc(s.script)}</pre>
+    </div>`;
+  }).join("");
+
+  $("scripts-list").querySelectorAll("button.use-script").forEach((b) => {
+    b.onclick = () => {
+      // Fill the box and go, rather than submitting: the image, the GPU and the capacity type
+      // are this job's decisions and the previous job's are not necessarily right for it.
+      $("f-command").value = rows[Number(b.dataset.i)].script;
+      $("f-command-note").innerHTML = note("info",
+        "Loaded from a previous job. The image, the GPU and the capacity type are still yours to set.");
+      step(1);
+      go("submit");
+    };
+  });
+}
+
 /* ------------------------------------------------------------------ 4. Submit */
 
 let draft = null;   // built in step 1; steps 2 and 3 send the same object again.
@@ -827,9 +881,24 @@ function readForm() {
      like, and it is the shape /v1/explain's own example uses:
      "args": ["bash", "-lc", "python train.py --epochs 4"]. */
   const line = $("f-command").value.trim();
-  if (line) body.args = ["bash", "-lc", line];
+  if (line) {
+    body.args = ["bash", "-lc", line];
+    /* DDPSRUN-UI-SCRIPT. THE SAME TEXT, SENT TWICE, ON PURPOSE.
 
-  if ($("f-gpu").value) body.gpu = { name: $("f-gpu").value, count: 1 };
+       `args` is what RUNS. `script` is what validate READS, and four of its checks read nothing
+       else: the adapter-path pair, the exit trap that saves partial results, the two length caps
+       that have to agree, and the TRL patch. Sending only `args` meant those four could never
+       run from this screen, whatever anybody pasted -- and validate said so in its `not_checked`
+       list, which this screen also did not draw. So the box looked checked and was not.
+
+       The server throws `script` away after reading it ("read and thrown away, never stored"),
+       so sending it costs one field on one request and stores nothing extra. */
+    body.script = line;
+  }
+
+  if ($("f-gpu").value) {
+    body.gpu = { name: $("f-gpu").value, count: num("f-gpucount") || 1 };
+  }
 
   /* DDPSRUN-VENDOR-CHOICE. Nothing checked sends nothing, which is "no
      restriction" and is what every job did before these boxes existed. */
@@ -894,7 +963,44 @@ async function drawImages(force) {
       ? `${options.length} from ${repos} ${repos === 1 ? "repository" : "repositories"} this lab has built` +
         (answer.truncated ? ", and more than one page exists" : "")
       : "";
+
+  /* The visible half. One block per repository, newest push first, its tags as buttons -- so
+     the list can be READ without knowing a datalist is there, and a screenshot shows it. */
+  $("f-image-picker").innerHTML = rows.length
+    ? rows.map((r) => {
+        const addrs = r.addresses || [];
+        const when = r.pushed_at ? String(r.pushed_at).slice(0, 10) : "";
+        const tags = addrs.length
+          ? addrs.map((a, i) => `<button class="flat tiny pick" type="button" data-image="${esc(a)}"`
+              + ` style="padding:3px 8px">${esc(r.tags[i] || a)}</button>`).join(" ")
+          : `<span class="dim tiny">no tagged image</span>`;
+        return `<div style="margin:6px 0">`
+          + `<div class="dim tiny mono">${esc(r.repository)}${when ? "  " + esc(when) : ""}</div>`
+          + `<div class="row">${tags}</div></div>`;
+      }).join("")
+    : note("info", answer.note || "This account holds no container repositories.");
+
+  $("f-image-picker").querySelectorAll("button.pick").forEach((b) => {
+    b.onclick = () => {
+      $("f-image").value = b.dataset.image;
+      $("f-image-picker").hidden = true;
+      $("f-image-toggle").textContent = "Browse this lab's images";
+    };
+  });
 }
+
+$("f-image-toggle").onclick = () => {
+  const box = $("f-image-picker");
+  box.hidden = !box.hidden;
+  $("f-image-toggle").textContent = box.hidden
+    ? "Browse this lab's images" : "Hide the list";
+  /* Uses what the view-entry fetch already got, and only asks again when that produced nothing.
+     MEASURED 2026-09-08: /v1/images takes about 4 s against the real registry, because it asks
+     the registry once for the repository list and then once per repository for its tags -- 19
+     repositories here, so 20 round trips. Refetching on every toggle would spend that again for
+     a list that changes when somebody pushes an image, which is not while a form is open. */
+  if (!box.hidden && !$("f-image-picker").innerHTML) drawImages(true);
+};
 
 function step(n) {
   $("s1").hidden = n !== 1;
@@ -923,6 +1029,23 @@ $("s1-next").onclick = async () => {
         note(f.level === "error" ? "err" : f.level === "warning" ? "warn" : "info",
              f.message, f.fix)).join("")
     : note("info", "Nothing to flag.");
+
+  /* DDPSRUN-UI-NOT-CHECKED. What no check could look at, printed under the findings.
+
+     WHY IT HAS TO BE ON SCREEN. The server has always answered this list and this screen threw
+     it away, so "Nothing to flag." read as "everything is fine" -- and the server's own words
+     for the field are that it is "Listed rather than passed over in silence, so a clean result
+     is not mistaken for a complete one". A clean validate on a job whose script was never sent
+     was the worst version of that: four checks had not run and nothing said so.
+
+     It is collapsed by default. The list is five items long on every request and it is context,
+     not a verdict; open on every visit it would push the findings themselves off the screen. */
+  const notChecked = v.not_checked || [];
+  $("s2-not-checked").innerHTML = notChecked.length
+    ? `<details><summary class="dim small">${notChecked.length} thing(s) no check could look at</summary>`
+      + `<ul class="dim small">${notChecked.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>`
+    : "";
+
   // With an error present the next button does not work (15.10), and it says
   // what has to happen instead of just going grey.
   $("s2-next").disabled = errors.length > 0;
@@ -938,6 +1061,8 @@ $("s1-reset").onclick = () => {
   // it uncleared.
   ["f-name", "f-image", "f-command", "f-env",
    "f-pairs", "f-epochs", "f-rowtokens", "f-cap", "f-batch"].forEach((id) => { $(id).value = ""; });
+  $("f-command-note").innerHTML = "";
+  $("f-gpucount").value = 1;
   $("f-parallelism").value = 1;
   $("f-gpu").value = "";
   $("f-capacity").value = "spot";
@@ -1207,6 +1332,7 @@ $("d-again").onclick = () => {
   // honest answer -- and the note says why rather than letting the ask vanish.
   const g = (sp.resources && sp.resources.gpus) || {};
   $("f-gpu").value = g.name || "";
+  $("f-gpucount").value = g.count || 1;
   $("s1-err").innerHTML = (!g.name && g.vramGB)
     ? note("info", `The original asked for ${g.vramGB} GB rather than a model, and this box ` +
                    `lists models. Left empty, which means "let the server recommend one".`)
