@@ -51,10 +51,20 @@ class FakeCluster:
         return created
 
     def delete_user_secret(self, namespace, name):
+        # ★ MIRRORS THE REAL METHOD, INCLUDING ITS EXISTENCE CHECK, and the
+        # first version of this double did NOT. It raised NotFound straight
+        # away, which made `Cluster.delete_user_secret`'s own check untested --
+        # and the real API answers 200 to a merge patch that nulls a key it
+        # does not have, so live DELETE answered 204 for a name that was never
+        # there while this test asserted 404 and passed. A double that is
+        # stricter than the thing it stands in for hides exactly the bug it
+        # looks like it is testing.
         if namespace in self.secrets_forbidden:
             raise k8s.ClusterError("secrets is forbidden: User cannot patch resource")
         if name not in self.secrets.get(namespace, {}):
             raise k8s.NotFound(name)
+        # The patch itself is the no-op the API server performs; the guard above
+        # is what turns it into an answer.
         del self.secrets[namespace][name]
 
     def create_job(self, namespace, body):

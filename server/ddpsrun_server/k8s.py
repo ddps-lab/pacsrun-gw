@@ -477,7 +477,18 @@ class Cluster:
         WHY `data` AND NOT `stringData`. The key lives in `data` once the API
         server has encoded it; `stringData` is gone by then, so a null there
         would delete nothing. Under a merge patch, null removes the key.
+
+        ★ WHY THE EXISTENCE CHECK IS NOT REDUNDANT. A merge patch that nulls a
+        key the object does not have is a NO-OP and the API server answers 200,
+        so without this read a typo answered 204 -- "removed" -- for a name
+        that was never there. Measured against the live cluster on 2026-09-08,
+        where the unit test had passed because the test double raised NotFound
+        and the real API does not. For a route whose reason to exist is "a
+        credential leaked, take it out now", answering "done" to the wrong name
+        is the one wrong answer that matters.
         """
+        if name not in self.user_secret_names(namespace):
+            raise NotFound(name)
         try:
             self._core.patch_namespaced_secret(
                 name=USER_SECRET_NAME, namespace=namespace,
