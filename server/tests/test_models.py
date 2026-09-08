@@ -490,3 +490,31 @@ def test_the_memory_checks_run_for_a_named_gpu_too():
     assert "alloc-conf-missing" in by_name
     assert "trl-patch-missing" in by_name
     assert by_name == by_memory
+
+
+def test_a_script_too_big_for_the_job_object_is_refused_before_anything_is_rented():
+    # DDPSRUN-SCRIPT-SIZE. The script travels inside spec.args, so it is stored
+    # in etcd with the PacsJob and shares etcd's 1.5 MiB request limit. Without
+    # a cap here the refusal arrives from the apiserver as "etcdserver: request
+    # is too large", which names nothing the submitter can act on.
+    import pydantic
+    from ddpsrun_server.models import SCRIPT_MAX_CHARS, JudgementRequest
+
+    ok = JudgementRequest(name="x", image="i", capacity_type="spot",
+                          script="#" * SCRIPT_MAX_CHARS)
+    assert ok.script is not None
+
+    with pytest.raises(pydantic.ValidationError):
+        JudgementRequest(name="x", image="i", capacity_type="spot",
+                         script="#" * (SCRIPT_MAX_CHARS + 1))
+
+
+def test_the_cap_leaves_room_for_the_scripts_people_actually_write():
+    # baseline-c's real training script is 19,655 bytes (measured on the live
+    # cluster 2026-09-08) and it does not even travel this way — it sits in S3
+    # behind a 302-byte bootstrap. The cap is thirteen times that script.
+    from ddpsrun_server.models import SCRIPT_MAX_CHARS
+
+    assert SCRIPT_MAX_CHARS > 13 * 19_655
+    # And a sixth of etcd's own limit, so the rest of the object still fits.
+    assert SCRIPT_MAX_CHARS < 1.5 * 1024 * 1024 / 5

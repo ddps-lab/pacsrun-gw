@@ -34,6 +34,7 @@ Authorization: Bearer <your token>
 | POST | `/v1/register-request` | Ask an operator to give this signed-in address a namespace. |
 | GET | `/v1/schema` | Return the JSON Schema of a request. |
 | GET | `/v1/scripts` | The scripts this caller has submitted before, newest first. |
+| GET | `/v1/secrets` | Which names a job may put in `secrets` — the names only. |
 | GET | `/v1/stats` | What this caller's team has spent. |
 | POST | `/v1/validate` | Check a job without running it. |
 
@@ -400,6 +401,15 @@ What `GET /v1/scripts` returns: this caller's own scripts, newest first.
 | `note` |  | Why the list looks as it does, in the two cases that need saying -- no recognised script at all, AND scripts that record no submitter. The second branch fires on a NON-EMPTY list, so this is not only an empty-list explanation. An empty list with no note reads as 'you have never submitted a script', which is a different fact from 'none of your jobs was submitted in a shape this route recognises'. |
 | `owners` |  | ★ WHO ran something in this listing, sorted. THIS is the per-person axis, and the namespace is not: a namespace is a tenancy boundary that may hold a whole team. An empty string in this list means jobs whose submitter was never recorded, which is every job created with `kubectl apply` rather than through this gateway. |
 | `scripts` |  |  |
+
+### SecretsResponse
+
+What `GET /v1/secrets` returns: the accepted words, and nothing else.
+
+| field | required | description |
+|---|---|---|
+| `names` |  | The words a job may put in `secrets`, e.g. ["GITHUB_PAT"]. |
+| `note` |  | Why the list is empty when it is, and what to do about it. |
 
 ### StatsResponse
 

@@ -256,3 +256,48 @@ ddpsrun estimate --gpu-vram 48 --pairs 1110 --epochs 4 --row-tokens 4100 --cap 1
 
 그래야 로직이 한 곳에 있고 UI 도 CLI 도 agent 도 같은 답을 받는다. 여기에 숫자를 적어 두면
 서버가 새 측정을 쌓아도 이 파일만 옛날 답을 계속 준다.
+
+---
+
+## 12. script 가 커지거나 파일이 여럿이면 — args 에 그대로 넣지 않는다
+
+`--script run.sh` 로 보낸 본문은 **job 객체 안에 들어간다.** `to_pacsjob` 이
+`spec.args = ["bash", "-lc", <본문>]` 로 싣고, 그 객체가 etcd 에 저장된다. 그래서 상한이 있다:
+`script` 는 **256 KiB** 까지고(`models.SCRIPT_MAX_CHARS`), 넘으면 제출이 422 로 거절된다.
+GPU 를 빌리기 전이라 돈은 들지 않지만, 큰 것을 넣을 자리가 아니라는 뜻이다.
+
+**실측 (2026-09-08, 클러스터의 `baseline-c`).** 학습 스크립트 자체는 작다 — 20 KiB 급이면
+그대로 넣어도 상한의 8% 다. 그런데 그 job 은 이미 다른 방법을 쓰고 있었다:
+
+```
+PacsJob 객체 전체     4,682 bytes
+spec.args               302 bytes      <- 아래 부트스트랩
+S3 의 run.sh         19,655 bytes      <- 실제 학습 스크립트
+```
+
+`spec.args` 에 든 302 바이트가 전부다.
+
+```bash
+set -euo pipefail
+pip install --quiet --no-input boto3
+python3 - <<'PY2'
+import os, urllib.parse, boto3
+u = urllib.parse.urlparse(os.environ["PACSRUN_RESULT_PATH"])
+base = u.path.lstrip("/").rstrip("/")
+boto3.client("s3").download_file(u.netloc, f"{base}/run.sh", "/root/run.sh")
+PY2
+bash /root/run.sh
+```
+
+**두 방법과, 어느 것을 언제 쓰는가.**
+
+| 방법 | 쓸 때 | 대가 |
+|---|---|---|
+| `--script run.sh` (본문을 args 에) | 한 파일, 256 KiB 미만. **기본값으로 이것을 쓴다** | 없음. job 이 자기가 실행한 것을 담고 있어서 `ddpsrun` 의 Scripts 화면, Submitted spec, 재제출이 다 된다 |
+| S3 부트스트랩 (위 302 바이트) | 스크립트가 상한을 넘거나, 파일이 여럿이거나, 사람이 job 을 다시 내지 않고 스크립트만 갈아 끼우고 싶을 때 | 실패 지점이 하나 늘어난다. **GPU 를 이미 빌린 뒤에** S3 를 못 읽어 죽을 수 있으므로, 규칙 5 의 도달성 검사에 그 객체도 넣는다. 그리고 job 객체만 봐서는 무엇이 돌았는지 알 수 없다 |
+| `git clone` (규칙 1) | 코드가 저장소에 있을 때 | 위와 같다. clone 이 학습 명령보다 앞에 있어야 한다 |
+
+**S3 를 쓰기로 했으면 사용자에게 업로드를 부탁한다.** agent 는 자기 손으로 그 객체를 올리지
+않는다 — `ddpsrun` 에 업로드 명령이 없고, 결과 prefix 는 서버가 job 마다 만들어 주는 것이라
+제출 전에는 그 주소가 존재하지도 않는다. 순서는: 사용자가 `aws s3 cp run.sh <경로>` 로 올리고,
+그 경로를 agent 에게 알려 주고, agent 는 위 부트스트랩을 `--script` 로 보낸다.

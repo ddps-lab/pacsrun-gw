@@ -21,6 +21,7 @@ ddpsrun <command> [options]
 | `ddpsrun estimate` | how long it will take, what it will cost, which GPU. Submits nothing |
 | `ddpsrun validate` | what is wrong with this job. Submits nothing |
 | `ddpsrun submit` | submit a job |
+| `ddpsrun secrets` | which secret names this deployment accepts |
 | `ddpsrun status` | how a job is doing |
 | `ddpsrun shell` | run commands inside a running job's workload |
 | `ddpsrun watch` | GPU usage and training progress |
@@ -145,6 +146,10 @@ Give a YAML or JSON file, or build the request from flags, or both. Flags win ov
 | `--resumable` |  | your job can restart from a checkpoint |
 | `--script PATH` |  | your run.sh. THIS IS WHAT RUNS when you pass no --arg: the job gets args ['bash','-lc',<the file's text>]. It also unlocks four more validate checks. The text is read and sent; the path is not, and nothing is stored. |
 | `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
+
+## ddpsrun secrets
+
+`secrets: [NAME]` on a submit request is a word that opens the server's vault, not a field you fill with a value. This prints the words that work. Values are never shown and cannot be set from here: an operator stores them in the cluster.
 
 ## ddpsrun status
 

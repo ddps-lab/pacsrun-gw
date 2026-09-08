@@ -19,7 +19,16 @@ Run these first. They are the current truth; anything written down goes stale.
 ```bash
 ddpsrun explain     # what this is, what it will not do, what is not built yet
 ddpsrun schema      # the exact request shape, generated from the server's own model
+ddpsrun secrets     # which names `secrets:` accepts on THIS deployment
 ```
+
+**`secrets` is a word, not a value, and you must not invent one.** A submit
+request's `secrets: ["GITHUB_PAT"]` asks the server to open its own vault under
+that name; the server refuses a name it does not hold, and the value never
+travels through you or through the request. `ddpsrun secrets` prints the names
+that work. If the one their repository needs is not there, say so and tell them
+an operator has to store it in the cluster — do not put the value in `env`,
+where it would sit in the job spec and in every log and backup of it.
 
 If `ddpsrun` is missing, `pip install ddpsrun`. If it says `not logged in`, tell the
 user to run `ddpsrun login --server <url>` and stop — you must not ask for their token.

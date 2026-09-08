@@ -256,6 +256,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_json_flag(submit)
 
+    sub.add_parser(
+        "secrets", help="which secret names this deployment accepts",
+        description="`secrets: [NAME]` on a submit request is a word that opens "
+        "the server's vault, not a field you fill with a value. This prints the "
+        "words that work. Values are never shown and cannot be set from here: "
+        "an operator stores them in the cluster.",
+    )
+
     status = sub.add_parser("status", help="how a job is doing")
     status.add_argument("job_id")
     add_json_flag(status)
@@ -754,6 +762,17 @@ def cmd_shell(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
 
 
+def cmd_secrets(args: argparse.Namespace) -> int:
+    """Print the secret names this deployment accepts."""
+    answer = client_from_config().secrets()
+    names = answer.get("names") or []
+    for name in names:
+        print(name)
+    if answer.get("note"):
+        print(f"\n{answer['note']}")
+    return EXIT_OK
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     """Print one job's state."""
     view = client_from_config().status(args.job_id)
@@ -922,6 +941,7 @@ COMMANDS = {
     "estimate": cmd_estimate,
     "validate": cmd_validate,
     "submit": cmd_submit,
+    "secrets": cmd_secrets,
     "shell": cmd_shell,
     "status": cmd_status,
     "watch": cmd_watch,

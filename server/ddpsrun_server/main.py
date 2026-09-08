@@ -82,6 +82,7 @@ from .models import (
     JobSpecResponse,
     JobView,
     NamespacesResponse,
+    SecretsResponse,
     GpuSampleView,
     JudgementRequest,
     LogsResponse,
@@ -934,6 +935,49 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
 # A phase we do not know about (a new one added upstream) counts as active,
 # because a job the screen cannot classify is one the user should still look at.
 FINISHED_PHASES = frozenset({"Succeeded", "Failed", "Compared"})
+
+
+@app.get("/v1/secrets", response_model=SecretsResponse)
+def secrets_route(request: Request, principal: PrincipalDep) -> SecretsResponse:
+    """Which names a job may put in `secrets` — the names only.
+
+    DDPSRUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` is not a field a submitter
+    fills with a value; it is a word that opens the server's vault, and the
+    server refuses a word it does not hold. Until this route existed the ONLY
+    way to learn the accepted words was to guess one and read them off the
+    refusal — so an agent either guessed or failed to learn (reported
+    2026-09-08 by a session that went looking for the list and found no route
+    for it among the eighteen).
+
+    NO VALUES, AND NO INTERNAL NAMES EITHER. What comes back is the WORD and
+    nothing more: which Kubernetes Secret holds it is an internal name, and
+    `docs/03-api.md` keeps those inside (the same rule strips them from
+    `GET /v1/jobs/{id}/spec`, DDPSRUN-SPEC-REDACT). The value stays in the Kubernetes
+    Secret: the server writes a `secretKeyRef` into the PacsJob and kubelet
+    resolves it, so this process never holds the string at all
+    (`config/deploy/rbac.yaml` grants no `secrets` verb — deliberately).
+
+    WHY IT NEEDS A TOKEN when /v1/schema does not. The names say what this lab
+    integrates with — a GitHub PAT, a judge's credentials — which is closer to
+    "how our runs are wired" than to a published price list.
+
+    Returns:
+        A `SecretsResponse`. An empty list with a note is the honest answer for
+        a deployment where nobody has stored one yet, and it says who can.
+    """
+    settings: Settings = request.app.state.settings
+    bindings = settings.secret_bindings
+    return SecretsResponse(
+        names=sorted(bindings),
+        note=(
+            ""
+            if bindings
+            else "no secret is stored for this deployment yet, so a job asking "
+            "for one is refused. An operator adds it in two places: the "
+            "Kubernetes Secret that holds the value, and this server's "
+            "DDPSRUN_SECRET_BINDINGS. Values never travel through this API."
+        ),
+    )
 
 
 @app.get("/v1/namespaces", response_model=NamespacesResponse)

@@ -37,6 +37,26 @@ from .auth import Principal
 from .config import PACSJOB_GROUP, PACSJOB_VERSION, Settings
 from .stats import job_cost, job_hours
 
+# DDPSRUN-SCRIPT-SIZE. How long a `script` may be, and why there is a number at
+# all rather than "as long as you like".
+#
+# THE SCRIPT TRAVELS INSIDE THE JOB OBJECT: to_pacsjob puts it in
+# spec.args as ["bash", "-lc", <text>], so it is stored in etcd with the
+# PacsJob and is subject to etcd's request limit — 1.5 MiB by default, for the
+# WHOLE object. Without a limit here the failure arrives from the apiserver as
+# "etcdserver: request is too large", which names nothing the submitter can
+# act on.
+#
+# WHY 256 KiB. Measured 2026-09-08 on the live cluster: baseline-c's whole
+# PacsJob is 4,682 bytes and its args are 302 — the real training script is
+# 19,655 bytes and lives in S3, fetched by those 302 bytes (see the section on
+# big scripts in agent/references/script-contract.md). So this cap is thirteen
+# times the largest script anybody here has written inline and a sixth of
+# etcd's own limit, which leaves room for the rest of the object. A script
+# bigger than this is not an inline script: it is a repository, and the two
+# ways to run one are in that same document.
+SCRIPT_MAX_CHARS = 256 * 1024
+
 # Environment variable names a user may not set. PACSrun's controller already
 # refuses them (`internal/controller/pacsjob_controller.go`, PACSRUN-ENV-GUARD),
 # but rejecting here produces a message that names the offending variable
@@ -438,6 +458,28 @@ class ExecResponse(BaseModel):
         "timeout closed — never 0.",
     )
     note: str = Field(default="", description="Anything the caller should know, in words.")
+
+
+class SecretsResponse(BaseModel):
+    """What `GET /v1/secrets` returns: the accepted words, and nothing else.
+
+    NOT THE VALUES, and NOT WHERE THEY LIVE EITHER. A first draft of this also
+    returned the Kubernetes Secret's name and key so an operator would know
+    where to go — and `config.SecretBinding`'s own docstring refuses that:
+    those are internal names, and `docs/03-api.md` says internal names do not
+    cross the API boundary. The same rule already strips them from
+    `GET /v1/jobs/{id}/spec` (DDPSRUN-SPEC-REDACT). What a submitter needs is
+    the word that works; what an operator needs is in their own cluster.
+    """
+
+    names: list[str] = Field(
+        default_factory=list,
+        description="The words a job may put in `secrets`, e.g. [\"GITHUB_PAT\"].",
+    )
+    note: str = Field(
+        default="",
+        description="Why the list is empty when it is, and what to do about it.",
+    )
 
 
 class NamespacesResponse(BaseModel):
@@ -858,6 +900,7 @@ class JudgementRequest(SubmitRequest):
     training: TrainingFacts = Field(default_factory=TrainingFacts)
     script: str | None = Field(
         default=None,
+        max_length=SCRIPT_MAX_CHARS,
         description="The text of your run.sh. Four validate checks are skipped "
         "without it. IT IS ALSO WHAT RUNS when you send no `command` and no "
         "`args`: the job then gets args ['bash','-lc',<this text>], which is the "

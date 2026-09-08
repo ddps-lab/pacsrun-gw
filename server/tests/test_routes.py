@@ -176,6 +176,22 @@ def test_an_admin_reads_the_namespace_they_asked_for(client, cluster):
     assert as_root(client, "GET", "/v1/jobs").json()["total"] == 0
 
 
+def test_the_secret_names_come_back_without_any_value(client):
+    # DDPSRUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` opens the vault; the
+    # accepted words used to be learnable only from a refusal.
+    answer = as_alice(client, "GET", "/v1/secrets")
+    assert answer.status_code == 200
+    body = answer.json()
+    assert body["names"] == ["GITHUB_PAT"]
+    # The Kubernetes Secret behind it is an internal name and must not appear:
+    # the same rule DDPSRUN-SPEC-REDACT enforces on /v1/jobs/{id}/spec.
+    assert "slm-rca-clone" not in answer.text
+
+
+def test_secret_names_need_a_token(client):
+    assert client.get("/v1/secrets").status_code == 401
+
+
 # ------------------------------------------------------------------ artifacts
 
 

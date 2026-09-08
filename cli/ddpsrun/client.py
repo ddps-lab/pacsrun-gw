@@ -136,6 +136,16 @@ class Client:
         """Read one job's state."""
         return self._call("GET", f"/v1/jobs/{job_id}").json()
 
+    def secrets(self) -> dict[str, Any]:
+        """The words this deployment accepts in `secrets`.
+
+        Names only — never values, and never which Kubernetes Secret holds
+        them. Storing a new one is an operator's job in the cluster; this
+        answers the question a submitter actually has, which is "what may I
+        write".
+        """
+        return self._call("GET", "/v1/secrets").json()
+
     def stats(self) -> dict[str, Any]:
         """Read this caller's team figures. Aggregate only."""
         return self._call("GET", "/v1/stats").json()
