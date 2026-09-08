@@ -344,10 +344,21 @@
         <option value="compare">compare - ask every candidate, buy NOTHING</option>
       </select></label>
     <div id="f-mode-note"></div>
-    <label><span><b>Training size</b> <span class="dim">used for the cost estimate. Safe to leave empty.</span></span>
+    <!-- DDPSRUN-TRAINING-FACTS. Four boxes, and until 2026-09-08 there were four DIFFERENT ones:
+         `row_tokens` was missing and it is the single field that turns the estimate from
+         "unknown" into a number. estimate.estimate uses them as
+             pairs + epochs   -> the step count
+             row_tokens       -> seconds per step -> the time -> the cost
+             cap              -> peak memory -> which GPU is recommended
+         so a form collecting the other three answered STEPS 556 and ESTIMATED TIME unknown, and
+         the user had filled three boxes to be told nothing. Measured on this screen 2026-09-08.
+         grad_accum is not asked for: it defaults to 8, which is what our scripts use, and the
+         CLI has --grad-accum for anyone who differs. -->
+    <label><span><b>Training size</b> <span class="dim">what the cost estimate needs. Safe to leave empty, but then it answers "unknown".</span></span>
       <div class="grid2">
         <input id="f-pairs" type="number" min="1" placeholder="rows in the dataset">
         <input id="f-epochs" type="number" min="1" placeholder="epochs">
+        <input id="f-rowtokens" type="number" min="1" placeholder="average answer length (tokens)">
         <input id="f-cap" type="number" min="1" placeholder="max length (tokens)">
         <input id="f-batch" type="number" min="1" placeholder="batch size">
       </div></label>
