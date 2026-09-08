@@ -140,6 +140,32 @@ jobs:
               raise SystemExit("the package is over Lambda's 250 MB unzipped limit")
           PY
 
+      # ★ DO NOT PUBLISH AN ANCESTOR. A force push of a rewritten history pushes
+      # many commits at once and GitHub starts a run for several of them; they
+      # finish out of order, so the LAST one to call update-function-code wins.
+      # MEASURED 2026-09-08: runs fired at 11:27 (9aef8b9, the new tip) and at
+      # 11:31/11:32/11:33 for cdfd042/2f960d3/7538a49, which are its ANCESTORS.
+      # The 11:33 run published 7538a49 and rolled production back past a
+      # validate fix that had been verified live half an hour earlier -- with
+      # every run green, because each one really did build the commit it was
+      # given. A workflow that can deploy backwards has no useful green.
+      #
+      # The check is one API call: is this run's commit the current tip of the
+      # default branch. `git rev-parse` on the checkout would not do -- the
+      # checkout IS the stale commit, so it would compare it with itself.
+      - name: refuse to publish anything but the current tip of main
+        run: |
+          set -euo pipefail
+          TIP=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq .object.sha)
+          echo "this run: ${{ github.sha }}"
+          echo "main tip: $TIP"
+          if [ "$TIP" != "${{ github.sha }}" ]; then
+            echo "::error::this commit is not the tip of main (probably an ancestor pushed by a force push). Refusing to publish it over a newer one. Re-run release on main: gh workflow run release.yml --ref main"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: publish
         working-directory: server
         run: |
@@ -171,6 +197,19 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      # Same hazard as the publish job: an ancestor's `ui/` would be synced over
+      # a newer one, with `--delete` removing files the newer page needs.
+      - name: refuse to upload anything but the current tip of main
+        run: |
+          set -euo pipefail
+          TIP=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq .object.sha)
+          if [ "$TIP" != "${{ github.sha }}" ]; then
+            echo "::error::this commit is not the tip of main. Refusing to sync its ui/ over a newer one."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: upload
         env:

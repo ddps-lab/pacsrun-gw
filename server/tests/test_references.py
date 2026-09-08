@@ -6,6 +6,7 @@ as the syntax of this tool, and a hand-maintained copy of a route table is
 always the half that goes stale.
 """
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -112,3 +113,39 @@ def test_the_cli_reference_lists_each_command_with_its_flags():
     # A table, not a wall of help text: the flag and what it does, per command.
     assert "| `--server SERVER` | yes | the gateway URL" in text
     assert "| `--gpu-vram GB` |  | minimum GPU memory" in text
+
+
+def test_the_skill_points_at_reference_paths_that_exist():
+    """SKILL.md 가 주는 경로가 그 파일 위치에서 실제로 풀리는지.
+
+    2026-09-08 까지 SKILL.md 는 `references/script-contract.md` 라고 8번 적었고
+    그 파일은 `agent/references/` 에 있었다. SKILL.md 는
+    `agent/skills/ddpsrun/SKILL.md` 이므로 그 경로는 skill 디렉터리 기준으로
+    풀리지 않는다 — 규칙 목록은 있는데 문서가 가리키는 주소로는 못 여는 상태였다.
+    """
+    skill = REFERENCES.parent / "skills" / "ddpsrun" / "SKILL.md"
+    text = skill.read_text(encoding="utf-8")
+    cited = set(re.findall(r"`([./]*references/[a-z-]+\.md)`", text))
+    assert cited, "SKILL.md 가 reference 파일을 하나도 안 가리킨다"
+    for path in sorted(cited):
+        assert (skill.parent / path).resolve().is_file(), (
+            f"SKILL.md 의 {path} 가 {skill.parent} 기준으로 풀리지 않는다"
+        )
+
+
+def test_the_skill_lists_every_rule_the_contract_has():
+    """SKILL.md 의 규칙 표가 script-contract.md 의 절 개수와 맞는지.
+
+    표는 agent 가 파일을 열기 전에 무엇이 있는지 보라고 있는 것이므로, 규칙이
+    하나 늘고 표가 그대로면 그 규칙은 아무도 모른다.
+    """
+    contract = (REFERENCES / "script-contract.md").read_text(encoding="utf-8")
+    numbers = [int(m) for m in re.findall(r"^## (\d+)\.", contract, re.M)]
+    assert numbers == list(range(1, len(numbers) + 1)), f"절 번호가 연속이 아니다: {numbers}"
+
+    skill = (REFERENCES.parent / "skills" / "ddpsrun" / "SKILL.md").read_text(encoding="utf-8")
+    listed = [int(m) for m in re.findall(r"^\| (\d+) \|", skill, re.M)]
+    assert listed == numbers, (
+        f"script-contract.md 는 규칙 {len(numbers)}개인데 SKILL.md 표는 {listed} 를 적었다. "
+        f"규칙을 더하거나 뺐으면 그 표도 고친다."
+    )
