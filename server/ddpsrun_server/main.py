@@ -473,15 +473,26 @@ def register_request(request: Request, identity: SignedInDep) -> dict[str, objec
 
     try:
         seen_before = notify.already_asked(settings.result_bucket, identity.email)
-        if not seen_before:
+    except notify.NotifyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if not seen_before:
+        try:
             notify.send_registration_request(
                 email=identity.email,
                 subject_id=identity.subject,
                 notify_to=settings.register_notify_to,
                 notify_from=settings.register_notify_from,
             )
-    except notify.NotifyError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except notify.NotifyError as exc:
+            # ★ GIVE THE CLAIM BACK. The marker was written a moment ago to stop a
+            # reload mailing twice; leaving it after a send that never happened
+            # locks this address out permanently AND tells the next press that an
+            # operator was already emailed. Found 2026-09-08 while verifying the
+            # apply, where it is the only reachable path: the operator's address
+            # is not a verified SES identity yet, so every send fails.
+            notify.release_marker(settings.result_bucket, identity.email)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     logger.info("registration request for %s (emailed=%s)",
                 identity.email, not seen_before)
