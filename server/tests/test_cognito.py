@@ -543,3 +543,41 @@ def test_a_delete_that_also_fails_does_not_replace_the_useful_error(register_cli
     assert answer.status_code == 502
     assert "verified" in answer.json()["detail"]
     assert "deleted by hand" in caplog.text
+
+
+def test_the_registration_email_names_every_step_a_new_person_needs(register_client, keypair):
+    """★ THE HOLE THIS CLOSES. The email said TWO steps -- create the namespace,
+    add the token entry -- and a person registered that way could log in, could
+    submit, and their driver pod died with
+
+        exit 10  Not authorized to perform sts:AssumeRoleWithWebIdentity
+
+    because nothing had let a ServiceAccount in the new namespace assume the
+    workload role. That is the same failure as gw #6, rebuilt into the onboarding
+    flow. The role's trust policy names no namespace at all; the binding is a
+    per-namespace Pod Identity association, and it has to be created too."""
+    client, _s3, ses = register_client
+    post_register(client, mint(keypair, email="newcomer@example.ac.kr"))
+    body = ses.sent[0]["Content"]["Simple"]["Body"]["Text"]["Data"]
+
+    assert "kubectl create namespace lab-newcomer" in body
+    assert "create serviceaccount pacsjob-writer" in body
+    assert "aws eks create-pod-identity-association" in body
+    assert "sts:AssumeRoleWithWebIdentity" in body
+    # And why a namespace of their own at all, since it decides the result prefix.
+    assert "resultPath" in body
+
+
+def test_the_emailed_commands_are_not_folded_onto_one_line(register_client, keypair):
+    """A single backslash before a newline inside a non-raw f-string is a LINE
+    CONTINUATION, so Python ate the newline and the association command arrived as
+    one long line with the flags run together. Somebody pasting that gets a shell
+    error, not a working command."""
+    client, _s3, ses = register_client
+    post_register(client, mint(keypair, email="newcomer@example.ac.kr"))
+    body = ses.sent[0]["Content"]["Simple"]["Body"]["Text"]["Data"]
+
+    line = next(x for x in body.splitlines()
+                if "aws eks create-pod-identity-association" in x)
+    assert line.rstrip().endswith("\\"), line
+    assert "--namespace" not in line, "the flags were folded onto the first line"

@@ -717,6 +717,36 @@ def to_pacsjob(
         spec["command"] = request.command
     if request.args:
         spec["args"] = request.args
+    elif getattr(request, "script", None) and not request.command:
+        # ★ A SUBMIT THAT CARRIES A SCRIPT AND NOTHING TO RUN RUNS THE SCRIPT.
+        #
+        # `script` began life as a VALIDATE-ONLY field -- four checks read the text
+        # and the submit path threw it away. That made `ddpsrun submit --script
+        # run.sh` a trap: the CLI read the file, the server checked it, and the
+        # job carried no command at all. Measured 2026-09-08 on the real models:
+        # spec.args and spec.command both None, so the operator's shellCommand
+        # refuses the driver pod ("nothing to run") AFTER the job was accepted.
+        #
+        # An agent following agent/skills/ddpsrun/SKILL.md hit this exactly: step 1
+        # writes a run.sh, step 3 validates it with --script, step 4 submits -- and
+        # nothing anywhere told it to ALSO pass `--arg bash --arg -lc --arg
+        # "$(cat run.sh)"`. It wrote a script, checked it, submitted it, and the
+        # script never ran.
+        #
+        # FIXED HERE AND NOT IN THE CLI, because every client had the same hole:
+        # the CLI, the agent skill, and anything written against the API later. The
+        # screen was already sending both fields with the same text, so it is
+        # unaffected.
+        #
+        # `["bash","-lc",text]` is the shape the screen sends and the shape
+        # /v1/scripts reads back, so a job submitted this way also appears on the
+        # Scripts screen. An explicit `command` or `args` still wins: somebody who
+        # named one meant it, and their script may be fetched inside the container.
+        # getattr, because `script` lives on JudgementRequest and this function is
+        # typed for its parent SubmitRequest. /v1/jobs receives the subclass, so
+        # the field is there on the real path; a caller building a bare
+        # SubmitRequest has no script and must not crash on the lookup.
+        spec["args"] = ["bash", "-lc", getattr(request, "script")]
     if env_entries:
         spec["env"] = env_entries
     if resources:
@@ -828,8 +858,13 @@ class JudgementRequest(SubmitRequest):
     training: TrainingFacts = Field(default_factory=TrainingFacts)
     script: str | None = Field(
         default=None,
-        description="The text of your run.sh. Optional, and four checks are "
-        "skipped without it. It is read and thrown away, never stored.",
+        description="The text of your run.sh. Four validate checks are skipped "
+        "without it. IT IS ALSO WHAT RUNS when you send no `command` and no "
+        "`args`: the job then gets args ['bash','-lc',<this text>], which is the "
+        "same shape the screen sends and the shape GET /v1/scripts reads back. "
+        "An explicit `command` or `args` wins, for the case where the script is "
+        "fetched inside the container instead. Never stored anywhere -- it lives "
+        "on the job, so deleting the job deletes it.",
     )
 
 

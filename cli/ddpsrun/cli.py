@@ -119,6 +119,18 @@ def job_arguments() -> argparse.ArgumentParser:
         "lambda and nebius can only be PRICED, so name one of those only with "
         "--placement-mode compare.",
     )
+    # DDPSRUN-REGIONS. Missing until 2026-09-08, so every job this CLI submitted
+    # ran in the operator's one default region and there was no way to say
+    # otherwise -- the same hole `--vendor` filled a day earlier.
+    shared.add_argument(
+        "--region", action="append", metavar="NAME",
+        help="where the machine may be bought, as PACSrun spells it: a bare "
+        "vendor ('gcp') or a vendor and region ('aws/us-east-1'). Repeat it to "
+        "allow several. OMITTING IT IS NOT 'anywhere' -- an AWS ask that names "
+        "no region gets the operator's ONE default region, us-west-2 on this "
+        "deployment. It matters: the H100 is $6.88/hour in us-west-2 and $8.60 "
+        "in ap-northeast-1. `ddpsrun schema` lists every region on offer.",
+    )
     shared.add_argument(
         "--placement-mode", choices=["ordered", "cheapest", "compare"],
         help="what to do with the candidates. ordered (the default) asks them in "
@@ -158,8 +170,9 @@ def job_arguments() -> argparse.ArgumentParser:
     )
     shared.add_argument(
         "--script", metavar="PATH",
-        help="your run.sh. Four more validate checks become available with it. "
-        "It is read and sent, never stored.",
+        help="your run.sh. THIS IS WHAT RUNS when you pass no --arg: the job gets "
+        "args ['bash','-lc',<the file's text>]. It also unlocks four more validate "
+        "checks. The text is read and sent; the path is not, and nothing is stored.",
     )
     return shared
 
@@ -407,6 +420,11 @@ def build_submit_body(args: argparse.Namespace) -> dict[str, Any]:
         body["vendors"] = list(dict.fromkeys(args.vendor))
     if getattr(args, "placement_mode", None):
         body["placement_mode"] = args.placement_mode
+    # REPLACES the file's list rather than adding to it, for the same reason
+    # --vendor does: a region list is a RESTRICTION, so a union would silently
+    # widen what the file allowed.
+    if getattr(args, "region", None):
+        body["regions"] = list(dict.fromkeys(args.region))
 
     # A GPU is asked for in exactly one of two styles, by memory or by model.
     # TWO CASES THAT LOOK ALIKE AND ARE NOT:

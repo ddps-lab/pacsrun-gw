@@ -64,6 +64,7 @@ Nothing is submitted. An answer of `unknown` is a real answer: the last time we 
 | `--gpu-count N` |  | how many GPUs PER POD (default 1) |
 | `--capacity-type CAPACITY_TYPE` |  | how the machine is bought. YOU decide this. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed mid-run. Run `ddpsrun estimate` first — it recommends one and says why. submit refuses without it rather than choosing for you. |
 | `--vendor NAME` |  | who the machine may be bought from. Repeat it to allow several; omit it entirely for no restriction, which is what every job did before this flag existed. aws and runpod can actually run a job; gcp, azure, lambda and nebius can only be PRICED, so name one of those only with --placement-mode compare. |
+| `--region NAME` |  | where the machine may be bought, as PACSrun spells it: a bare vendor ('gcp') or a vendor and region ('aws/us-east-1'). Repeat it to allow several. OMITTING IT IS NOT 'anywhere' -- an AWS ask that names no region gets the operator's ONE default region, us-west-2 on this deployment. It matters: the H100 is $6.88/hour in us-west-2 and $8.60 in ap-northeast-1. `ddpsrun schema` lists every region on offer. |
 | `--placement-mode PLACEMENT_MODE` |  | what to do with the candidates. ordered (the default) asks them in order and stops at the first that answers, comparing nothing. cheapest asks every candidate and buys the cheapest answer. compare asks every candidate, ranks them and then STOPS -- nothing is bought and the job ends in the phase Compared with the winner and the margin in its message. compare is the only mode that costs nothing to run. |
 | `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
@@ -76,7 +77,7 @@ Nothing is submitted. An answer of `unknown` is a real answer: the last time we 
 | `--batch-size BATCH_SIZE` |  | per_device_train_batch_size (default 1) |
 | `--grad-accum GRAD_ACCUM` |  | gradient_accumulation_steps (default 8) |
 | `--resumable` |  | your job can restart from a checkpoint |
-| `--script PATH` |  | your run.sh. Four more validate checks become available with it. It is read and sent, never stored. |
+| `--script PATH` |  | your run.sh. THIS IS WHAT RUNS when you pass no --arg: the job gets args ['bash','-lc',<the file's text>]. It also unlocks four more validate checks. The text is read and sent; the path is not, and nothing is stored. |
 | `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
 
 ## ddpsrun validate
@@ -96,6 +97,7 @@ Nothing is submitted. Pass --script to unlock four more checks.
 | `--gpu-count N` |  | how many GPUs PER POD (default 1) |
 | `--capacity-type CAPACITY_TYPE` |  | how the machine is bought. YOU decide this. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed mid-run. Run `ddpsrun estimate` first — it recommends one and says why. submit refuses without it rather than choosing for you. |
 | `--vendor NAME` |  | who the machine may be bought from. Repeat it to allow several; omit it entirely for no restriction, which is what every job did before this flag existed. aws and runpod can actually run a job; gcp, azure, lambda and nebius can only be PRICED, so name one of those only with --placement-mode compare. |
+| `--region NAME` |  | where the machine may be bought, as PACSrun spells it: a bare vendor ('gcp') or a vendor and region ('aws/us-east-1'). Repeat it to allow several. OMITTING IT IS NOT 'anywhere' -- an AWS ask that names no region gets the operator's ONE default region, us-west-2 on this deployment. It matters: the H100 is $6.88/hour in us-west-2 and $8.60 in ap-northeast-1. `ddpsrun schema` lists every region on offer. |
 | `--placement-mode PLACEMENT_MODE` |  | what to do with the candidates. ordered (the default) asks them in order and stops at the first that answers, comparing nothing. cheapest asks every candidate and buys the cheapest answer. compare asks every candidate, ranks them and then STOPS -- nothing is bought and the job ends in the phase Compared with the winner and the margin in its message. compare is the only mode that costs nothing to run. |
 | `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
@@ -108,7 +110,7 @@ Nothing is submitted. Pass --script to unlock four more checks.
 | `--batch-size BATCH_SIZE` |  | per_device_train_batch_size (default 1) |
 | `--grad-accum GRAD_ACCUM` |  | gradient_accumulation_steps (default 8) |
 | `--resumable` |  | your job can restart from a checkpoint |
-| `--script PATH` |  | your run.sh. Four more validate checks become available with it. It is read and sent, never stored. |
+| `--script PATH` |  | your run.sh. THIS IS WHAT RUNS when you pass no --arg: the job gets args ['bash','-lc',<the file's text>]. It also unlocks four more validate checks. The text is read and sent; the path is not, and nothing is stored. |
 | `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
 
 ## ddpsrun submit
@@ -128,6 +130,7 @@ Give a YAML or JSON file, or build the request from flags, or both. Flags win ov
 | `--gpu-count N` |  | how many GPUs PER POD (default 1) |
 | `--capacity-type CAPACITY_TYPE` |  | how the machine is bought. YOU decide this. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed mid-run. Run `ddpsrun estimate` first — it recommends one and says why. submit refuses without it rather than choosing for you. |
 | `--vendor NAME` |  | who the machine may be bought from. Repeat it to allow several; omit it entirely for no restriction, which is what every job did before this flag existed. aws and runpod can actually run a job; gcp, azure, lambda and nebius can only be PRICED, so name one of those only with --placement-mode compare. |
+| `--region NAME` |  | where the machine may be bought, as PACSrun spells it: a bare vendor ('gcp') or a vendor and region ('aws/us-east-1'). Repeat it to allow several. OMITTING IT IS NOT 'anywhere' -- an AWS ask that names no region gets the operator's ONE default region, us-west-2 on this deployment. It matters: the H100 is $6.88/hour in us-west-2 and $8.60 in ap-northeast-1. `ddpsrun schema` lists every region on offer. |
 | `--placement-mode PLACEMENT_MODE` |  | what to do with the candidates. ordered (the default) asks them in order and stops at the first that answers, comparing nothing. cheapest asks every candidate and buys the cheapest answer. compare asks every candidate, ranks them and then STOPS -- nothing is bought and the job ends in the phase Compared with the winner and the margin in its message. compare is the only mode that costs nothing to run. |
 | `--parallelism N` |  | how many pods run at once (default 1). They are independent workers that never talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: --parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes. |
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
@@ -140,7 +143,7 @@ Give a YAML or JSON file, or build the request from flags, or both. Flags win ov
 | `--batch-size BATCH_SIZE` |  | per_device_train_batch_size (default 1) |
 | `--grad-accum GRAD_ACCUM` |  | gradient_accumulation_steps (default 8) |
 | `--resumable` |  | your job can restart from a checkpoint |
-| `--script PATH` |  | your run.sh. Four more validate checks become available with it. It is read and sent, never stored. |
+| `--script PATH` |  | your run.sh. THIS IS WHAT RUNS when you pass no --arg: the job gets args ['bash','-lc',<the file's text>]. It also unlocks four more validate checks. The text is read and sent; the path is not, and nothing is stored. |
 | `--json` |  | print raw JSON instead of a human summary. Use this from a script. |
 
 ## ddpsrun status

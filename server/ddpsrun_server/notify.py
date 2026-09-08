@@ -242,15 +242,44 @@ because nobody has given this address a namespace, and only an operator can.
   address    {email}
   cognito id {subject_id}
 
-TO REGISTER THEM, two steps in this order. The namespace has to exist first: an
-entry naming a namespace that is not in the cluster produces a token that
-authenticates and then fails on every read.
+WHY A NAMESPACE OF THEIR OWN, rather than adding them to an existing one. The
+namespace is what separates people here, and it separates more than the job list:
+`spec.resultPath` is s3://<bucket>/<prefix><NAMESPACE>/<job>/, so two people in
+one namespace write their results into one prefix and each can read the other's.
+Sharing a namespace is a deliberate choice for a team that wants it, not the
+default for a new person.
 
-  1. create the namespace, if it is not there already
+TO REGISTER THEM, FOUR STEPS IN THIS ORDER. Steps 1-3 are all needed before the
+first job can rent a machine; step 4 is what lets them in.
+
+  1. create the namespace
 
      kubectl create namespace {namespace_hint}
 
-  2. add this object to the `tokens` array in the token secret
+  2. create the workload ServiceAccount IN that namespace
+
+     kubectl -n {namespace_hint} create serviceaccount pacsjob-writer
+
+  3. ★ let that ServiceAccount assume the workload role. THIS STEP IS THE ONE
+     THAT IS EASY TO MISS AND THE FAILURE IS LATE: without it the job is
+     accepted, solves cleanly, and the driver pod dies in its own configuration
+     check with
+
+       exit 10  configuration error: ... Not authorized to perform
+                sts:AssumeRoleWithWebIdentity
+
+     The role's trust policy names no namespace at all -- what binds the pair is
+     this association, one per namespace/ServiceAccount:
+
+     aws eks create-pod-identity-association --cluster-name <cluster> \\
+       --namespace {namespace_hint} --service-account pacsjob-writer \\
+       --role-arn <the pacsrun-workload role arn>
+
+     `aws eks list-pod-identity-associations --cluster-name <cluster>` shows what
+     already exists. The gateway itself needs nothing: its own permissions come
+     from a ClusterRoleBinding that already covers every namespace.
+
+  4. add this object to the `tokens` array in the token secret
 
 {entry}
 

@@ -62,6 +62,13 @@ protection against repeating it.
 If `estimate` asks for a fact you do not have (`pairs`, `row_tokens`, `cap`), look for it
 in their repository or ask them. Do not supply a plausible number.
 
+**`--region` is theirs to decide too, and leaving it out is a decision rather than a
+default.** An AWS ask that names no region gets the operator's ONE default region, not a
+search -- so omitting it silently picks one. It changes the price and sometimes whether
+the job can run at all: the H100 is $6.88/hour in us-west-2, $8.60 in ap-northeast-1, and
+in ap-northeast-2 it is sold only as an 8-GPU machine, so a one-card ask there cannot be
+filled and the job sits in Pending. `ddpsrun schema` lists what is on offer.
+
 ## Step 3 — validate, and stop on an error
 
 ```bash
@@ -72,10 +79,41 @@ Exit 1 means something would actually stop the job. Fix it and run it again. Rea
 `not_checked` list aloud to the user: those are things no check could look at, so a pass
 is not a guarantee.
 
-## Step 4 — submit only after they approve
+## Step 4 — SHOW THEM THE SCRIPT, then submit it with `--script`
 
-Show them the estimate and the validation, then ask. After `ddpsrun submit` give them
-the `job_id` and the follow command, and offer to watch it.
+This step used to say only "submit only after they approve", and both halves of it were
+missing something.
+
+**Show them the script itself, not a summary of it.** You wrote it from their repository
+and it is about to spend their money on a rented GPU. Print the whole file and say, in
+one line each, what it fetches, what it writes, and where the results go. Then ask.
+
+**Then pass `--script run.sh` to `submit`, not just to `validate`.**
+
+```bash
+ddpsrun submit --name <n> --image <i> --script run.sh \
+  --capacity-type <what they chose> ...
+```
+
+★ **`--script` IS WHAT RUNS.** With no `--arg`, the job gets
+`args ['bash','-lc',<the file's text>]`, which is also the shape that makes the script
+show up later under `ddpsrun` on the Scripts screen and in `GET /v1/scripts`.
+
+**This was a real trap until 2026-09-08 and this skill walked straight into it.** Step 1
+told you to write a run.sh, step 3 told you to validate it with `--script`, step 4 said
+"submit" — and nothing anywhere said the script had to be sent to `submit` as well. It
+was not: `script` was a validate-only field, the submit path threw it away, and the job
+was created carrying no command at all. Measured on the real models: `spec.command` and
+`spec.args` both absent, so the operator refuses to build the driver pod ("nothing to
+run") AFTER the job has been accepted. An agent following this file wrote a script,
+checked it, submitted it, and the script never ran.
+
+**If you pass `--arg` as well, the `--arg` wins and the script is only CHECKED.** That is
+deliberate -- some jobs fetch their script inside the container -- so if you pass both,
+say which one is going to run.
+
+After `ddpsrun submit` give them the `job_id` and the follow command, and offer to watch
+it.
 
 ```bash
 ddpsrun status <job_id>
