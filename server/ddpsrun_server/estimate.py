@@ -514,7 +514,8 @@ def capacity_type(hours: float | None, resumable: bool) -> tuple[str, str]:
 
 
 def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
-                vendors: list[str] | None, capacity: str) -> Rate:
+                vendors: list[str] | None, capacity: str,
+                regions: list[str] | None = None) -> Rate:
     """What one hour of this job's machines costs.
 
     THE DEFECT THIS FIXES, WHICH WAS A WRONG NUMBER AND NOT A MISSING ONE.
@@ -547,6 +548,12 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
         parallelism: how many pods.
         vendors: `placement.vendors`, or None for "no restriction".
         capacity: "spot" or "on-demand", as `capacity_type()` decided.
+        regions: `placement.regions`. EMPTY IS NOT "anywhere" -- an AWS ask that
+            names no region gets the operator's ONE default region, so pricing
+            an unqualified ask at the globally cheapest region would be a wrong
+            number (PACSrun's placement.go:376, PACSRUN-AWS-ONE-REGION). Only
+            the `aws/<region>` entries are read; a bare vendor word names no
+            region and leaves the default in place.
 
     Returns:
         A `Rate`. Its numbers are None only when NEITHER vendor can be priced
@@ -558,20 +565,27 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
     if not asked:
         asked = ["aws", "runpod"]
 
+    # Only `aws/<region>` entries name a region. A bare "aws" means the
+    # operator's default, which is what an empty list already means here.
+    aws_regions = [entry.split("/", 1)[1] for entry in (regions or [])
+                   if entry.startswith("aws/") and "/" in entry]
+
     options: list[Rate] = []
     reasons: list[str] = []
 
     if "aws" in asked:
-        found = aws_cheapest(gpu_name, per_pod, pods)
+        found = aws_cheapest(gpu_name, per_pod, pods, aws_regions)
         if found is None:
-            counts = aws_counts(gpu_name)
+            counts = aws_counts(gpu_name, aws_regions)
             reasons.append(
                 f"AWS cannot be priced: "
-                + (f"{AWS_PRICE_REGION} sells the {gpu_name} in machines of "
+                + (f"{', '.join(aws_regions) or AWS_PRICE_REGION} sells the "
+                   f"{gpu_name} in machines of "
                    f"{', '.join(str(n) for n in counts)} cards and none of them "
                    f"fits {per_pod} card(s) per pod across {pods} pod(s)"
                    if counts else
-                   f"{AWS_PRICE_REGION} does not offer a {gpu_name} at all"))
+                   f"{', '.join(aws_regions) or AWS_PRICE_REGION} does not "
+                   f"offer a {gpu_name} at all"))
         else:
             machine, seats = found
             # Ceiling division: 6 pods at 4 seats a machine needs 2 machines,
@@ -582,12 +596,12 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
                 lo = round(machine.spot_low * count_machines, 4)
                 hi = round(machine.spot_high * count_machines, 4)
                 where = (f"spot, {machine.zones} availability zone(s) in "
-                         f"{AWS_PRICE_REGION} spanning "
+                         f"{machine.region} spanning "
                          f"${machine.spot_low:.4f}-${machine.spot_high:.4f} per "
                          f"machine-hour")
             else:
                 lo = hi = round(whole, 4)
-                where = f"on-demand list price in {AWS_PRICE_REGION}"
+                where = f"on-demand list price in {machine.region}"
             seat_note = (f", {seats} pod(s) per machine" if seats > 1 else "")
             options.append(Rate(
                 lo, hi,
@@ -656,6 +670,7 @@ def estimate(
     parallelism: int = 1,
     vendors: list[str] | None = None,
     asked_capacity: str | None = None,
+    regions: list[str] | None = None,
 ) -> Estimate:
     """Answer everything `/v1/estimate` is asked, or say why we cannot.
 
@@ -684,6 +699,7 @@ def estimate(
             unresumable run is recommended on-demand however it was asked --
             and quoting the on-demand rate to somebody who typed `spot` is a
             number about a machine they are not buying.
+        regions: `placement.regions`, passed through to `hourly_rate`.
 
     Returns:
         An `Estimate`. Fields we could not compute are None and `basis` says
@@ -747,7 +763,8 @@ def estimate(
     # disagree whenever the recommendation is not taken, and the price belongs
     # to the machine that will actually be bought.
     priced_as = asked_capacity or kind
-    rate = hourly_rate(gpu_name, gpu_count, parallelism, vendors, priced_as)
+    rate = hourly_rate(gpu_name, gpu_count, parallelism, vendors, priced_as,
+                       regions)
     if asked_capacity and asked_capacity != kind:
         warnings.append(
             f"the rate above is for {asked_capacity}, which is what was asked "

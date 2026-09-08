@@ -182,6 +182,16 @@ class SubmitRequest(BaseModel):
         "CSVs and no actuator here can rent from them, so list one only together "
         "with placement_mode 'compare', which stops after the ranking.",
     )
+    regions: list[str] = Field(
+        default_factory=list,
+        description="Which regions may answer, as PACSrun's placement.regions "
+        "spells them: a bare vendor ('gcp'), or a vendor and region "
+        "('aws/us-east-1'). EMPTY IS NOT 'anywhere' FOR AWS -- it is the "
+        "operator's one default region, us-west-2 in this deployment "
+        "(PACSrun's placement.go:376, grep PACSRUN-AWS-ONE-REGION). So a job "
+        "that wants a cheaper region has to name it. GET /v1/prices lists "
+        "every region the catalogue prices.",
+    )
     placement_mode: str | None = Field(
         default=None,
         pattern="^(ordered|cheapest|compare)$",
@@ -265,6 +275,12 @@ class ScriptView(BaseModel):
     created_at: str | None = Field(
         default=None, description="When that job was created, newest first in the listing."
     )
+    filename: str = Field(
+        default="",
+        description="A name to save this script under, built from the job's own "
+        "display name. Downloading needs a filename and 'download' is not one; "
+        "the job name is what the person who wrote the script will recognise.",
+    )
     used: int = Field(
         default=1,
         description="How many of this caller's jobs ran this exact text. The same run.sh "
@@ -277,6 +293,13 @@ class ScriptView(BaseModel):
 class ScriptsResponse(BaseModel):
     """What `GET /v1/scripts` returns: this caller's own scripts, newest first."""
 
+    namespace: str = Field(
+        description="WHOSE scripts these are. Every listing is one namespace's "
+        "and never a mixture: the caller's own unless an operator asked for "
+        "another with ?namespace=. Said out loud because a list of scripts with "
+        "no owner on it reads as 'everybody's', and on a shared cluster that is "
+        "the wrong thing to assume about somebody else's training run."
+    )
     scripts: list[ScriptView] = Field(default_factory=list)
     note: str = Field(
         default="",
@@ -695,6 +718,12 @@ def to_pacsjob(
         placement["vendors"] = list(request.vendors)
     if request.placement_mode:
         placement["mode"] = request.placement_mode
+    # DDPSRUN-REGIONS. Dropped until 2026-09-08, exactly as `vendors` was: the CRD
+    # has had placement.regions all along and the gateway sent nothing, so every
+    # job through this screen got the operator's one default AWS region and there
+    # was no way to ask for another (PACSRUN-AWS-ONE-REGION).
+    if request.regions:
+        placement["regions"] = list(request.regions)
     if placement:
         spec["placement"] = placement
 
@@ -875,6 +904,62 @@ class EstimateResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class PriceView(BaseModel):
+    """One row of the catalogue's price table.
+
+    DDPSRUN-PRICES. Until 2026-09-08 this service could only speak about
+    us-west-2, so "what does an H100 cost in Seoul" had no answer anywhere in
+    it -- not in the estimate, not on the screen, not in the CLI.
+    """
+
+    vendor: str = Field(description="'aws' or 'gcp'.")
+    basis: str = Field(
+        description="WHAT THE PRICE COVERS, and the two values must not be "
+        "compared. 'machine' (AWS) is the whole instance including its GPUs, and "
+        "`instance` names it. 'accelerator' (GCP) is the cards ALONE -- a GPU on "
+        "GCP attaches to a machine type and the catalogue prices the two "
+        "separately, so the VM is extra and the catalogue does not say which VM."
+    )
+    card: str
+    gpus: int = Field(description="How many of that card this row covers.")
+    region: str
+    instance: str = Field(description="Machine type. Empty on every GCP row.")
+    usd_per_hour: float | None = Field(
+        default=None,
+        description="On-demand. Null when the catalogue publishes none: AWS "
+        "sells some of the newest cards through Capacity Blocks instead.",
+    )
+    spot_low: float | None = None
+    spot_high: float | None = Field(
+        default=None,
+        description="Spot is per zone and moves, so it is a range across the "
+        "zones in one snapshot, not a number.",
+    )
+    zones: int = Field(description="How many zones carried this row.")
+    flags: str = Field(
+        default="",
+        description="'spot_above_ondemand' when this row's spot price exceeds "
+        "its own on-demand price. 38 GCP rows do, consistently and with both "
+        "zones of a region agreeing, which is the catalogue's own content. No "
+        "AWS row does. Nothing ranks a flagged row.",
+    )
+
+
+class PricesResponse(BaseModel):
+    """What GET /v1/prices returns."""
+
+    rows: list[PriceView]
+    regions: list[str] = Field(
+        description="Every AWS region here, which is also the list "
+        "`placement.regions` accepts as 'aws/<region>'."
+    )
+    default_region: str = Field(
+        description="Where an ask that names NO region actually buys: the "
+        "operator's one AWS default. Not a preference -- PACSrun gives an "
+        "unqualified AWS ask exactly one region (PACSRUN-AWS-ONE-REGION)."
+    )
+    priced_on: str = Field(description="When the catalogue was read.")
+    note: str
 class FindingView(BaseModel):
     """One thing worth saying about a job before it runs."""
 

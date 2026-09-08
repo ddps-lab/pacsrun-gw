@@ -202,3 +202,104 @@ def test_the_never_rented_warning_no_longer_calls_the_price_a_guess():
                if f.code == "gpu-never-rented"][0]
     assert "published price" in finding.message
     assert "cost figure for it is a guess" not in finding.message
+
+
+# --------------------------------------------------------------------------
+# DDPSRUN-PRICES / DDPSRUN-REGIONS. Every region, not one -- and being able to
+# ASK for the others, which is what makes looking at them worth anything.
+# --------------------------------------------------------------------------
+
+
+def test_the_table_covers_every_region_the_catalogue_prices():
+    """The first version was us-west-2 only: 30 rows, so "what does an H100 cost
+    in Seoul" had no answer anywhere in this service."""
+    aws = [r for r in m.PRICE_ROWS if r.vendor == "aws"]
+    gcp = [r for r in m.PRICE_ROWS if r.vendor == "gcp"]
+    assert len({r.region for r in aws}) == 22
+    assert len(aws) == 304
+    assert len(gcp) == 306
+    # Every choosable card is priced somewhere, which was already true for
+    # us-west-2 and must not regress as regions are added.
+    assert {c.name for c in catalogue.CHOOSABLE} <= {r.card for r in aws}
+
+
+def test_an_ask_that_names_no_region_gets_the_operators_one_default():
+    """★ EMPTY IS NOT "ANYWHERE". PACSrun gives an unqualified AWS ask exactly one
+    region -- the operator's own default (placement.go:376, PACSRUN-AWS-ONE-REGION)
+    -- so pricing it at the globally cheapest region would be a wrong number
+    dressed as a helpful one."""
+    default_only = m.aws_machines_for("L40S")
+    assert {r.region for r in default_only} == {m.DEFAULT_AWS_REGION}
+
+    everywhere = m.aws_machines_for("L40S", list(m.AWS_REGIONS))
+    assert len({r.region for r in everywhere}) > 1
+
+
+def test_naming_a_region_prices_that_region_and_says_which():
+    """A price without its region is not checkable, so the sentence carries it.
+    The H100 is 25% dearer in ap-northeast-1 than in us-west-2, which is the kind
+    of difference that was invisible while the table held one region."""
+    home = e.hourly_rate("H100", 1, 1, ["aws"], "on-demand")
+    seoul = e.hourly_rate("H100", 1, 1, ["aws"], "on-demand", ["aws/ap-northeast-1"])
+    assert home.usd_per_hour_low == 6.88
+    assert seoul.usd_per_hour_low == 8.60
+    assert m.DEFAULT_AWS_REGION in home.basis
+    assert "ap-northeast-1" in seoul.basis
+
+
+def test_several_regions_take_the_cheapest_and_name_it():
+    """With more than one region allowed the cheapest wins, and the answer says
+    where -- otherwise the number cannot be checked against the catalogue."""
+    rate = e.hourly_rate("H100", 1, 1, ["aws"], "on-demand",
+                         ["aws/ap-northeast-1", "aws/us-west-2", "aws/us-east-1"])
+    assert rate.usd_per_hour_low == 6.88
+    assert "ap-northeast-1" not in rate.basis
+
+
+def test_a_bare_vendor_word_names_no_region(monkeypatch):
+    """`placement.regions` also takes a bare vendor ("gcp"), which names no
+    region. Reading that as one would look up a region called "gcp" and find
+    nothing, so the default has to survive it."""
+    rate = e.hourly_rate("L40S", 1, 1, ["aws"], "on-demand", ["gcp", "aws"])
+    assert rate.usd_per_hour_low == 1.861
+    assert m.DEFAULT_AWS_REGION in rate.basis
+
+
+def test_the_machine_sizes_on_offer_depend_on_the_region():
+    """Which is why the region travels with the fill question. Reading the sizes
+    from one region and applying them to another would revive the 2026-09-02
+    Pending-forever failure in a new place."""
+    everywhere = {r: m.aws_counts("H100", [r]) for r in m.AWS_REGIONS}
+    distinct = set(everywhere.values())
+    assert len(distinct) > 1, everywhere
+    assert m.aws_counts("H100") == (1, 8)
+
+
+def test_the_two_price_bases_are_kept_apart():
+    """★ AWS prices a whole machine; GCP prices the accelerators ALONE, because a
+    GPU there attaches to a machine type the catalogue prices separately. Ranking
+    them together would put GCP on top whenever it is not actually cheaper, so
+    nothing that prices a job reads a GCP row."""
+    assert {r.basis for r in m.PRICE_ROWS if r.vendor == "aws"} == {"machine"}
+    assert {r.basis for r in m.PRICE_ROWS if r.vendor == "gcp"} == {"accelerator"}
+    # AWS rows always name their instance; GCP rows never can.
+    assert all(r.instance for r in m.PRICE_ROWS if r.vendor == "aws")
+    assert not any(r.instance for r in m.PRICE_ROWS if r.vendor == "gcp")
+    # And the estimator only ever prices from the AWS half.
+    assert all(r.vendor == "aws" for r in m.AWS_MACHINES)
+
+
+def test_rows_whose_spot_beats_their_own_on_demand_are_flagged_not_dropped():
+    """38 GCP rows list a spot price ABOVE their own on-demand price, by 5-17%,
+    with both zones of a region agreeing -- A100 x1 asia-northeast1 is 1.70586
+    and 1.7915 in both -a and -c. That is the catalogue's content, not a grouping
+    mistake (an earlier generator DID have one, pairing a 1-card price with a
+    16-card spot). They ship flagged so nothing ranks them and nobody has to
+    rediscover it."""
+    flagged = [r for r in m.PRICE_ROWS if r.flags == "spot_above_ondemand"]
+    assert len(flagged) == 38
+    assert {r.vendor for r in flagged} == {"gcp"}
+    for row in m.PRICE_ROWS:
+        if row.vendor != "aws" or row.usd_per_hour is None or row.spot_high is None:
+            continue
+        assert row.spot_high <= row.usd_per_hour * 1.001, row

@@ -40,6 +40,7 @@
     <button data-view="submit">Submit</button>
     <button data-view="scripts">Scripts</button>
     <button data-view="team">Team</button>
+    <button data-view="prices">Prices</button>
     <button data-view="vendors">Vendors</button>
   </nav>
   <div class="spacer"></div>
@@ -329,6 +330,22 @@
     <label><span><b>Script</b> <span class="dim">your whole run.sh, or one line. Runs as <code>bash -lc</code>, so quotes, pipes and newlines work</span></span>
       <textarea id="f-command" rows="10" placeholder="set -euo pipefail&#10;&#10;python src/train.py --config configs/train.yaml&#10;python src/evaluate.py --config configs/train.yaml"></textarea>
       <div id="f-command-note"></div></label>
+
+    <!-- DDPSRUN-SCRIPT-FILE. Load a run.sh from the machine instead of pasting
+         it, and save the box back out to a file.
+         WHY NO UPLOAD TO THE SERVER. The script is not stored anywhere: it
+         travels on the job itself, inside `args`, which is what makes the
+         Scripts screen able to hand it back later. So "upload" here means READ
+         THE FILE IN THE BROWSER and put its text in the box -- the same text a
+         paste would have produced, and one round trip fewer. A server-side
+         upload would need a bucket, a lifecycle, and a second copy of the script
+         that can disagree with the one on the job. -->
+    <div class="row" style="gap:8px;align-items:center;margin:-6px 0 10px">
+      <input type="file" id="f-script-file" accept=".sh,.bash,.txt,text/*"
+             style="max-width:270px">
+      <button type="button" class="flat small" id="f-script-save">Save as a file</button>
+      <span class="dim tiny" id="f-script-file-note"></span>
+    </div>
     <div class="grid2">
       <label><span><b>GPU</b></span>
         <select id="f-gpu">
@@ -399,6 +416,21 @@
         <option value="compare">compare - ask every candidate, buy NOTHING</option>
       </select></label>
     <div id="f-mode-note"></div>
+
+    <!-- DDPSRUN-REGIONS. EMPTY IS NOT "ANYWHERE", and that is the whole reason
+         this box exists. PACSrun gives an AWS ask that names no region exactly
+         ONE region -- the operator's own default, us-west-2 here
+         (placement.go:376, grep PACSRUN-AWS-ONE-REGION). So every job submitted
+         from this screen before 2026-09-08 was in us-west-2 and there was no way
+         to say otherwise: the CRD had placement.regions all along and the
+         gateway sent nothing.
+         It matters in money: the H100 is $6.88/hour in us-west-2 and $8.60 in
+         ap-northeast-1. The Prices screen lists every region on offer. -->
+    <label><span>Regions <span class="dim tiny">optional - blank means us-west-2 only, not "anywhere"</span></span>
+      <input id="f-regions" list="f-region-list" autocomplete="off"
+             placeholder="aws/us-east-1, aws/ap-northeast-2">
+      <datalist id="f-region-list"></datalist>
+      <div id="f-regions-note"></div></label>
     <!-- DDPSRUN-TRAINING-FACTS. Four boxes, and until 2026-09-08 there were four DIFFERENT ones:
          `row_tokens` was missing and it is the single field that turns the estimate from
          "unknown" into a number. estimate.estimate uses them as
@@ -477,9 +509,34 @@
       <h1>Scripts</h1>
       <p class="dim small" id="scripts-note"></p>
     </div>
+    <!-- DDPSRUN-SCRIPTS-NAMESPACE. One listing is one namespace's. Drawn only
+         for an operator, whose token file entry says admin. -->
+    <select id="scripts-ns" hidden title="Namespace"></select>
     <button class="go" data-goto="submit">New job</button>
   </div>
   <div id="scripts-list"></div>
+</section>
+
+<!-- DDPSRUN-PRICES. What every GPU costs in every region the catalogue prices.
+     WHAT THIS FIXES. The service could only speak about us-west-2: the estimate
+     priced it, this screen showed it, and "what does an H100 cost in Seoul" had
+     no answer anywhere -- while placement.regions sat unused in the CRD, so
+     there was no way to ask for another region either. The H100 is $6.88/hour in
+     us-west-2 and $8.60 in ap-northeast-1, a 25% difference that was invisible.
+     THE TWO BASES ARE NOT COMPARABLE, so they are drawn in separate tables and
+     never sorted together: an AWS row prices a whole machine, a GCP row prices
+     the cards alone because a GPU there attaches to a machine type the catalogue
+     prices separately. -->
+<section id="view-prices" hidden>
+  <div class="head">
+    <div class="spacer">
+      <h1>Prices</h1>
+      <p class="dim small" id="prices-note"></p>
+    </div>
+    <select id="prices-card" title="GPU"></select>
+    <select id="prices-region" title="Region"></select>
+  </div>
+  <div id="prices-body"></div>
 </section>
 
 <section id="view-vendors" hidden>
