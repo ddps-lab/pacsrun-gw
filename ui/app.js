@@ -841,6 +841,11 @@ function readForm() {
   const t = body.training;
   if (num("f-pairs")) t.pairs = num("f-pairs");
   if (num("f-epochs")) t.epochs = num("f-epochs");
+  // DDPSRUN-TRAINING-FACTS. row_tokens is the one that turns the estimate from "unknown" into a
+  // number: pairs and epochs give the STEP COUNT, and this gives the seconds each step takes.
+  // The screen collected the other three and not this one, so it could answer how many steps and
+  // never how long.
+  if (num("f-rowtokens")) t.row_tokens = num("f-rowtokens");
   if (num("f-cap")) t.cap = num("f-cap");
   if (num("f-batch")) t.batch_size = num("f-batch");
 
@@ -932,7 +937,7 @@ $("s1-reset").onclick = () => {
   // longer exists throws on $(id).value, which would have left every field after
   // it uncleared.
   ["f-name", "f-image", "f-command", "f-env",
-   "f-pairs", "f-epochs", "f-cap", "f-batch"].forEach((id) => { $(id).value = ""; });
+   "f-pairs", "f-epochs", "f-rowtokens", "f-cap", "f-batch"].forEach((id) => { $(id).value = ""; });
   $("f-parallelism").value = 1;
   $("f-gpu").value = "";
   $("f-capacity").value = "spot";
