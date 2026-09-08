@@ -95,9 +95,33 @@ what says so. If you built the request as a JSON file, put the script text in it
 repository, so it can describe flags a published release does not have yet.
 That happened on 2026-09-08 with `--vendor`.
 
+**Pass `--secret` and `--vendor` here too, not just at submit.** Both changed
+what validate can answer on 2026-09-08:
+
+- a `--secret` name the deployment does not hold is now an **error** rather than
+  a silent pass followed by a refusal at submit. `ddpsrun secrets` prints the
+  list; a name absent from it cannot be used, and only an operator can add one.
+- `--vendor runpod` stops the AWS machine-size check from judging the ask. It
+  used to fire regardless, so a RunPod-only 4-card A100 job was told "AWS
+  us-west-2 sells the A100 in machines of 8 cards" — true, and about a vendor
+  the job had already excluded. If you see that warning now, AWS really is a
+  candidate.
+- naming `--capacity-type spot` with vendors that exclude AWS is an **error**:
+  RunPod refuses spot before it reads any price, so no vendor is left.
+
 Exit 1 means something would actually stop the job. Fix it and run it again. Read the
 `not_checked` list aloud to the user: those are things no check could look at, so a pass
 is not a guarantee.
+
+**Two findings mean "know this", not "change this".** `trl-patch-not-applicable`
+says the TRL patch edits `trl.trainer.dpo_trainer` and your script trains with
+something else, so the memory figure beside it is a DPO measurement and an
+upper bound. `aws-credential-collision` says the job carries a second AWS
+identity: PACSrun injects the result-upload credentials as `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, boto3 reads the environment
+before any profile, and the upload happens at the END of the run — so getting
+this wrong loses the results of a job that already cost money.
+`references/script-contract.md` §14 has the pattern that works.
 
 ## Step 4 — SHOW THEM THE SCRIPT, then submit it with `--script`
 
