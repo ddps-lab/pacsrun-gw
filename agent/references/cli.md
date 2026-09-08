@@ -76,6 +76,7 @@ Nothing is submitted. An answer of `unknown` is a real answer: the last time we 
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |
 | `--expected-hours EXPECTED_HOURS` |  | your own guess at the runtime, in hours |
+| `--continue-from JOB_ID` |  | the job id of a previous run of YOURS whose result path this job should reuse, e.g. job-3e1e34cb042c. Use it to continue a multi-iteration run: without it every submit writes to a fresh prefix and the resume step finds nothing. Must be a job of yours in the same namespace; anything else is refused with 404. |
 | `--pairs PAIRS` |  | how many training pairs your dataset holds |
 | `--epochs EPOCHS` |  | how many passes over the dataset |
 | `--row-tokens N` |  | average length of ONE response, in tokens. Without it there is no runtime estimate. |
@@ -111,6 +112,7 @@ Nothing is submitted. Pass --script to unlock four more checks.
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |
 | `--expected-hours EXPECTED_HOURS` |  | your own guess at the runtime, in hours |
+| `--continue-from JOB_ID` |  | the job id of a previous run of YOURS whose result path this job should reuse, e.g. job-3e1e34cb042c. Use it to continue a multi-iteration run: without it every submit writes to a fresh prefix and the resume step finds nothing. Must be a job of yours in the same namespace; anything else is refused with 404. |
 | `--pairs PAIRS` |  | how many training pairs your dataset holds |
 | `--epochs EPOCHS` |  | how many passes over the dataset |
 | `--row-tokens N` |  | average length of ONE response, in tokens. Without it there is no runtime estimate. |
@@ -146,6 +148,7 @@ Give a YAML or JSON file, or build the request from flags, or both. Flags win ov
 | `--cpus CPUS` |  | CPU request, e.g. "4" |
 | `--memory MEMORY` |  | memory request, e.g. "16Gi" |
 | `--expected-hours EXPECTED_HOURS` |  | your own guess at the runtime, in hours |
+| `--continue-from JOB_ID` |  | the job id of a previous run of YOURS whose result path this job should reuse, e.g. job-3e1e34cb042c. Use it to continue a multi-iteration run: without it every submit writes to a fresh prefix and the resume step finds nothing. Must be a job of yours in the same namespace; anything else is refused with 404. |
 | `--pairs PAIRS` |  | how many training pairs your dataset holds |
 | `--epochs EPOCHS` |  | how many passes over the dataset |
 | `--row-tokens N` |  | average length of ONE response, in tokens. Without it there is no runtime estimate. |

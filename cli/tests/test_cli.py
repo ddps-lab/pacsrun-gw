@@ -766,3 +766,18 @@ def test_an_expiry_travels_and_is_read_back(fake, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "stops working at 2026-09-10T02:27:00Z" in out
     assert "tok" not in out, "성공 문구가 값을 되풀이하지 않는다"
+
+
+def test_continue_from_travels_to_the_server(fake):
+    """DDPSRUN-CONTINUE-FROM. 서버에만 넣고 CLI 를 잊으면 문서가 없는 flag 를 가르친다."""
+    assert run(["submit", "--name", "iter-2", "--image", "i",
+                "--capacity-type", "on-demand",
+                "--continue-from", "job-3e1e34cb042c"]) == 0
+    assert fake.submitted["continue_from"] == "job-3e1e34cb042c"
+
+
+def test_without_it_the_field_is_absent(fake):
+    assert run(["submit", "--name", "x", "--image", "i",
+                "--capacity-type", "on-demand"]) == 0
+    assert "continue_from" not in fake.submitted, (
+        "안 준 것을 None 으로 보내면 서버가 그 분기를 타게 된다")

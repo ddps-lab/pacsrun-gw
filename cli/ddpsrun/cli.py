@@ -169,6 +169,15 @@ def job_arguments() -> argparse.ArgumentParser:
     shared.add_argument(
         "--expected-hours", type=float, help="your own guess at the runtime, in hours"
     )
+    # DDPSRUN-CONTINUE-FROM. Chain this job onto a previous one's result path.
+    shared.add_argument(
+        "--continue-from", metavar="JOB_ID",
+        help="the job id of a previous run of YOURS whose result path this job "
+        "should reuse, e.g. job-3e1e34cb042c. Use it to continue a "
+        "multi-iteration run: without it every submit writes to a fresh prefix "
+        "and the resume step finds nothing. Must be a job of yours in the same "
+        "namespace; anything else is refused with 404.",
+    )
     # The facts the server cannot read out of a container image. Only estimate
     # and validate use them today, but submit accepts them too so that one file
     # works for all three.
@@ -469,6 +478,8 @@ def build_submit_body(args: argparse.Namespace) -> dict[str, Any]:
         body["expected_hours"] = args.expected_hours
     if getattr(args, "parallelism", None) is not None:
         body["parallelism"] = args.parallelism
+    if getattr(args, "continue_from", None):
+        body["continue_from"] = args.continue_from
     if (getattr(args, "group_size", None) is not None
             or getattr(args, "group_mode", None) is not None):
         # Either flag alone is meaningful: a size with the default mode is
