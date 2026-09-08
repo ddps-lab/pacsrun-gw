@@ -581,3 +581,54 @@ def test_the_emailed_commands_are_not_folded_onto_one_line(register_client, keyp
                 if "aws eks create-pod-identity-association" in x)
     assert line.rstrip().endswith("\\"), line
     assert "--namespace" not in line, "the flags were folded onto the first line"
+
+
+# ------------------------------- DDPSRUN-REGISTER: one namespace naming rule
+
+
+def test_the_namespace_rule_is_the_address_and_not_anything_else():
+    """★ IT WAS WRITTEN DOWN THREE DIFFERENT WAYS and all three were in use at
+    once on 2026-09-08:
+
+        auth.py's docstring   "<team>-<user>"                 -> ddps-alice
+        the registration mail "lab-" + the address local part -> lab-alice
+        a migration script    "lab-" + the `user` field       -> lab-alice-gmail
+
+    The third one produced `lab-alice` for an address with no "operator" in
+    it, which is how the disagreement surfaced. ONE RULE: the address, because
+    `user` is typed by an operator and can be anything while the address is what
+    the person presents at every sign-in.
+    """
+    from ddpsrun_server.notify import namespace_suggestion
+
+    assert namespace_suggestion("alice@example.com") == "lab-alice"
+    assert namespace_suggestion("bo.ram@example.ac.kr") == "lab-bo-ram"
+    # Nothing of the team, and nothing of any `user` field, reaches the name.
+    assert "ddps" not in namespace_suggestion("alice@example.ac.kr")
+
+
+def test_the_suggested_namespace_is_always_a_name_kubectl_accepts():
+    """Kubernetes namespaces are RFC 1123 labels: lowercase letters, digits and
+    hyphens, starting and ending with one of the first two. An address may hold
+    dots, plus signs and capitals, and `kubectl create namespace` refuses all
+    three -- so the scrub is what makes the emailed command runnable."""
+    import re
+
+    from ddpsrun_server.notify import namespace_suggestion
+
+    label = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+    for address in ("bo.ram+x@example.ac.kr", "A.B@Example.COM",
+                    "alice@example.com", "_leading@x.com", "trailing_@x.com",
+                    "@nolocalpart.com"):
+        got = namespace_suggestion(address)
+        assert label.fullmatch(got), (address, got)
+        assert len(got) <= 63, (address, got)
+
+
+def test_an_address_with_no_usable_local_part_still_yields_a_name():
+    """`lab-unnamed` rather than a bare `lab-` or a crash: the operator gets a
+    name they can see is wrong and change, instead of a command that fails."""
+    from ddpsrun_server.notify import namespace_suggestion
+
+    assert namespace_suggestion("@x.com") == "lab-unnamed"
+    assert namespace_suggestion("") == "lab-unnamed"

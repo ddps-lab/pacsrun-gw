@@ -103,14 +103,41 @@ class TokenStore:
         {
           "tokens": [
             {"sha256": "<64 hex chars>", "user": "alice",
-             "namespace": "ddps-alice", "team": "ddps"}
+             "namespace": "lab-alice", "team": "ddps"}
           ]
         }
 
-    The namespace is by convention "<team>-<user>", but nothing here derives one
-    from the other: splitting a namespace on a dash to find the team breaks the
-    moment a team is called "ddps-lab", and guessing wrong would put a person's
-    numbers in the wrong team's total.
+    ★ THE NAMESPACE NAMING RULE, AND IT WAS WRITTEN DOWN THREE DIFFERENT WAYS.
+    Corrected 2026-09-08 after all three were found in use at once:
+
+        this docstring   "<team>-<user>"                 -> ddps-alice
+        the registration
+        email            "lab-" + the email's local part -> lab-alice
+        a migration      "lab-" + the `user` field       -> lab-alice-gmail
+
+    ONE RULE NOW: `lab-` plus the local part of the address the person signs in
+    with, scrubbed to an RFC 1123 label (lowercase, digits and hyphens only, so
+    `bo.ram+x@...` becomes `lab-bo-ram-x`). `notify.namespace_suggestion` is
+    the only implementation of it, and the registration email prints what it
+    answers, so an operator following that mail cannot drift from it.
+
+    WHY THE ADDRESS AND NOT THE `user` FIELD, which is what a migration reached
+    for once. `user` is typed by an operator and can be anything -- it was
+    "second-account" for an address with no "operator" in it -- while the address is
+    what the person actually presents at every sign-in. A name derived from the
+    thing that identifies them cannot go stale against it.
+
+    WHY `lab-` AND NOT THE TEAM. Because nothing may derive one from the other:
+    splitting a namespace on a dash to find the team breaks the moment a team is
+    called "ddps-lab", and guessing wrong would put a person's numbers in the
+    wrong team's total. `team` stays its own field. `lab-` is a fixed prefix, not
+    a value, so it cannot be mistaken for one.
+
+    ★★ AND IT IS A SUGGESTION, NOT A CONSTRAINT. Nothing in this file derives a
+    namespace from anything: the value written here is the value used, full stop.
+    An operator who wants `lab-bo-ram` for `bo.ram@example.ac.kr` types that
+    and it works. The rule exists so a new person gets a name without anybody
+    inventing one, not to stop anybody choosing.
     """
 
     def __init__(
