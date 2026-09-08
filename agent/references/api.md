@@ -62,6 +62,18 @@ What `GET /v1/jobs/{id}/artifacts` returns.
 | `total` | yes | How many files are listed. |
 | `truncated` |  | True when the folder holds more than one page (1000 keys) and only the first page is shown. |
 
+### CardMetricsView
+
+One GPU card's readings, for a job that rents several.
+
+| field | required | description |
+|---|---|---|
+| `avg_utilization_percent` |  |  |
+| `gpu_index` | yes |  |
+| `latest` |  |  |
+| `peak` |  | The reading with the most memory in use on THIS card. |
+| `series` |  |  |
+
 ### CostRange
 
 What that runtime costs: the hours above times the rate below.
@@ -145,6 +157,7 @@ One nvidia-smi reading.
 
 | field | required | description |
 |---|---|---|
+| `gpu_index` |  | Which card, as nvidia-smi numbers it. 0 for a reading off the old five-field line, which describes card 0 and has no index. |
 | `memory_percent` | yes | How full the card is. This is the one to watch: running out of memory is what killed a run, and this curve approaching 100 is the warning that did not exist at the time. |
 | `memory_total_mib` | yes |  |
 | `memory_used_mib` | yes |  |
@@ -287,6 +300,7 @@ What /v1/jobs/{id}/metrics returns.
 | field | required | description |
 |---|---|---|
 | `avg_utilization_percent` |  | Mean utilisation over the window's samples. |
+| `cards` |  | One entry per GPU card, lowest index first. A job renting four A100s reported one card until 2026-09-08 (the watcher kept `head -1`), so three quarters of it was invisible. The single-card fields above describe the lowest-indexed card, unchanged. |
 | `gpu_series` |  | Readings over the window, oldest first, thinned to at most 400 points. |
 | `latest_gpu` |  |  |
 | `note` |  | What is missing and why, in plain words. Empty when nothing is. |

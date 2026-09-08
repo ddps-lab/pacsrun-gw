@@ -54,6 +54,23 @@ GPU_LINE = re.compile(
     r"PACSRUN_GPU=(\d+),(\d+),(\d+),(\d+),([\d.]+)"
 )
 
+# THE PER-CARD LINE, sent since 2026-09-08 by driver/common/gpu-watch.sh — one
+# per card, with the card's own nvidia-smi index first:
+#   PACSRUN_GPU_CARD=<index>,<util>,<used>,<total>,<temp>,<power>
+#
+# WHY IT EXISTS. The watcher used to keep `head -1` and report card 0 alone, so
+# baseline-c — four A100s in one pod — drew one card and three quarters of a $44
+# run was invisible on this screen.
+#
+# A DIFFERENT PREFIX, NOT A SIXTH FIELD, and that is what keeps the two apart:
+# `PACSRUN_GPU=(\d+),` cannot match "PACSRUN_GPU_CARD=", so a per-card line is
+# never read as the old shape with the index mistaken for a percentage. Card 0
+# still arrives on BOTH lines (the watcher sends the old one for compatibility);
+# `scan` keys by index, so the two land on the same card and cannot double it.
+GPU_CARD_LINE = re.compile(
+    r"PACSRUN_GPU_CARD=(\d+),(\d+),(\d+),(\d+),(\d+),([\d.]+)"
+)
+
 # What the training library prints on its own. Two shapes have to be read,
 # because tqdm writes the second one and the first is what appears once the
 # elapsed and remaining times are known:
@@ -93,6 +110,10 @@ class GpuSample:
     memory_total_mib: int
     temperature_c: int
     power_w: float
+    # Which card this reading is from, as nvidia-smi numbers them. 0 for a
+    # reading off the old five-field line, which describes card 0 and carries
+    # no index of its own.
+    gpu_index: int = 0
     # When the apiserver stamped the log line this reading came from (RFC
     # 3339), "" when the line carried no stamp. This is the chart's x axis:
     # without it the screen could only say "somewhere in the last hour".
@@ -138,6 +159,26 @@ class Progress:
 
 
 @dataclass
+class CardMetrics:
+    """One GPU card's own readings, for a job that rents several.
+
+    Attributes:
+        gpu_index: the card, as nvidia-smi numbers it.
+        series: that card's readings over the window, oldest first, downsampled.
+        latest: its most recent reading.
+        peak: the reading with the most memory in use — what a post-mortem
+            asks for, since a finished job's LAST reading is the idle card.
+        avg_utilization_percent: mean utilisation over the window.
+    """
+
+    gpu_index: int
+    series: list[GpuSample] = field(default_factory=list)
+    latest: GpuSample | None = None
+    peak: GpuSample | None = None
+    avg_utilization_percent: float | None = None
+
+
+@dataclass
 class Metrics:
     """Everything a monitoring screen needs about one job.
 
@@ -163,6 +204,41 @@ class Metrics:
     # 0 MiB), which answers nothing about the run itself.
     peak_gpu: GpuSample | None = None
     avg_utilization_percent: float | None = None
+    # ONE ENTRY PER CARD, lowest index first. A job renting four A100s used to
+    # arrive here as one series — the watcher's `head -1` — and the screen drew
+    # card 0 alone (baseline-c, 2026-09-08). The three fields above still
+    # describe the LOWEST-indexed card so an older screen keeps working.
+    cards: list[CardMetrics] = field(default_factory=list)
+
+
+def parse_gpu_card(line: str) -> GpuSample | None:
+    """Pull one CARD's reading out of a per-card log line.
+
+    Args:
+        line: a raw log line, possibly carrying an apiserver timestamp.
+
+    Returns:
+        A `GpuSample` with `gpu_index` set, or None when the line is not a
+        per-card reading.
+
+    Example:
+        >>> parse_gpu_card("PACSRUN_GPU_CARD=3,99,44950,81920,63,366.04").gpu_index
+        3
+    """
+    match = GPU_CARD_LINE.search(line)
+    if not match:
+        return None
+    stamp = line.split(" ", 1)[0]
+    timed = stamp if len(stamp) >= 20 and stamp[:2] == "20" and "T" in stamp else ""
+    return GpuSample(
+        gpu_index=int(match.group(1)),
+        utilization_percent=int(match.group(2)),
+        memory_used_mib=int(match.group(3)),
+        memory_total_mib=int(match.group(4)),
+        temperature_c=int(match.group(5)),
+        power_w=float(match.group(6)),
+        time=timed,
+    )
 
 
 def parse_gpu(line: str) -> GpuSample | None:
@@ -265,13 +341,26 @@ def scan(lines: object, window_seconds: int) -> Metrics:
         whose run.sh prints neither line shape, produces an empty answer with a
         `note` explaining which.
     """
-    samples: list[GpuSample] = []
     progress: Progress | None = None
 
+    # Per-card readings, keyed by index, and the old-shape readings kept apart.
+    # WHY APART: the watcher sends card 0 on BOTH lines (its per-card line and
+    # the old five-field one, for readers that know only the old shape), so
+    # counting both would give card 0 two samples per interval. If any per-card
+    # line was seen the old ones are dropped; if none was, the old ones ARE the
+    # answer and become card 0 — which is what a log written before 2026-09-08,
+    # or by a researcher's own watch loop, contains.
+    per_card: dict[int, list[GpuSample]] = {}
+    legacy: list[GpuSample] = []
+
     for line in lines:
+        card = parse_gpu_card(line)
+        if card is not None:
+            per_card.setdefault(card.gpu_index, []).append(card)
+            continue
         sample = parse_gpu(line)
         if sample is not None:
-            samples.append(sample)
+            legacy.append(sample)
             continue
         # A progress line is overwritten many times a run; the last one wins.
         found = parse_progress(line)
@@ -285,6 +374,14 @@ def scan(lines: object, window_seconds: int) -> Metrics:
     # nvidia-smi, or nothing has run yet -- and the watcher says WHICH, in a
     # PACSRUN_GPU_WATCH line sitting in this same log. Pointing at that line is more
     # useful than pointing at a document, because it is evidence about THIS run.
+    # Fold the old-shape readings in only when no per-card line was seen (the
+    # reasoning is above, where they were collected), so that from here on
+    # "samples" means "every reading this window has, whatever shape it came
+    # in" — which is what the notes below and the fields at the end are about.
+    if not per_card and legacy:
+        per_card[0] = legacy
+    samples = [r for readings in per_card.values() for r in readings]
+
     note = ""
     if not samples and progress is None:
         note = (
@@ -311,16 +408,31 @@ def scan(lines: object, window_seconds: int) -> Metrics:
             f"by step {STEADY_STEPS}."
         )
 
+    cards = [
+        CardMetrics(
+            gpu_index=index,
+            series=downsample(readings),
+            latest=readings[-1],
+            peak=max(readings, key=lambda r: r.memory_used_mib),
+            avg_utilization_percent=round(
+                sum(r.utilization_percent for r in readings) / len(readings), 1
+            ),
+        )
+        for index, readings in sorted(per_card.items())
+        if readings
+    ]
+
+    # The three single-card fields describe the LOWEST-INDEXED card, which is
+    # the one they described before cards[] existed. An older screen therefore
+    # sees exactly what it saw yesterday rather than a mixture of four cards.
+    first = cards[0] if cards else None
     return Metrics(
-        latest_gpu=samples[-1] if samples else None,
-        gpu_series=downsample(samples),
+        latest_gpu=first.latest if first else None,
+        gpu_series=first.series if first else [],
         progress=progress,
         window_seconds=window_seconds,
         note=note,
-        peak_gpu=max(samples, key=lambda s: s.memory_used_mib) if samples else None,
-        avg_utilization_percent=(
-            round(sum(s.utilization_percent for s in samples) / len(samples), 1)
-            if samples
-            else None
-        ),
+        peak_gpu=first.peak if first else None,
+        avg_utilization_percent=first.avg_utilization_percent if first else None,
+        cards=cards,
     )

@@ -85,6 +85,7 @@ from .models import (
     GpuSampleView,
     JudgementRequest,
     LogsResponse,
+    CardMetricsView,
     MemberTotalsView,
     MetricsResponse,
     VendorTotalsView,
@@ -1587,6 +1588,16 @@ def get_metrics(
         note=reading.note,
         peak_gpu=_gpu_view(reading.peak_gpu),
         avg_utilization_percent=reading.avg_utilization_percent,
+        cards=[
+            CardMetricsView(
+                gpu_index=c.gpu_index,
+                series=[v for v in (_gpu_view(r) for r in c.series) if v],
+                latest=_gpu_view(c.latest),
+                peak=_gpu_view(c.peak),
+                avg_utilization_percent=c.avg_utilization_percent,
+            )
+            for c in reading.cards
+        ],
     )
 
 
@@ -1601,6 +1612,7 @@ def _gpu_view(sample: metrics_reader.GpuSample | None) -> GpuSampleView | None:
         memory_percent=sample.memory_percent,
         temperature_c=sample.temperature_c,
         power_w=sample.power_w,
+        gpu_index=sample.gpu_index,
         time=sample.time,
     )
 

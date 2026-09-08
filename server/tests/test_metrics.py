@@ -147,3 +147,54 @@ def test_an_early_window_says_the_projection_is_not_settled():
 
 def test_the_window_asked_for_is_reported_back():
     assert m.scan([], 7200).window_seconds == 7200
+
+
+# ------------------------------------------------------ several cards, one pod
+
+
+def test_each_card_gets_its_own_series():
+    # baseline-c rents four A100s in ONE pod. The watcher used to keep
+    # `head -1` and this screen drew card 0 alone, so three quarters of a $44
+    # run was invisible (2026-09-08).
+    lines = []
+    for _ in range(2):          # two intervals, so every card has a series
+        for index, (util, used) in enumerate(
+            ((100, 45669), (98, 44100), (97, 43900), (99, 44950))
+        ):
+            lines.append(f"PACSRUN_GPU_CARD={index},{util},{used},81920,62,370.32")
+    reading = m.scan(lines, 3600)
+
+    assert [c.gpu_index for c in reading.cards] == [0, 1, 2, 3]
+    assert all(len(c.series) == 2 for c in reading.cards)
+    assert reading.cards[3].latest.memory_used_mib == 44950
+    # The single-card fields keep describing the LOWEST card, so a screen that
+    # has not learned cards[] sees what it saw before.
+    assert reading.latest_gpu.memory_used_mib == 45669
+    assert reading.latest_gpu.gpu_index == 0
+
+
+def test_card_zero_is_not_counted_twice():
+    # The watcher sends card 0 on both its per-card line and the old
+    # five-field one. Counting both would give that card two samples per
+    # interval and halve every rate read off the chart.
+    lines = [
+        "PACSRUN_GPU_CARD=0,100,45669,81920,62,370.32",
+        "PACSRUN_GPU=100,45669,81920,62,370.32",
+        "PACSRUN_GPU_CARD=1,98,44100,81920,61,355.10",
+    ]
+    reading = m.scan(lines, 3600)
+    assert [len(c.series) for c in reading.cards] == [1, 1]
+
+
+def test_a_log_from_before_the_per_card_change_still_reads():
+    # No per-card line anywhere: the old readings ARE the answer and become
+    # card 0, which is what every log written before 2026-09-08 contains.
+    reading = m.scan(["PACSRUN_GPU=93,77209,81920,48,229.86"], 3600)
+    assert [c.gpu_index for c in reading.cards] == [0]
+    assert reading.cards[0].latest.memory_used_mib == 77209
+
+
+def test_the_index_of_a_per_card_line_is_not_read_as_utilisation():
+    reading = m.scan(["PACSRUN_GPU_CARD=3,99,44950,81920,63,366.04"], 3600)
+    assert reading.cards[0].gpu_index == 3
+    assert reading.cards[0].latest.utilization_percent == 99

@@ -1125,6 +1125,11 @@ class GpuSampleView(BaseModel):
     )
     temperature_c: int
     power_w: float
+    gpu_index: int = Field(
+        default=0,
+        description="Which card, as nvidia-smi numbers it. 0 for a reading off "
+        "the old five-field line, which describes card 0 and has no index.",
+    )
     time: str = Field(
         default="",
         description="When the apiserver stamped this reading, RFC 3339. The "
@@ -1146,6 +1151,19 @@ class ProgressView(BaseModel):
         description="False while too few steps have run for the projection to be "
         "worth quoting. One run was 32% out at step 1 and within 4% by step 50."
     )
+
+
+class CardMetricsView(BaseModel):
+    """One GPU card's readings, for a job that rents several."""
+
+    gpu_index: int
+    series: list[GpuSampleView] = Field(default_factory=list)
+    latest: GpuSampleView | None = None
+    peak: GpuSampleView | None = Field(
+        default=None,
+        description="The reading with the most memory in use on THIS card.",
+    )
+    avg_utilization_percent: float | None = None
 
 
 class MetricsResponse(BaseModel):
@@ -1170,6 +1188,13 @@ class MetricsResponse(BaseModel):
     avg_utilization_percent: float | None = Field(
         default=None,
         description="Mean utilisation over the window's samples.",
+    )
+    cards: list[CardMetricsView] = Field(
+        default_factory=list,
+        description="One entry per GPU card, lowest index first. A job renting "
+        "four A100s reported one card until 2026-09-08 (the watcher kept "
+        "`head -1`), so three quarters of it was invisible. The single-card "
+        "fields above describe the lowest-indexed card, unchanged.",
     )
     progress: ProgressView | None = None
     window_seconds: int = Field(

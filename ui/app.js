@@ -649,17 +649,56 @@ async function drawMetrics(jobId, job) {
         fact("Power", last.power_w.toFixed(0) + " W");
 
     const total = peak.memory_total_mib || last.memory_total_mib || 1;
+
+    // ONE LINE PER CARD. A job can rent several cards in one pod — baseline-c
+    // rents four A100s — and until 2026-09-08 the whole panel described card 0
+    // alone. `cards` is the server's per-card answer; an older server sends
+    // none, and then the single series IS card 0 and the chart looks as it did.
+    const cards = (m.cards && m.cards.length ? m.cards : [{ gpu_index: 0, series }]);
+    const lines = cards.map((c, i) => ({
+      label: `GPU ${c.gpu_index}`,
+      series: c.series || [],
+      color: CARD_COLORS[i % CARD_COLORS.length],
+    }));
+
     $("d-gpu").innerHTML =
       `<div class="facts">` + headline + `</div>` +
-      chartBlock("Utilisation (%)", series, (s) => s.utilization_percent,
-                 100, ["0", "50", "100"], "var(--accent)", from, to) +
-      chartBlock("Memory (MiB)", series, (s) => s.memory_used_mib,
-                 total, ["0", String(Math.round(total / 2)), String(total)],
-                 "var(--run)", from, to);
+      (cards.length > 1 ? cardTable(cards) : "") +
+      chartBlock("Utilisation (%)", lines, (s) => s.utilization_percent,
+                 100, ["0", "50", "100"]) +
+      chartBlock("Memory (MiB)", lines, (s) => s.memory_used_mib,
+                 total, ["0", String(Math.round(total / 2)), String(total)]);
   }
 }
 
-/* One labelled chart per quantity, drawn as SVG. No charting library: the page
+/* One colour per card. Four is what a p4d.24xlarge-shaped job needs and the
+   list wraps beyond that; they are the palette's own accents rather than new
+   values, so the chart stays readable in both themes. */
+const CARD_COLORS = ["var(--accent)", "var(--run)", "var(--ok)", "var(--bad)"];
+
+/* Per-card summary, drawn only when there is more than one card: with four
+   cards the four "Peak memory" numbers are the first thing a post-mortem
+   compares, and a chart cannot be read to the megabyte. */
+function cardTable(cards) {
+  return `<div class="scroll" style="margin-top:12px"><table><thead><tr>` +
+    ["GPU", "Peak memory", "Utilisation at peak", "Average utilisation", "Samples"]
+      .map((h) => `<th>${h}</th>`).join("") +
+    `</tr></thead><tbody>` +
+    cards.map((c, i) => {
+      const p = c.peak || c.latest || {};
+      const swatch = `<i style="display:inline-block;width:9px;height:9px;border-radius:2px;` +
+        `background:${CARD_COLORS[i % CARD_COLORS.length]};margin-right:6px"></i>`;
+      return `<tr><td>${swatch}GPU ${c.gpu_index}</td>` +
+        `<td class="num">${p.memory_used_mib == null ? "-" :
+          `${p.memory_used_mib} / ${p.memory_total_mib} MiB (${(p.memory_percent || 0).toFixed(0)}%)`}</td>` +
+        `<td class="num">${p.utilization_percent == null ? "-" : p.utilization_percent + "%"}</td>` +
+        `<td class="num">${c.avg_utilization_percent == null ? "-" : c.avg_utilization_percent + "%"}</td>` +
+        `<td class="num">${(c.series || []).length}</td></tr>`;
+    }).join("") +
+    `</tbody></table></div>`;
+}
+
+/* One labelled chart per quantity, ONE LINE PER CARD, drawn as SVG. No charting library: the page
    is served as static files under a CSP that blocks external hosts, and one
    more file to ship is a poor trade for a plot this small.
 
@@ -668,33 +707,64 @@ async function drawMetrics(jobId, job) {
    indistinguishable meanings answered nothing (user report, 2026-09-07). Each
    chart now names its unit in the title, labels three y ticks in that unit,
    and prints the wall-clock time of its first and last sample underneath. */
-function chartBlock(title, series, pick, yMax, yLabels, color, from, to) {
+function chartBlock(title, lines, pick, yMax, yLabels) {
   const W = 600, H = 120, pad = 4, left = 44;   // left: room for y tick labels
   const yAt = (f) => H - pad - f * (H - pad * 2);
-  const points = series.map((s, i) => {
-    const x = left + (i / Math.max(1, series.length - 1)) * (W - left - pad);
-    const v = Math.max(0, Math.min(yMax, pick(s)));
-    return `${x.toFixed(1)},${yAt(v / yMax).toFixed(1)}`;
-  }).join(" ");
+  // Every line is drawn on the SAME x scale — the longest series' length — so
+  // four cards sampled together lie on top of each other instead of one being
+  // stretched across the panel.
+  const span = Math.max(1, ...lines.map((l) => l.series.length)) - 1;
+  const polyline = ({ series, color }) => {
+    if (!series.length) return "";
+    const points = series.map((s, i) => {
+      const x = left + (span ? i / span : 0) * (W - left - pad);
+      const v = Math.max(0, Math.min(yMax, pick(s)));
+      return `${x.toFixed(1)},${yAt(v / yMax).toFixed(1)}`;
+    }).join(" ");
+    return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.6" ` +
+           `stroke-linejoin="round" stroke-linecap="round"/>`;
+  };
   const grid = [0, 0.5, 1].map((f, i) =>
     `<line x1="${left}" y1="${yAt(f).toFixed(1)}" x2="${W}" y2="${yAt(f).toFixed(1)}" ` +
     `stroke="var(--line)" stroke-width="1"/>` +
     `<text x="${left - 6}" y="${(yAt(f) + 4).toFixed(1)}" text-anchor="end" ` +
     `font-size="11" fill="var(--ink-dim)">${esc(yLabels[i])}</text>`).join("");
+  const legend = lines.length > 1
+    ? `<div class="legend">` + lines.map((l) =>
+        `<span><i style="background:${l.color}"></i>${esc(l.label)}</span>`).join("") + `</div>`
+    : "";
+  // The x axis is read off the LONGEST series: every card is sampled by the
+  // same watcher loop, so their stamps are the same to within one interval.
+  const longest = lines.reduce((a, b) => (b.series.length > a.series.length ? b : a), lines[0]);
   return `<div style="margin-top:14px">` +
     `<p class="dim small" style="margin:0 0 4px">${esc(title)}</p>` +
     // Default preserveAspectRatio (uniform scale), NOT "none": the tick labels
     // are text, and a non-uniform stretch would distort every glyph.
     `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" ` +
     `aria-label="${esc(title)} over time">` + grid +
-    `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.6" ` +
-    `stroke-linejoin="round" stroke-linecap="round"/>` +
+    lines.map(polyline).join("") +
     `</svg>` +
-    (from && to
-      ? `<div class="row" style="justify-content:space-between">` +
-        `<span class="dim tiny num">${esc(when(from))}</span>` +
-        `<span class="dim tiny num">${esc(when(to))}</span></div>`
-      : "") +
+    xAxis(longest ? longest.series : []) +
+    legend +
+    `</div>`;
+}
+
+/* The x axis: five clock times under the plot, read off the samples themselves.
+   It used to be the first and last stamp only, which is a caption rather than
+   an axis — a reader could see WHEN the run started and ended and could not put
+   a bump anywhere in between (user report, 2026-09-08). Five is what fits at
+   this width without the labels touching. The stamps come from the apiserver's
+   own timestamps on the log lines (GpuSample.time), so a gap in the readings
+   shows up as an uneven spacing of the labels, which is honest: the points are
+   evenly spaced on screen because they are evenly spaced in the SERIES, not in
+   time. */
+function xAxis(series) {
+  const stamped = series.filter((s) => s.time);
+  if (stamped.length < 2) return "";
+  const at = (f) => stamped[Math.round(f * (stamped.length - 1))].time;
+  const labels = [0, 0.25, 0.5, 0.75, 1].map(at);
+  return `<div class="row" style="justify-content:space-between;padding-left:44px">` +
+    labels.map((t) => `<span class="dim tiny num">${esc(when(t))}</span>`).join("") +
     `</div>`;
 }
 
@@ -1916,13 +1986,38 @@ async function refreshIfExpired() {
   }
 }
 
+/* Sign out for real: this browser forgets us, and so does Cognito.
+
+   REMOVING EVERY ddpsrun.* KEY, not the three we happen to name. A key left
+   behind starts the next visit half signed in, and the list has grown twice
+   already (refresh token, then the PKCE verifier).
+
+   AND ENDING THE COGNITO SESSION, which is the half that was missing until
+   2026-09-08. Clearing local storage leaves Cognito's own session cookie
+   alive, so the next "Sign in" bounced straight back with the SAME account —
+   no account chooser, no way to sign in as anybody else, and it read as a
+   sign-out that had not happened. `logout_uri` must match a URL registered in
+   terraform/cognito's logout_urls character for character. */
 function signOut() {
   poll.stop();
-  store.clear();
-  localStorage.removeItem(REFRESH_KEY);
+  Object.keys(localStorage)
+    .filter((k) => k.startsWith("ddpsrun."))
+    .forEach((k) => localStorage.removeItem(k));
+  sessionStorage.removeItem(LOGIN_KEY);
   // The namespace picker belongs to the person, not the browser: the next
   // sign-in asks /v1/namespaces again from scratch.
   nsView = { loaded: false, list: [], own: "", selectable: false, current: "" };
+
+  if (loginConfig && loginConfig.enabled && loginConfig.login_domain && loginConfig.client_id) {
+    const query = new URLSearchParams({
+      client_id: loginConfig.client_id,
+      logout_uri: redirectUri(),
+    });
+    // The page leaves here; Cognito drops its cookie and sends the browser
+    // back to redirectUri(), where start() runs and draws the login card.
+    location.assign(`${loginConfig.login_domain}/logout?${query}`);
+    return;
+  }
   showApp(false);
 }
 
