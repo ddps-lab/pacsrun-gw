@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from . import catalogue
 from . import estimate as estimator
 from . import models          # DDPSRUN-VENDOR-CHOICE: the two vendor lists live there
+from . import measurements
 from .measurements import INCIDENTS
 
 ERROR = "error"
@@ -367,8 +368,59 @@ def check_vendors_can_run(vendors: list[str], placement_mode: str | None) -> lis
     return findings
 
 
+def _unfillable_remedy(card: str, gpu_count: int, pods: int,
+                       counts: tuple[int, ...], aws_only: bool) -> str:
+    """What to change so the ask can be filled, with the arithmetic shown.
+
+    Args:
+        card: the catalogue's spelling, for naming it in the sentence.
+        gpu_count: `gpu.count` as asked.
+        pods: `parallelism`, already floored at 1.
+        counts: the machine sizes AWS offers for this card.
+        aws_only: True when spot was asked for, which leaves no other vendor.
+
+    Returns:
+        One sentence naming a concrete count or parallelism that WOULD fit. The
+        two levers are real and independent: raising parallelism raises the
+        ceiling (`gpusPerPod * podCount`), and choosing a count AWS actually
+        sells satisfies the floor.
+    """
+    per_pod = max(1, gpu_count)
+    sizes = ", ".join(str(n) for n in counts)
+    # LEVER ONE: a count AWS sells outright, so one machine holds exactly one pod.
+    # Which of the sizes to pick is the caller's call and not ours -- going down
+    # is cheaper, going up is more cards -- so they are all named rather than one
+    # being guessed at.
+    # "one of 1, 4, 8" reads wrong when there is only one size to name.
+    offer = f"one of {sizes}" if len(counts) > 1 else sizes
+    by_count = (f"set gpu.count to {offer} instead of {per_pod}"
+                if per_pod not in counts else "")
+    # LEVER TWO: keep the count and add pods until the ceiling `gpusPerPod *
+    # podCount` reaches the smallest machine that can host one pod.
+    reachable = [n for n in counts if n >= per_pod]
+    by_pods = ""
+    if reachable:
+        smallest = min(reachable)
+        need = -(-smallest // per_pod)                # ceil, in whole pods
+        if need > pods:
+            article = "an" if str(smallest)[0] == "8" else "a"
+            by_pods = (f"raise parallelism to {need}, which lifts the ceiling to "
+                       f"{per_pod * need} and lets {article} {smallest}-card "
+                       f"machine through")
+    parts = [x for x in (by_count, by_pods) if x]
+    tail = ("" if aws_only else
+            " Or submit on-demand, which keeps RunPod as a candidate: RunPod "
+            "sells some cards singly, though we hold no table of its machine "
+            "sizes and cannot promise it fits.")
+    if not parts:
+        return f"No count fits this card on AWS.{tail}"
+    joined = ", or ".join(parts)
+    return joined[0].upper() + joined[1:] + "." + tail
+
+
 def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
-                        capacity_type: str | None) -> list[Finding]:
+                        capacity_type: str | None,
+                        parallelism: int = 1) -> list[Finding]:
     """Can the GPU that was asked for actually be bought.
 
     DDPSRUN-CATALOGUE. Three ways an ask can be unfillable, and none of them was
@@ -378,10 +430,36 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
 
       1. the name is nvidia-smi's, not the catalogue's. us-west-2 has 32 L40S
          rows and every one was refused on an exact-match name comparison.
-      2. the card is only sold as a whole eight-GPU machine, so a count of 1
-         cannot be filled however the name is spelled.
+      2. the machine sizes AWS offers cannot make up the ask. This was written
+         here as "the card is only sold as a whole eight-GPU machine, so a count
+         of 1 cannot be filled", which is BOTH too narrow and conditional --
+         see THE RULE below.
       3. spot was asked for. RunPod does not sell spot and its decider refuses
          before reading the catalogue, so only AWS is left.
+
+    ★ THE RULE, WHICH IS PACSrun's AND HAS TWO HALVES.
+    `PACSrun/pkg/decider/skycatalog/aws.go:333` keeps a catalogue row only when
+
+        AcceleratorCount >= gpusPerPod  AND  AcceleratorCount <= gpusPerPod * podCount
+
+    The first half is the one this check knew about. The second half -- a machine
+    carrying more cards than the WHOLE job needs is refused -- is why the old
+    version was wrong in both directions:
+
+        L40S count 2, parallelism 1   AWS offers 1, 4, 8. 1 is too small and 4
+                                      exceeds the ceiling of 2. NOTHING fits, and
+                                      the old check passed it, because the count
+                                      was not 1.
+        A100-80GB count 1, par 8      ceiling 8, so p4de.24xlarge (8 cards) fits
+                                      and the eight pods fill it. The old check
+                                      called this an error.
+
+    MEASURED over all fourteen cards at counts 1-8: with one pod, 82 of the 112
+    asks cannot be filled and the old check caught 6. With eight pods, 6 cannot.
+    The screen only started offering counts above 1 on 2026-09-08, so this is a
+    hazard that arrived with that box: an unfillable ask is not refused by the
+    operator, it sits in Pending and retries, which is exactly the 2026-09-02
+    incident above.
 
     Args:
         gpu_name: what the caller asked for, or None for a job with no GPU.
@@ -416,12 +494,30 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
             ))
         return findings
 
-    if gpu_count == 1 and not choice.sold_singly:
+    pods = max(1, parallelism)
+    counts = measurements.aws_counts(choice.name)
+    if counts and not measurements.aws_fillable(choice.name, gpu_count, pods):
+        sizes = ", ".join(str(n) for n in counts)
+        ceiling = max(1, gpu_count) * pods
+        # RunPod is only a candidate on on-demand, and we have no table of its
+        # machine sizes -- so the severity says how much room is left, and the
+        # remedy never claims RunPod WILL fill it.
+        aws_only = capacity_type == "spot"
         findings.append(Finding(
-            ERROR, "gpu-not-sold-singly",
-            f"{choice.name} is not sold one at a time on AWS: {choice.note}",
-            "Ask for a card that is sold singly, or submit with "
-            "--capacity-type on-demand so RunPod becomes a candidate.",
+            ERROR if aws_only else WARNING, "gpu-count-unfillable",
+            f"AWS us-west-2 sells the {choice.name} in machines of {sizes} cards. "
+            + (f"A machine must carry exactly {ceiling} for this ask -- one pod "
+               f"needs {max(1, gpu_count)} and the whole job needs no more than "
+               f"{max(1, gpu_count)} x {pods} pods -- and no machine does."
+               if ceiling == max(1, gpu_count) else
+               f"A machine must carry between {max(1, gpu_count)} (one pod's "
+               f"worth) and {ceiling} (the whole job's worth, "
+               f"{max(1, gpu_count)} x {pods} pods), and none does.")
+            + f" PACSrun refuses a machine on either side of that range "
+              f"(pkg/decider/skycatalog/aws.go:333), so this job would sit in "
+              f"Pending and retry rather than fail."
+            + (f" {choice.note}" if choice.note else ""),
+            _unfillable_remedy(choice.name, gpu_count, pods, counts, aws_only),
         ))
 
     if capacity_type == "spot":
@@ -435,9 +531,12 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
     if not catalogue.has_been_measured(choice.name):
         findings.append(Finding(
             WARNING, "gpu-never-rented",
-            f"we have never rented a {choice.name}, so any time or cost figure "
-            f"for it is a guess rather than a measurement.",
-            "Run something short on it first, or expect the estimate to say unknown.",
+            f"we have never rented a {choice.name}, so how LONG a job takes on it "
+            f"cannot be answered -- the estimate says `unknown` for time and for "
+            f"the total rather than guessing. What an hour of it costs is a "
+            f"published price and is answered.",
+            "Run something short on it first and the estimate gains a measured "
+            "runtime. Until then, the hourly rate is the number to plan with.",
         ))
 
     return findings
@@ -497,6 +596,7 @@ def validate(
     gpu_name: str | None = None,
     gpu_count: int = 1,
     capacity_type: str | None = None,
+    parallelism: int = 1,
     vendors: list[str] | None = None,
     placement_mode: str | None = None,
 ) -> Validation:
@@ -521,7 +621,7 @@ def validate(
 
     findings: list[Finding] = []
     findings += check_vendors_can_run(vendors or [], placement_mode)
-    findings += check_gpu_is_buyable(gpu_name, gpu_count, capacity_type)
+    findings += check_gpu_is_buyable(gpu_name, gpu_count, capacity_type, parallelism)
     findings += check_secrets_as_literals(env)
     findings += check_memory(cap, vram_gb, alloc_on, patch_on)
     findings += check_caps(script, env)

@@ -15,7 +15,13 @@ END-TO-END FLOW of one `/v1/estimate`:
   4. `recommend_gpu()` puts 3 next to what each GPU really gives and picks one.
   5. `capacity_type()` decides on-demand versus spot, which is not a preference
      but a constraint: RunPod does not sell spot at all.
-  6. `estimate()` assembles all of it into one answer with its reasons attached.
+  6. `hourly_rate()` prices the machines the ask needs, at the vendor the ask
+     names. This runs whether or not step 2 answered, and that is deliberate:
+     twelve of the fourteen choosable cards have no throughput measurement, so
+     their hours are `unknown` -- and the cost line used to go blank alongside
+     them, leaving twelve cards saying nothing about money. An hour's price is
+     published; how many hours is not.
+  7. `estimate()` assembles all of it into one answer with its reasons attached.
 
 THE ONE RULE THIS FILE IS BUILT AROUND. A wrong number is worse than no number.
 market-exp2 was estimated at 9.14 hours and took 17.87 — 96% wrong — because
@@ -23,8 +29,9 @@ nothing at that sequence length had ever been measured and the estimate was made
 anyway. So `unknown` is a first-class answer here, and extrapolating past the
 ends of the measured range produces it rather than a number.
 
-NO NUMBERS LIVE IN THIS FILE. Every measurement is in `measurements.py`. What is
-here is arithmetic.
+NO NUMBERS LIVE IN THIS FILE. Every measurement is in `measurements.py`, and so
+is every price -- `THROUGHPUT` and `GPUS` for what we ran and were charged,
+`AWS_MACHINES` for what AWS publishes. What is here is arithmetic.
 
 Grep anchor: DDPSRUN-ESTIMATE
 """
@@ -35,6 +42,8 @@ import math
 from dataclasses import dataclass, field
 
 from .measurements import (
+    AWS_PRICE_REGION,
+    AWS_PRICED_ON,
     DEFAULT_BATCH_SIZE,
     DEFAULT_GRAD_ACCUM,
     DPO_RESPONSES_PER_PAIR,
@@ -44,6 +53,8 @@ from .measurements import (
     THROUGHPUT,
     Gpu,
     Throughput,
+    aws_cheapest,
+    aws_counts,
     gpu_by_name,
     gpu_by_vram,
 )
@@ -100,6 +111,36 @@ class Duration:
     seconds_per_step: float | None = None
 
 
+
+@dataclass
+class Rate:
+    """What one hour of this job's machines costs, and where the number is from.
+
+    WHY THIS IS SEPARATE FROM `Duration`. They fail independently, and before
+    this existed they failed together: a card we have never run answered
+    `unknown` for HOURS, and the cost line went blank with it, so twelve of the
+    fourteen choosable cards said nothing about money at all. Hours need a
+    measurement. A rate is a published price.
+
+    Attributes:
+        usd_per_hour_low: the whole job's hourly rate at the cheapest end. For
+            on-demand that is the published price, so low and high are equal;
+            for spot it is the cheapest availability zone in the snapshot.
+        usd_per_hour_high: the dearest end.
+        basis: the sentence naming the machine, the count, the vendor and the
+            date. Always written even when the numbers are None, because "why
+            we cannot price this" is the useful half of that answer.
+        vendor: "aws", "runpod", or "" when nothing could be priced.
+        machines: how many machines the job would rent. 1 unless parallelism
+            needs more than one machine's seats.
+    """
+
+    usd_per_hour_low: float | None
+    usd_per_hour_high: float | None
+    basis: str
+    vendor: str = ""
+    machines: int = 1
+
 @dataclass
 class GpuAdvice:
     """Which GPU to use and why."""
@@ -121,6 +162,8 @@ class Estimate:
     gpu: GpuAdvice
     capacity_type: str
     capacity_reason: str
+    rate: Rate = field(
+        default_factory=lambda: Rate(None, None, "no rate was looked up."))
     warnings: list[str] = field(default_factory=list)
 
 
@@ -470,6 +513,133 @@ def capacity_type(hours: float | None, resumable: bool) -> tuple[str, str]:
     )
 
 
+def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
+                vendors: list[str] | None, capacity: str) -> Rate:
+    """What one hour of this job's machines costs.
+
+    THE DEFECT THIS FIXES, WHICH WAS A WRONG NUMBER AND NOT A MISSING ONE.
+    Every job used to be priced at `measurements.Gpu.usd_per_hour`, which is
+    RunPod's rate at the moment we were charged it. An AWS L40S job was quoted
+    $0.99/hour against a published AWS on-demand rate of $1.8610 -- 47% low --
+    and nothing in the answer said which vendor the price belonged to.
+
+    HOW THE VENDOR IS CHOSEN. `placement.vendors` says which vendors may answer.
+    Only two of the six can actually rent (`models.RUNNABLE_VENDORS`), and they
+    are priced from different places: AWS from the catalogue table, RunPod from
+    what we were charged. When the ask names both, or names none, the cheaper is
+    used for the arithmetic and the other is named in `basis` -- we cannot know
+    which one PACSrun's ordered/cheapest solve will land on, and quoting only
+    one of two candidates without saying so is how the 47% happened.
+
+    WHAT A RATE COVERS. All of the job's machines for one hour, not one card and
+    not one pod. A job with 4 pods of 1 L40S rents four g6e.xlarge, so the rate
+    is 4 x $1.8610 = $7.4440/hour. `Rate.machines` carries the count so the
+    multiplication is visible rather than buried.
+
+    WHY ON-DEMAND IS ONE NUMBER AND SPOT IS TWO. On-demand is published per
+    region. Spot is per availability zone and moves, so a spot rate is the
+    cheapest and dearest zone in the same snapshot -- and it is a snapshot, which
+    `basis` says out loud with its date.
+
+    Args:
+        gpu_name: the catalogue's spelling of the card.
+        gpu_count: `gpu.count`, how many cards one pod asks for.
+        parallelism: how many pods.
+        vendors: `placement.vendors`, or None for "no restriction".
+        capacity: "spot" or "on-demand", as `capacity_type()` decided.
+
+    Returns:
+        A `Rate`. Its numbers are None only when NEITHER vendor can be priced
+        for this ask, and then `basis` says which of the two reasons applies.
+    """
+    per_pod = max(1, gpu_count)
+    pods = max(1, parallelism)
+    asked = [v for v in (vendors or []) if v in ("aws", "runpod")]
+    if not asked:
+        asked = ["aws", "runpod"]
+
+    options: list[Rate] = []
+    reasons: list[str] = []
+
+    if "aws" in asked:
+        found = aws_cheapest(gpu_name, per_pod, pods)
+        if found is None:
+            counts = aws_counts(gpu_name)
+            reasons.append(
+                f"AWS cannot be priced: "
+                + (f"{AWS_PRICE_REGION} sells the {gpu_name} in machines of "
+                   f"{', '.join(str(n) for n in counts)} cards and none of them "
+                   f"fits {per_pod} card(s) per pod across {pods} pod(s)"
+                   if counts else
+                   f"{AWS_PRICE_REGION} does not offer a {gpu_name} at all"))
+        else:
+            machine, seats = found
+            # Ceiling division: 6 pods at 4 seats a machine needs 2 machines,
+            # and the second one runs half empty. That waste is in the number.
+            count_machines = -(-pods // seats)
+            whole = machine.usd_per_hour * count_machines
+            if capacity == "spot" and machine.spot_low is not None:
+                lo = round(machine.spot_low * count_machines, 4)
+                hi = round(machine.spot_high * count_machines, 4)
+                where = (f"spot, {machine.zones} availability zone(s) in "
+                         f"{AWS_PRICE_REGION} spanning "
+                         f"${machine.spot_low:.4f}-${machine.spot_high:.4f} per "
+                         f"machine-hour")
+            else:
+                lo = hi = round(whole, 4)
+                where = f"on-demand list price in {AWS_PRICE_REGION}"
+            seat_note = (f", {seats} pod(s) per machine" if seats > 1 else "")
+            options.append(Rate(
+                lo, hi,
+                f"AWS {count_machines} x {machine.instance} "
+                f"({machine.gpus} x {gpu_name}{seat_note}) at {where}, read from "
+                f"the catalogue on {AWS_PRICED_ON}. Vendor prices move.",
+                "aws", count_machines))
+
+    if "runpod" in asked:
+        gpu = gpu_by_name(gpu_name)
+        if gpu is None:
+            reasons.append(
+                f"RunPod cannot be priced: we have never rented a {gpu_name}, and "
+                f"RunPod's own price list is not read by this service")
+        elif capacity == "spot":
+            reasons.append(
+                "RunPod cannot be priced: it does not sell spot, so its decider "
+                "refuses before it reads any price")
+        elif per_pod != 1:
+            # WHY THIS REFUSES TO MULTIPLY. Both RunPod prices we hold were paid
+            # for a pod holding ONE card. Charging count x that assumes RunPod
+            # bills linearly per card, which is plausible and unmeasured, and an
+            # unmeasured multiplication is what this module exists to refuse.
+            reasons.append(
+                f"RunPod cannot be priced for {per_pod} cards per pod: both "
+                f"prices we hold were paid for a one-card pod, and we have never "
+                f"rented several at once")
+        else:
+            lo = hi = round(gpu.usd_per_hour * pods, 4)
+            options.append(Rate(
+                lo, hi,
+                f"RunPod {pods} x one {gpu.name} on-demand at "
+                f"${gpu.usd_per_hour:.2f} per card-hour, which is what we paid on "
+                f"{gpu.priced_on}. Vendor prices move.",
+                "runpod", pods))
+
+    if not options:
+        return Rate(None, None, " and ".join(reasons) + "." if reasons else
+                    "no runnable vendor was asked for, so there is nothing to price.")
+
+    best = min(options, key=lambda r: r.usd_per_hour_low)
+    others = [r for r in options if r is not best]
+    extra = ""
+    if others:
+        o = others[0]
+        extra = (f" The other candidate is {o.basis.split(' at ')[0]} at "
+                 f"${o.usd_per_hour_low:.4f}/hour; the cheaper of the two is used "
+                 f"here because we cannot know which one the solve will land on.")
+    return Rate(best.usd_per_hour_low, best.usd_per_hour_high,
+                best.basis + extra, best.vendor, best.machines)
+
+
 def estimate(
     *,
     gpu_name: str,
@@ -482,6 +652,10 @@ def estimate(
     mitigations_on: bool = False,
     resumable: bool = False,
     vocab: int = QWEN3_4B_VOCAB,
+    gpu_count: int = 1,
+    parallelism: int = 1,
+    vendors: list[str] | None = None,
+    asked_capacity: str | None = None,
 ) -> Estimate:
     """Answer everything `/v1/estimate` is asked, or say why we cannot.
 
@@ -496,6 +670,20 @@ def estimate(
         mitigations_on: both memory mitigations in use.
         resumable: the job can restart from a checkpoint.
         vocab: the model's vocabulary size.
+        gpu_count: `gpu.count`, how many cards one pod asks for. It reaches the
+            PRICE and not the runtime: the throughput table was measured on
+            one-card pods, so a two-card pod's step time is not something we can
+            claim, while the machine it needs has a published price.
+        parallelism: how many pods. Same reasoning -- it multiplies the rate.
+        vendors: `placement.vendors`. Which vendor is asked for changes the price
+            by nearly a factor of two on the one card both can supply, so an
+            answer that ignores it is a wrong number rather than a vague one.
+        asked_capacity: the `capacity_type` the caller actually sent, or None
+            when they have not decided. PRICE WHAT WAS ASKED, not what
+            `capacity_type()` recommends: those disagree often -- a 7.3-hour
+            unresumable run is recommended on-demand however it was asked --
+            and quoting the on-demand rate to somebody who typed `spot` is a
+            number about a machine they are not buying.
 
     Returns:
         An `Estimate`. Fields we could not compute are None and `basis` says
@@ -543,27 +731,49 @@ def estimate(
             f"can carry its own results home. {INCIDENTS['sts-12h'].what_happened}"
         )
 
+    kind, why = capacity_type(hours_point, resumable)
+
+    # THE RATE IS LOOKED UP EVEN WHEN THE HOURS ARE UNKNOWN, and that ordering is
+    # the whole fix. Twelve of the fourteen choosable cards have no throughput
+    # measurement, so `duration` is `unknown` for them -- and the cost line used
+    # to go blank alongside it, leaving those twelve saying nothing about money.
+    # An hourly rate needs no measurement of ours: it is a published price.
+    #
     # PRICE THE GPU THE RUNTIME WAS MEASURED ON, not the recommended one. Those
     # differ whenever the recommendation disagrees with what was asked for, and
     # pricing an L40S runtime at A100 rates overstated a job by 57% before this
     # was fixed on 2026-08-31.
-    gpu = gpu_by_name(gpu_name)
-    cost_low = cost_high = None
-    if gpu and duration.low_hours is not None and duration.high_hours is not None:
-        cost_low = round(duration.low_hours * gpu.usd_per_hour, 2)
-        cost_high = round(duration.high_hours * gpu.usd_per_hour, 2)
+    # `kind` is the RECOMMENDATION and `asked_capacity` is the decision. They
+    # disagree whenever the recommendation is not taken, and the price belongs
+    # to the machine that will actually be bought.
+    priced_as = asked_capacity or kind
+    rate = hourly_rate(gpu_name, gpu_count, parallelism, vendors, priced_as)
+    if asked_capacity and asked_capacity != kind:
         warnings.append(
-            f"priced at ${gpu.usd_per_hour:.2f}/hour for a {gpu.name}, which is what "
-            f"we paid on {gpu.priced_on}. Vendor prices move."
-        )
-        if advice.recommended and advice.recommended != gpu.name:
-            warnings.append(
-                f"this is timed and priced on a {gpu.name} because that is what was "
-                f"asked for. We recommend a {advice.recommended} instead, and the "
-                f"cost above does not reflect that."
-            )
+            f"the rate above is for {asked_capacity}, which is what was asked "
+            f"for. We recommend {kind} instead: {why}")
 
-    kind, why = capacity_type(hours_point, resumable)
+    cost_low = cost_high = None
+    if (rate.usd_per_hour_low is not None
+            and duration.low_hours is not None
+            and duration.high_hours is not None):
+        cost_low = round(duration.low_hours * rate.usd_per_hour_low, 2)
+        cost_high = round(duration.high_hours * rate.usd_per_hour_high, 2)
+
+    if rate.usd_per_hour_low is not None:
+        span = ("" if rate.usd_per_hour_high == rate.usd_per_hour_low
+                else f"-${rate.usd_per_hour_high:.4f}")
+        warnings.append(
+            f"${rate.usd_per_hour_low:.4f}{span} per hour. {rate.basis}")
+    else:
+        warnings.append(rate.basis)
+
+    if advice.recommended and advice.recommended != gpu_name:
+        warnings.append(
+            f"this is timed and priced on a {gpu_name} because that is what was "
+            f"asked for. We recommend a {advice.recommended} instead, and neither "
+            f"the runtime nor the cost above reflects that."
+        )
 
     return Estimate(
         steps=step_count,
@@ -573,6 +783,7 @@ def estimate(
         gpu=advice,
         capacity_type=kind,
         capacity_reason=why,
+        rate=rate,
         warnings=warnings,
     )
 

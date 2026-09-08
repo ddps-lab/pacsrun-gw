@@ -302,3 +302,185 @@ def test_login_config_carries_no_secret(app_client):
     text = json.dumps(get(app_client, "/v1/login-config").json())
     for forbidden in ["secret", "password", "private"]:
         assert forbidden not in text.lower()
+
+
+# ------------------------------------- DDPSRUN-REGISTER: the first-time visitor
+
+
+@pytest.fixture
+def register_client(tmp_path, monkeypatch, verifier):
+    """Like `app_client`, plus a notification address and a fake S3/SES pair.
+
+    NOTHING IS SENT. `notify.s3_client` and `notify.ses_client` are replaced by
+    recorders, so these tests assert on the CALLS -- which is the only part this
+    service owns. Whether SES then accepts the message depends on a verified
+    identity, and that is checked against the real account, not here.
+    """
+    from fastapi.testclient import TestClient
+
+    from ddpsrun_server import main, notify
+
+    tokens = tmp_path / "tokens.json"
+    tokens.write_text(json.dumps({"tokens": [
+        {"sha256": auth.hash_token("static-token"), "user": "alice",
+         "namespace": "lab-alice", "team": "lab", "email": "alice@example.com"},
+    ]}))
+
+    class FakeS3:
+        def __init__(self):
+            self.puts = []
+            self.existing = set()
+
+        def put_object(self, Bucket, Key, Body, IfNoneMatch=None):
+            self.puts.append((Bucket, Key, IfNoneMatch))
+            if Key in self.existing:
+                error = Exception("exists")
+                error.response = {"Error": {"Code": "PreconditionFailed"}}
+                raise error
+            self.existing.add(Key)
+
+    class FakeSES:
+        def __init__(self):
+            self.sent = []
+
+        def send_email(self, **kwargs):
+            self.sent.append(kwargs)
+
+    s3, ses = FakeS3(), FakeSES()
+
+    class StubCluster:
+        def list_jobs(self, namespace):
+            return []
+
+    monkeypatch.setenv("DDPSRUN_RESULT_BUCKET", "<RESULT_BUCKET>")
+    monkeypatch.setenv("DDPSRUN_TOKENS_PATH", str(tokens))
+    monkeypatch.setenv("DDPSRUN_COGNITO_POOL_ID", POOL)
+    monkeypatch.setenv("DDPSRUN_COGNITO_CLIENT_ID", CLIENT)
+    monkeypatch.setenv("DDPSRUN_COGNITO_REGION", REGION)
+    monkeypatch.setenv("DDPSRUN_REGISTER_NOTIFY_TO", "operator@example.ac.kr")
+    monkeypatch.setattr(main.Cluster, "connect", staticmethod(StubCluster))
+    monkeypatch.setattr(notify, "s3_client", lambda: s3)
+    monkeypatch.setattr(notify, "ses_client", lambda region="": ses)
+
+    with TestClient(main.app) as test_client:
+        yield test_client, s3, ses
+
+
+def post_register(client, credential=None):
+    headers = {"Authorization": f"Bearer {credential}"} if credential else {}
+    return client.request("POST", "/v1/register-request", headers=headers)
+
+
+def test_an_unregistered_signed_in_person_can_ask_and_the_operator_is_emailed(
+        register_client, keypair):
+    """★ THE STATE THIS EXISTS FOR. Cognito verified them, so the sign-in worked;
+    the token file does not name them, so every other route answers 403. Before
+    2026-09-08 that was a dead end with nothing to press."""
+    client, s3, ses = register_client
+    token = mint(keypair, email="newcomer@example.ac.kr")
+
+    # Every other route refuses them, and with 403 rather than 401.
+    assert get(client, "/v1/jobs", token).status_code == 403
+
+    answer = post_register(client, token)
+    assert answer.status_code == 202          # queued for a human, not granted
+    assert answer.json()["emailed"] is True
+    assert len(ses.sent) == 1
+    assert ses.sent[0]["Destination"]["ToAddresses"] == ["operator@example.ac.kr"]
+    # From defaults to To: in the SES sandbox both ends must be verified, and
+    # equal addresses mean one verification click instead of two.
+    assert ses.sent[0]["FromEmailAddress"] == "operator@example.ac.kr"
+
+
+def test_the_email_carries_the_object_the_operator_has_to_paste(register_client, keypair):
+    """A token file that will not parse takes the service down at the next cold
+    start (`auth.parse_token_document` raises), so the mail carries the entry
+    itself rather than a description of it."""
+    client, _s3, ses = register_client
+    post_register(client, mint(keypair, email="a.newcomer@example.ac.kr"))
+    body = ses.sent[0]["Content"]["Simple"]["Body"]["Text"]["Data"]
+    assert '"email": "a.newcomer@example.ac.kr"' in body
+    # The namespace suggestion has to be a name kubectl will accept: a dot in
+    # the address would otherwise produce `lab-bo.ram`, which it refuses.
+    assert '"namespace": "lab-a-newcomer"' in body
+    assert "kubectl create namespace lab-a-newcomer" in body
+    assert "9f1c-uuid" in body                      # cognito's sub, for the record
+
+
+def test_asking_twice_emails_once(register_client, keypair):
+    """This endpoint is on a public URL that any Google account can reach, so a
+    reload must not mail the operator again. S3 decides, with If-None-Match."""
+    client, s3, ses = register_client
+    token = mint(keypair, email="newcomer@example.ac.kr")
+
+    first = post_register(client, token)
+    second = post_register(client, token)
+
+    assert first.json()["emailed"] is True
+    assert second.status_code == 202 and second.json()["emailed"] is False
+    assert len(ses.sent) == 1
+    assert [p[2] for p in s3.puts] == ["*", "*"]
+    assert s3.puts[0][1] == "ddpsrun-register/newcomer@example.ac.kr"
+
+
+def test_a_person_who_is_already_registered_is_told_so_instead(register_client, keypair):
+    """409, not an email. Pressing the button when you need nothing means the
+    screen is stale, and telling the person that is more use than mailing an
+    operator about somebody who is already in the file."""
+    client, _s3, ses = register_client
+    answer = post_register(client, mint(keypair, email="alice@example.com"))
+    assert answer.status_code == 409
+    assert "already registered" in answer.json()["detail"]
+    assert ses.sent == []
+
+
+def test_a_static_token_is_refused_here(register_client):
+    """Anybody holding one is registered by definition and has no use for this
+    route. Accepting it would only widen what the endpoint accepts."""
+    client, _s3, ses = register_client
+    answer = post_register(client, "static-token")
+    assert answer.status_code == 401
+    assert "id_token" in answer.json()["detail"]
+    assert ses.sent == []
+
+
+def test_an_invalid_token_gets_nowhere(register_client):
+    """The endpoint skips the token FILE, not the token CHECK. A JWT signed by a
+    key the pool's JWKS does not carry still fails, exactly as it does on every
+    other route -- built the same way as
+    `test_a_token_signed_by_a_different_key_is_refused` above."""
+    client, _s3, ses = register_client
+    stranger = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    forged = jwt.encode({"sub": "x", "iss": ISSUER, "aud": CLIENT, "token_use": "id",
+                         "email": "attacker@example.com", "email_verified": True,
+                         "exp": int(time.time()) + 3600},
+                        stranger, algorithm="RS256", headers={"kid": KID})
+    assert post_register(client, forged).status_code == 401
+    assert post_register(client, None).status_code == 401
+    assert ses.sent == []
+
+
+def test_the_screen_is_told_whether_the_button_will_work(register_client):
+    """The screen draws its button from `registration_requests` and not from
+    `enabled`. A deployment with Cognito and no notification address would
+    otherwise offer a button that answers 503, and a first-time visitor cannot
+    tell a broken service from a closed one."""
+    client, _s3, _ses = register_client
+    assert client.get("/v1/login-config").json()["registration_requests"] is True
+
+
+def test_no_notification_address_means_the_flag_is_off():
+    """The other half of the flag, asked of the settings rather than of a second
+    app: two TestClients in one test share this process's environment, so the
+    second one would read the first's DDPSRUN_REGISTER_NOTIFY_TO."""
+    from ddpsrun_server.config import Settings
+    off = Settings.from_env({"DDPSRUN_RESULT_BUCKET": "b", "DDPSRUN_TOKENS_PATH": "t"})
+    assert off.register_notify_to == ""
+    assert bool(off.register_notify_to) is False
+
+
+def test_the_operators_address_is_not_handed_out(register_client):
+    """Anyone with a Google account can read /v1/login-config. The button works
+    without knowing where the mail goes, so the address is not in the answer."""
+    client, _s3, _ses = register_client
+    assert "operator@example.ac.kr" not in client.get("/v1/login-config").text

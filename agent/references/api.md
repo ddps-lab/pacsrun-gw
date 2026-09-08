@@ -30,7 +30,9 @@ Authorization: Bearer <your token>
 | GET | `/v1/login-config` | Where to send someone to sign in. |
 | GET | `/v1/metrics/query` | Ask the in-cluster Prometheus one instant query. |
 | GET | `/v1/namespaces` | Which namespaces this caller may read — the screen's namespace picker. |
+| POST | `/v1/register-request` | Ask an operator to give this signed-in address a namespace. |
 | GET | `/v1/schema` | Return the JSON Schema of a request. |
+| GET | `/v1/scripts` | The scripts this caller has submitted before, newest first. |
 | GET | `/v1/stats` | What this caller's team has spent. |
 | POST | `/v1/validate` | Check a job without running it. |
 
@@ -61,7 +63,7 @@ What `GET /v1/jobs/{id}/artifacts` returns.
 
 ### CostRange
 
-What that runtime costs, at the price we last paid.
+What that runtime costs: the hours above times the rate below.
 
 | field | required | description |
 |---|---|---|
@@ -80,6 +82,7 @@ What /v1/estimate returns.
 | `cost_usd` | yes |  |
 | `gpu` | yes |  |
 | `hours` | yes |  |
+| `rate` | yes |  |
 | `steps` |  |  |
 | `warnings` |  |  |
 
@@ -313,6 +316,40 @@ Where the training run has got to, by its own reckoning.
 | `steady` | yes | False while too few steps have run for the projection to be worth quoting. One run was 32% out at step 1 and within 4% by step 50. |
 | `step` | yes |  |
 | `total_steps` | yes |  |
+
+### RateView
+
+What one hour of this job's machines costs.
+
+| field | required | description |
+|---|---|---|
+| `basis` |  | The machine type, the vendor, the capacity type and the date the price was read. Written even when the numbers are null, because why we cannot price something is the useful half of that answer. |
+| `machines` |  | How many machines the job rents. The rate is for all of them, so 4 pods of one L40S is 4 x $1.8610 = $7.4440/hour. |
+| `usd_per_hour_high` |  |  |
+| `usd_per_hour_low` |  | The whole job's hourly rate at the cheapest end. Equal to the high end for on-demand, which is published per region; lower for spot, which is per availability zone and moves. |
+| `vendor` |  | Which vendor this price belongs to: 'aws', 'runpod', or empty when neither could be priced. It matters: the one card both can supply costs $0.99/hour on RunPod and $1.8610/hour on AWS. |
+
+### ScriptView
+
+One script this caller has submitted before.
+
+| field | required | description |
+|---|---|---|
+| `created_at` |  | When that job was created, newest first in the listing. |
+| `job_id` |  | The most recent job that ran it. |
+| `lines` |  | How many lines it has, so the screen can say so. |
+| `name` |  | That job's display name. |
+| `script` | yes | The text, exactly as it was submitted. |
+| `used` |  | How many of this caller's jobs ran this exact text. The same run.sh submitted five times is one entry with used=5, not five entries -- a list where every retry is its own row is a list nobody scrolls. |
+
+### ScriptsResponse
+
+What `GET /v1/scripts` returns: this caller's own scripts, newest first.
+
+| field | required | description |
+|---|---|---|
+| `note` |  | Why the list is empty, when it is. An empty list with no note reads as 'you have never submitted a script', which is a different fact from 'none of your jobs was submitted in a shape this route recognises'. |
+| `scripts` |  |  |
 
 ### StatsResponse
 

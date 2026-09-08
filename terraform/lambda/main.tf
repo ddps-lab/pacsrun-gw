@@ -176,6 +176,68 @@ resource "aws_iam_role_policy" "registry_read" {
   policy = data.aws_iam_policy_document.registry_read.json
 }
 
+// DDPSRUN-REGISTER. Email one operator, and remember who has already asked.
+//
+// WHY. A first-time Google visitor holds a valid Cognito token and is 403 on every route,
+// because being known to Google is not being registered here. That was a dead end with nothing
+// to press. POST /v1/register-request emails the operator once, with the token-file entry ready
+// to paste.
+//
+// TWO ACTIONS. ses:SendEmail is the send. s3:PutObject is the marker that makes it happen ONCE
+// per address: the route writes an empty object with `If-None-Match: *`, so S3 itself decides
+// which of two simultaneous requests wins and the loser gets 412. Without it, one person
+// reloading the screen mails the operator once per reload -- and this endpoint sits on a public
+// Lambda URL that any Google account can reach, because `allow_admin_create_user_only` blocks
+// the built-in sign-up flow and not a federated first sign-in.
+//
+// ★ THE PUT IS SCOPED TO A PREFIX THAT IS NOT THE RESULTS PREFIX, and that is the whole point of
+// spelling the ARN out. `results_read` above deliberately gives this function no write of any
+// kind on the results bucket, so a compromise of it cannot overwrite a job's output. Granting
+// PutObject on `<bucket>/*` would undo that. `ddpsrun-register/*` cannot reach
+// `${var.result_prefix}*`, and the two paths are disjoint by construction because the results
+// prefix is validated to end in a slash and is not "ddpsrun-register/".
+//
+// ses:SendEmail IS NOT SCOPED BY RECIPIENT, because SES has no condition key for one. What
+// bounds it instead is stronger than an IAM condition while the account is in the SES sandbox:
+// SES refuses to send to any address that is not a verified identity, and this account has
+// (measured 2026-09-08, `aws sesv2 list-email-identities`) exactly zero. So until somebody
+// verifies an address, this action can reach no inbox at all; once the operator's address is
+// verified, that inbox is the only one it can reach. The `FromEmailAddress` is scoped by
+// resource to the one identity this deployment is configured with, which is the part IAM CAN
+// express.
+//
+// COST. SES bills $0.10 per 1,000 messages. Twenty lab members registering once each is 20
+// messages, $0.002. The sandbox ceiling is 200 messages a day and 1 a second; hitting 200 every
+// day for a month is 6,000 messages and $0.60. The markers are PutObject requests at $0.005 per
+// 1,000 ($0.0001 for those twenty) holding zero bytes, and S3 charges storage by the byte.
+//
+// A SEPARATE RESOURCE with a count, so a deployment that sets no notification address gets
+// neither permission rather than an unused one.
+data "aws_iam_policy_document" "register_notify" {
+  statement {
+    sid     = "SendFromTheConfiguredIdentityOnly"
+    effect  = "Allow"
+    actions = ["ses:SendEmail"]
+    resources = [
+      "arn:aws:ses:${var.region}:${data.aws_caller_identity.gw.account_id}:identity/${var.register_notify_from != "" ? var.register_notify_from : var.register_notify_to}"
+    ]
+  }
+
+  statement {
+    sid       = "WriteRegistrationMarkersOnly"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["arn:aws:s3:::${var.result_bucket}/ddpsrun-register/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "register_notify" {
+  count  = var.register_notify_to != "" ? 1 : 0
+  name   = "${var.name}-register-notify"
+  role   = aws_iam_role.gw.id
+  policy = data.aws_iam_policy_document.register_notify.json
+}
+
 // ------------------------------------------------------------- cluster access
 
 // WHY A GROUP AND NOT A USERNAME. Measured 2026-09-01: the access entry reports
@@ -243,6 +305,20 @@ resource "aws_lambda_function" "gw" {
   filename         = "${path.module}/placeholder.zip"
   source_code_hash = filebase64sha256("${path.module}/placeholder.zip")
 
+  // ★★★ READ BEFORE APPLYING THIS RESOURCE. `environment.variables` is a whole
+  // map, so terraform reconciles EVERY key in it -- including any value that was
+  // set by hand outside terraform, which it removes without singling it out.
+  //
+  // MEASURED 2026-09-08: an `apply -target=aws_lambda_function.gw` intended to
+  // change one variable also emptied all four DDPSRUN_COGNITO_* values, because
+  // they had been set by hand and terraform.tfvars still had them blank. Sign-in
+  // broke. The plan DID say so -- four `~ "..." -> ""` lines -- and the mistake
+  // was reading `Plan: 1 to change` as "one thing changes": that counts
+  // RESOURCES, not attributes.
+  //
+  // So before any apply that touches this resource: check that every variable
+  // below has its real value in terraform.tfvars, and read the plan's `~` lines
+  // one by one rather than its summary count.
   environment {
     variables = {
       DDPSRUN_RESULT_BUCKET    = var.result_bucket
@@ -261,6 +337,12 @@ resource "aws_lambda_function" "gw" {
       DDPSRUN_COGNITO_CLIENT_ID    = var.cognito_client_id
       DDPSRUN_COGNITO_REGION       = var.cognito_pool_id == "" ? "" : var.region
       DDPSRUN_COGNITO_LOGIN_DOMAIN = var.cognito_login_domain
+
+      // DDPSRUN-REGISTER. Empty means the server reports
+      // `registration_requests: false`, the screen draws no button, and no IAM
+      // permission exists for it either (the policy has a count).
+      DDPSRUN_REGISTER_NOTIFY_TO   = var.register_notify_to
+      DDPSRUN_REGISTER_NOTIFY_FROM = var.register_notify_from != "" ? var.register_notify_from : var.register_notify_to
     }
   }
 

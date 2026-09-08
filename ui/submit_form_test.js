@@ -99,6 +99,7 @@ function setForm(o) {
   $("f-gpu").value = o.gpu ?? "";
   $("f-env").value = o.env ?? "";
   $("f-mode").value = o.mode ?? "";
+  $("f-gpucount").value = o.gpucount ?? "";
   vendorBoxes.forEach((b) => {
     b.checked = (o.vendors || []).includes(b.dataset.vendor);
   });
@@ -243,6 +244,53 @@ check(
 );
 
 // ---------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
+console.log("\nthe script box, and the four checks that could never run");
+
+setForm({ image: IMAGE, command: "set -euo pipefail\npython train.py\npython eval.py" });
+body = readForm();
+check(
+  body.script === "set -euo pipefail\npython train.py\npython eval.py",
+  "the same text is sent as `script` too. Four of validate's checks read `script` and nothing " +
+    "else -- the adapter-path pair, the exit trap, the two length caps, the TRL patch -- so " +
+    "sending only args meant those four could never run from this screen, whatever was pasted"
+);
+check(
+  JSON.stringify(body.args) ===
+    JSON.stringify(["bash", "-lc", "set -euo pipefail\npython train.py\npython eval.py"]),
+  "and the same text still runs, newlines and all: a whole run.sh in one args element is what " +
+    "`bash -lc` reads, so no file has to be written anywhere first"
+);
+
+setForm({ image: IMAGE });
+body = readForm();
+check(
+  !("script" in body) && !("args" in body),
+  "an empty box sends neither, so a job that means to use the image's own entrypoint still can"
+);
+
+// ---------------------------------------------------------------------------------------------
+console.log("\nGPUs per pod, which six of the fourteen cards need");
+
+setForm({ image: IMAGE, gpu: "A100-80GB", gpucount: 8 });
+body = readForm();
+check(
+  body.gpu && body.gpu.count === 8,
+  "the count reaches the request. validate refuses a card that is sold only as a whole 8-GPU " +
+    "machine when the count is 1 (`gpu_count == 1 && !sold_singly`), so without this box six " +
+    "of the fourteen options could be selected and never submitted"
+);
+
+setForm({ image: IMAGE, gpu: "L4" });
+check(readForm().gpu.count === 1, "and it defaults to 1, which is every job that does not pack");
+
+setForm({ image: IMAGE, gpucount: 4 });
+check(
+  !("gpu" in readForm()),
+  "a count with no GPU chosen sends no gpu block at all -- 'let the server recommend one' has " +
+    "no count to carry, and inventing one would pin a card the user did not pick"
+);
+
 console.log("\nthe compare panel, reading the operator's own sentence");
 
 /* The real shape, from internal/controller/placement.go's `mode == placementModeCompare`
@@ -276,6 +324,48 @@ c = parseCompare(undefined);
 check(c.raw === "" && !c.winner, "and an absent message does not throw");
 
 // ---------------------------------------------------------------------------------------------
+// DDPSRUN-REGISTER. The address on the first-time visitor's screen.
+//
+// WHY THIS IS TESTED AT ALL, given it only fills a label: getting it wrong produces a screen
+// that says "Signed in as an address we cannot read" to somebody whose sign-in just worked,
+// which is precisely the "is this broken or am I not allowed in" confusion the screen exists to
+// end. And the decoding is not trivial -- an id_token's payload is base64URL, not base64, so
+// a bare atob throws on any token whose payload happens to contain - or _.
+// ---------------------------------------------------------------------------------------------
+const emailInToken = eval(`(${extract("emailInToken")})`);
+
+// A token shaped exactly as Cognito's is: three dot-separated base64url segments. The payload
+// is built here rather than pasted so the test carries no real token.
+function fakeToken(payload) {
+  const b64url = (obj) => Buffer.from(JSON.stringify(obj)).toString("base64")
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${b64url({ alg: "RS256" })}.${b64url(payload)}.not-a-real-signature`;
+}
+
+check(emailInToken(fakeToken({ email: "newcomer@example.ac.kr" })) === "newcomer@example.ac.kr",
+      "the newcomer screen reads the address out of the browser's own id_token");
+
+check(emailInToken(fakeToken({ sub: "x" })) === "",
+      "a token with no email claim yields an empty string rather than undefined, so the label " +
+      "falls back to its own wording instead of printing 'undefined'");
+
+check(emailInToken("ddpsrun-static-token-not-a-jwt") === "",
+      "a static token is not a JWT and must not throw here -- it has no email to show and the " +
+      "person holding one is registered anyway");
+
+check(emailInToken("") === "" && emailInToken(null) === "" && emailInToken(undefined) === "",
+      "and neither does an absent credential");
+
+check(emailInToken("a.!!!not-base64!!!.c") === "",
+      "an unparseable payload is caught, because this runs before any screen is drawn and a " +
+      "throw here would leave the page on 'Checking sign-in...' forever");
+
+// The non-ASCII case is why the decode goes through decodeURIComponent: atob yields BYTES, and
+// reading them as characters mangles any address that is not plain ASCII.
+check(emailInToken(fakeToken({ email: "\uc5f0\uad6c\uc6d0@example.ac.kr" })) === "\uc5f0\uad6c\uc6d0@example.ac.kr",
+      "a non-ASCII address survives the base64 decode");
+
+// ---------------------------------------------------------------------------------------------
 console.log();
 if (failures.length) {
   console.log(`FAILED (${failures.length}):`);
@@ -284,5 +374,6 @@ if (failures.length) {
 }
 console.log(
   "the New job screen sends a body the server accepts, says which vendors may sell the " +
-    "machine, and throws nothing away in silence"
+    "machine, throws nothing away in silence, and a first-time visitor is told which address " +
+    "they signed in as"
 );

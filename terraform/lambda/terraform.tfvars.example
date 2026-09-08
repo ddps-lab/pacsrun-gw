@@ -18,6 +18,50 @@ secret_bindings = {
   "GITHUB_PAT" = { name = "<SECRET_NAME>", key = "token" }
 }
 
-// Empty until the screen exists. Then the CloudFront domain, because the page and
-// the API are different origins and the browser blocks the call without this.
-cors_allow_origins = []
+// ★ EVERY VARIABLE BELOW IS LOAD-BEARING, AND LEAVING ONE OUT OF terraform.tfvars
+// DOES NOT LEAVE IT ALONE -- it sets the deployed value to the default, which is
+// empty. `environment.variables` on a Lambda is one whole map and terraform
+// reconciles all of it, so an apply aimed at anything else takes every absent
+// variable down with it. This happened twice on 2026-09-08:
+//
+//   the four DDPSRUN_COGNITO_* values had been set by hand and were absent here.
+//     An `apply -target=aws_lambda_function.gw` emptied all four and every Google
+//     id_token started coming back 401. The plan said so in four `~ ... -> ""`
+//     lines; the summary said `Plan: 1 to change`, which counts RESOURCES.
+//   cors_allow_origins was `[]` here while the Function URL really carried the
+//     CloudFront origin. The next plan wanted to DELETE the whole cors block,
+//     which fails the browser's preflight on every request the screen makes.
+//     Caught in a plan before it was applied.
+//
+// So: fill in everything, and read a plan's `~` lines rather than its count.
+
+// The CloudFront domain serving ui/. The page and the API are different origins,
+// and the browser blocks every call without this. Empty ONLY before the screen
+// exists -- once it does, an empty value here deletes the deployed cors block.
+cors_allow_origins = ["https://<DISTRIBUTION>.cloudfront.net"]
+
+// DDPSRUN-COGNITO-WIRING. All four together or none: a pool id with no client id
+// refuses every token. `cognito_region` is not a variable -- main.tf derives it
+// from `region` when the pool id is non-empty.
+cognito_pool_id      = "<REGION>_<POOLID>"
+cognito_client_id    = "<CLIENT_ID>"
+cognito_login_domain = "https://<PREFIX>.auth.<REGION>.amazoncognito.com"
+
+// DDPSRUN-REGISTER. Where "somebody signed in with Google and has no namespace"
+// mail goes. Empty turns the feature off cleanly: no button on the screen, no
+// IAM permission created, and the screen tells the person to find an operator
+// another way.
+//
+// ONE MANUAL STEP AFTER APPLY, which terraform cannot do. The SES account is in
+// the sandbox (measured 2026-09-08: 200 messages a day, 1 a second, zero
+// verified identities), and there SES refuses both an unverified sender and an
+// unverified recipient. Verification is the inbox owner clicking a link:
+//
+//   aws sesv2 create-email-identity --region <REGION> --email-identity <ADDRESS>
+//   aws sesv2 get-email-identity --region <REGION> --email-identity <ADDRESS> \
+//     --query VerifiedForSendingStatus
+//
+// Leave register_notify_from empty to send from the same address; in the sandbox
+// both ends need verifying, so one address means one click.
+register_notify_to   = "<OPERATOR_EMAIL>"
+register_notify_from = ""
