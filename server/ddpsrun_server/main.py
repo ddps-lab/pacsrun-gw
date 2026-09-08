@@ -51,6 +51,7 @@ from . import artifacts
 from . import naming
 from . import registry      # DDPSRUN-IMAGES: the container images this lab has built
 from . import cognito
+from . import notify
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
 from .k8s import Cluster, ClusterError, NotFound
@@ -237,6 +238,60 @@ def require_principal(
 PrincipalDep = Annotated[Principal, Depends(require_principal)]
 
 
+
+def require_signed_in(request: Request,
+                      authorization: str | None = Header(default=None)) -> cognito.CognitoIdentity:
+    """Identify a caller Cognito vouched for, WITHOUT requiring registration.
+
+    DDPSRUN-REGISTER. This is the one dependency in the file that stops at "who
+    is this" and never asks "and what may they touch". Every other route uses
+    `require_principal`, which answers 403 for an address the token file does
+    not name -- and that 403 is precisely the state this endpoint exists to
+    serve, so it cannot be behind it.
+
+    WHAT IT STILL DEMANDS, so that the endpoint is not simply open. The
+    credential has to be a JWT that passes every check in `cognito.Verifier`:
+    signature against the pool's live JWKS, issuer, audience, expiry, and
+    `email_verified`. A static token is refused outright -- somebody holding one
+    is already registered and has no use for this route.
+
+    Args:
+        request: used to reach `app.state.cognito`.
+        authorization: the `Authorization` header.
+
+    Returns:
+        The `CognitoIdentity`: the verified address and Cognito's own `sub`.
+
+    Raises:
+        HTTPException: 401 when there is no usable Cognito credential, 503 when
+            this deployment has no Cognito configured at all -- which is not the
+            caller's fault and must not read as one.
+    """
+    verifier = getattr(request.app.state, "cognito", None)
+    if verifier is None:
+        raise HTTPException(
+            status_code=503,
+            detail="this deployment has no Cognito configured, so there is no "
+                   "signed-in identity to register. Ask an operator for a token.",
+        )
+    try:
+        credential = bearer_token(authorization)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    if not cognito.looks_like_a_jwt(credential):
+        raise HTTPException(
+            status_code=401,
+            detail="this endpoint needs the id_token from a Google sign-in. A "
+                   "static token means you are already registered.",
+        )
+    try:
+        return verifier.claims(credential)
+    except cognito.TokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+SignedInDep = Annotated[cognito.CognitoIdentity, Depends(require_signed_in)]
+
 def namespace_for(principal: Principal, requested: str) -> str:
     """Which namespace this request reads.
 
@@ -348,15 +403,98 @@ def login_config(request: Request) -> dict[str, object]:
     settings: Settings = request.app.state.settings
     verifier = getattr(request.app.state, "cognito", None)
     if verifier is None:
-        return {"enabled": False}
+        return {"enabled": False, "registration_requests": False}
     return {
         "enabled": True,
         "client_id": settings.cognito_client_id,
         "issuer": verifier.issuer,
         "login_domain": settings.cognito_login_domain,
         "scopes": ["openid", "email"],
+        # DDPSRUN-REGISTER. Whether POST /v1/register-request can actually reach
+        # an operator. The screen draws its button from this and NOT from
+        # `enabled`: a deployment with Cognito but no notification address would
+        # otherwise offer a button that answers 503, and a first-time visitor
+        # cannot tell a broken service from a closed one.
+        "registration_requests": bool(settings.register_notify_to),
+        # The operator's address is deliberately NOT here. Anyone with a Google
+        # account can read this route's answer, and handing them an inbox to
+        # aim at is not something this endpoint needs to do for the button to
+        # work.
     }
 
+
+
+@app.post("/v1/register-request", status_code=202)
+def register_request(request: Request, identity: SignedInDep) -> dict[str, object]:
+    """Ask an operator to give this signed-in address a namespace.
+
+    DDPSRUN-REGISTER. The state this serves: Cognito verified somebody, so their
+    sign-in worked, and `auth.principal_for_email` still refuses them because
+    nobody has registered the address. Until 2026-09-08 that was a dead end --
+    the screen showed the 403 text and there was nothing to press.
+
+    WHY 202 AND NOT 200. Nothing has been granted. An email has been queued to a
+    human who may ignore it, and a 200 on a request whose whole content is "please
+    decide" reads as a decision.
+
+    WHY REPEATING IT SENDS NOTHING. `notify.already_asked` writes a marker with
+    `If-None-Match: *`, so the second request from the same address answers 202
+    with `emailed: false`. Reloading the screen must not mail the operator again,
+    and this endpoint is on a public URL that any Google account can reach.
+
+    Returns:
+        `emailed` true when this call sent the mail, false when an earlier one
+        already did. Both are successes from the caller's side: the operator has
+        been told either way, which is what they asked for.
+
+    Raises:
+        HTTPException: 409 when the caller is ALREADY registered -- pressing this
+        then means the screen is out of date, and telling them so is more useful
+        than emailing an operator about somebody who needs nothing. 503 when this
+        deployment has no notification address. 502 when S3 or SES refused.
+    """
+    settings: Settings = request.app.state.settings
+    if not settings.register_notify_to:
+        raise HTTPException(
+            status_code=503,
+            detail="this deployment cannot email an operator: no registration "
+                   "notification address is configured. Ask an operator directly.",
+        )
+    try:
+        request.app.state.tokens.principal_for_email(identity.email)
+    except UnknownUser:
+        pass                      # the expected case: this is why they are here
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{identity.email} is already registered. Reload the page -- "
+                   f"your sign-in works and you need nothing from an operator.",
+        )
+
+    try:
+        seen_before = notify.already_asked(settings.result_bucket, identity.email)
+        if not seen_before:
+            notify.send_registration_request(
+                email=identity.email,
+                subject_id=identity.subject,
+                notify_to=settings.register_notify_to,
+                notify_from=settings.register_notify_from,
+            )
+    except notify.NotifyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    logger.info("registration request for %s (emailed=%s)",
+                identity.email, not seen_before)
+    return {
+        "email": identity.email,
+        "emailed": not seen_before,
+        "message": (
+            "An operator has been emailed and will create a namespace for you."
+            if not seen_before else
+            "An operator was already emailed about this address. Nothing further "
+            "was sent; the decision is theirs."
+        ),
+    }
 
 @app.get("/v1/schema")
 def schema() -> dict[str, Any]:

@@ -1474,7 +1474,76 @@ function setLoginStage(stage) {
   if (stage !== "ready") {
     $("cognito-box").hidden = true;
     $("token-box").hidden = true;
+    $("newcomer").hidden = true;
   }
+}
+
+/* DDPSRUN-REGISTER. The address inside an id_token, FOR DISPLAY ONLY.
+
+   This decodes the token's payload without checking its signature, and that is
+   safe for exactly one reason: the token is the browser's own, so the only
+   person who could have forged it is the person reading the screen. Nothing is
+   decided here. Every route re-verifies the token against the pool's live JWKS
+   (`cognito.Verifier`), so a tampered payload changes what this label says and
+   nothing else.
+
+   Returns the address, or "" for a static token or anything unparseable — the
+   newcomer screen then simply has no address to show, which is a worse screen
+   and not a wrong one. */
+function emailInToken(token) {
+  const parts = String(token || "").split(".");
+  if (parts.length !== 3) return "";
+  try {
+    // base64url -> base64, then decodeURIComponent so a non-ASCII address
+    // survives: atob yields bytes, not characters.
+    const json = decodeURIComponent(
+      atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))
+        .split("").map((c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0"))
+        .join(""));
+    return JSON.parse(json).email || "";
+  } catch { return ""; }
+}
+
+/* Whether the credential we hold can actually reach anything, and which screen
+   that means.
+
+   WHY IT PROBES AT ALL. A good Cognito token and no namespace is a real state
+   (403 on every route), and before this the app opened into it and filled with
+   errors. GET /v1/namespaces is the probe because it is the cheapest
+   authenticated route there is: it answers out of the token file and needs no
+   Kubernetes permission, so an unregistered caller costs the cluster nothing.
+
+   Returns "in", "newcomer", or "out". */
+async function probeAccess() {
+  if (!store.server || !store.token) return "out";
+  try {
+    await call("/v1/namespaces");
+    return "in";
+  } catch (err) {
+    // `call` throws the server's `detail` string, so the status is gone by
+    // here. The sentence is the server's own and both halves of it are stable
+    // (`auth.principal_for_email`), which is why this matches on the text
+    // rather than re-issuing the request to read a code.
+    return /not registered with this service/.test(err.message)
+      ? "newcomer" : "out";
+  }
+}
+
+/* Draw the newcomer screen. Called only when probeAccess says so. */
+function showNewcomer() {
+  poll.stop();
+  $("login").hidden = false;
+  $("bar").hidden = true;
+  document.querySelector("main").hidden = true;
+  $("cognito-box").hidden = true;
+  $("token-box").hidden = true;
+  $("login-err").innerHTML = "";
+  $("nc-email").textContent = emailInToken(store.token) || "an address we cannot read";
+  const canAsk = Boolean(loginConfig.registration_requests);
+  $("nc-ask").hidden = !canAsk;
+  $("nc-ask-note").hidden = !canAsk;
+  $("nc-no-ask").hidden = canAsk;
+  $("newcomer").hidden = false;
 }
 
 async function startCognitoLogin() {
@@ -1629,6 +1698,24 @@ $("cognito-login").onclick = () => startCognitoLogin().catch((err) => {
 });
 
 $("logout").onclick = signOut;
+$("nc-out").onclick = signOut;
+
+$("nc-ask").onclick = async () => {
+  $("nc-ask").disabled = true;
+  $("nc-result").innerHTML = "";
+  try {
+    const answer = await call("/v1/register-request", { method: "POST" });
+    // The server distinguishes "sent now" from "an earlier press already sent
+    // it", and both are successes. Saying which one prevents a second press
+    // reading as a failure.
+    $("nc-result").innerHTML = note("info", answer.message,
+      "You can close this page. Sign in again once an operator tells you they "
+      + "have added you.");
+  } catch (err) {
+    $("nc-result").innerHTML = note("err", err.message);
+    $("nc-ask").disabled = false;
+  }
+};
 
 window.addEventListener("hashchange", route);
 
@@ -1722,5 +1809,17 @@ window.addEventListener("hashchange", route);
   $("server-row").hidden = Boolean(apiBase);
   $("in-server").value = apiBase;
 
-  showApp(arrived || Boolean(store.server && store.token));
+  // WHY THIS PROBES INSTEAD OF JUST OPENING. Holding a credential is not the
+  // same as being able to use it. A first-time Google visitor holds a perfectly
+  // good token and is 403 everywhere, and this line used to open the app for
+  // them: every panel then showed the same 403 sentence, which reads as a
+  // broken service rather than an account nobody has registered yet.
+  if (arrived || (store.server && store.token)) {
+    const access = await probeAccess();
+    if (access === "in") showApp(true);
+    else if (access === "newcomer") showNewcomer();
+    else signOut();
+  } else {
+    showApp(false);
+  }
 })();

@@ -30,6 +30,7 @@ Authorization: Bearer <your token>
 | GET | `/v1/login-config` | Where to send someone to sign in. |
 | GET | `/v1/metrics/query` | Ask the in-cluster Prometheus one instant query. |
 | GET | `/v1/namespaces` | Which namespaces this caller may read — the screen's namespace picker. |
+| POST | `/v1/register-request` | Ask an operator to give this signed-in address a namespace. |
 | GET | `/v1/schema` | Return the JSON Schema of a request. |
 | GET | `/v1/scripts` | The scripts this caller has submitted before, newest first. |
 | GET | `/v1/stats` | What this caller's team has spent. |
