@@ -68,6 +68,50 @@ RESERVED_ENV_PREFIX = "PACSRUN_"
 EXPECTED_HOURS_ANNOTATION = "ddpsrun.io/expected-hours"
 
 
+class GroupRequest(BaseModel):
+    """DDPSRUN-GROUP. Do this job's pods talk to each other.
+
+    ★ WHY THIS FIELD HAD TO EXIST BEFORE ANYTHING COULD JUDGE A DISTRIBUTED JOB.
+    The CRD has had `spec.group` since 2026-09-05 and this API did not, so the
+    only way to submit distributed training was `kubectl apply` -- which means
+    no estimate, no validate, no cost, and none of the checks this server exists
+    to run. `parallelism` alone cannot say it: its own description promises
+    pods that NEVER talk, and the two shapes have opposite scheduling rules
+    (independent pods start as machines arrive; a group starts only when every
+    member has one).
+
+    HOW size RELATES TO parallelism, in PACSrun's own words: the number of
+    groups is DERIVED, `parallelism / size`, so `parallelism` keeps meaning
+    "how many pods" and nobody multiplies two fields to know what they asked
+    for. parallelism 6 with size 2 is three groups of two.
+
+    NOTHING HERE IS CALLED num_nodes, and that is PACSrun's decision, not a
+    naming preference: its unit of allocation is a POD and a pod is not a node
+    -- on 2026-09-05 one g4dn.12xlarge held four pods with four distinct GPU
+    uuids. How many pods sit on one machine is the solver's answer, derived from
+    price.
+    """
+
+    size: int = Field(
+        default=1,
+        ge=1,
+        le=256,
+        description="How many pods form one group. `parallelism` divided by this "
+        "is the number of groups, so parallelism 6 with size 2 is three groups "
+        "of two.",
+    )
+    mode: str = Field(
+        default="independent",
+        pattern="^(independent|distributed)$",
+        description="`independent` -- the pods never talk, identical to sending "
+        "no group at all. `distributed` -- they form one process group: every "
+        "pod is told its peers' addresses through PACSRUN_MASTER_ADDR / "
+        "PACSRUN_MASTER_PORT and PACSRUN_GROUP_RANK, and NONE starts its "
+        "workload until the whole group has a machine. Your script has to read "
+        "those and hand them to its launcher; nothing translates them for you.",
+    )
+
+
 class GpuRequest(BaseModel):
     """Which GPU the job wants, in the two styles PACSrun's CRD accepts.
 
@@ -196,6 +240,13 @@ class SubmitRequest(BaseModel):
         "to each other, so this is for a batch you can split, not for distributed training. "
         "The placement decides the machines: several pods may land on one multi-GPU box or on "
         "one box each. Combine with gpu.count, which is GPUs PER POD.",
+    )
+    group: GroupRequest | None = Field(
+        default=None,
+        description="Omit for independent pods, which is what parallelism alone "
+        "means. Send it with mode 'distributed' for one process group per "
+        "`size` pods -- data-parallel training, tensor parallel across pods, "
+        "anything that needs a rendezvous. DDPSRUN-GROUP.",
     )
     expected_hours: float | None = Field(
         default=None,
@@ -896,6 +947,13 @@ def to_pacsjob(
         "resultPath": (inherited_result_path
                        or result_path_for(settings, principal, job_id, request.name)),
     }
+    if request.group is not None and (request.group.size > 1
+                                      or request.group.mode != "independent"):
+        # DDPSRUN-GROUP. Omitted when it says nothing -- size 1 and
+        # `independent` is exactly what no group at all means, and writing it
+        # anyway would put a field on every PacsJob for no reason and make a
+        # `kubectl get -o yaml` read as though the job were distributed.
+        spec["group"] = {"size": request.group.size, "mode": request.group.mode}
     if request.command:
         spec["command"] = request.command
     if request.args:

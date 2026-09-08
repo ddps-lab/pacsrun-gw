@@ -146,6 +146,24 @@ def job_arguments() -> argparse.ArgumentParser:
         "talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: "
         "--parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes.",
     )
+    # DDPSRUN-GROUP. Distributed training. Two flags and not one, because the
+    # size alone says nothing: `--group-size 2` with the default independent
+    # mode is identical to no group at all, and PACSrun treats the two shapes
+    # with opposite scheduling rules.
+    shared.add_argument(
+        "--group-size", type=int, metavar="N",
+        help="how many pods form ONE distributed group. --parallelism divided by "
+        "this is the number of groups, so --parallelism 6 --group-size 2 is three "
+        "groups of two. Needs --group-mode distributed to mean anything.",
+    )
+    shared.add_argument(
+        "--group-mode", choices=("independent", "distributed"),
+        help="independent (default) is pods that never talk. distributed makes "
+        "each group one process group: every pod is given PACSRUN_MASTER_ADDR, "
+        "PACSRUN_MASTER_PORT, PACSRUN_GROUP_RANK and PACSRUN_GROUP_SIZE, and NONE "
+        "starts until the whole group has a machine. Your script passes those to "
+        "its launcher -- nothing translates them for you.",
+    )
     shared.add_argument("--cpus", help='CPU request, e.g. "4"')
     shared.add_argument("--memory", help='memory request, e.g. "16Gi"')
     shared.add_argument(
@@ -451,6 +469,17 @@ def build_submit_body(args: argparse.Namespace) -> dict[str, Any]:
         body["expected_hours"] = args.expected_hours
     if getattr(args, "parallelism", None) is not None:
         body["parallelism"] = args.parallelism
+    if (getattr(args, "group_size", None) is not None
+            or getattr(args, "group_mode", None) is not None):
+        # Either flag alone is meaningful: a size with the default mode is
+        # `independent`, which the server drops, and a mode with no size is a
+        # group of one, which it also drops. Sending what was asked for and
+        # letting the server decide what is worth writing keeps one rule in one
+        # place.
+        body["group"] = {
+            "size": args.group_size if args.group_size is not None else 1,
+            "mode": args.group_mode or "independent",
+        }
     if getattr(args, "capacity_type", None):
         body["capacity_type"] = args.capacity_type
     # DDPSRUN-VENDOR-CHOICE. `--vendor` REPLACES the file's list rather than

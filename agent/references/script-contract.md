@@ -25,7 +25,12 @@ wc -l src/.../pairs/train_exp2_bank.jsonl
 
 ## 2. 한 변수로 묶어야 하는 짝을 찾는다
 
-학습의 출력 경로와 추론의 입력 경로는 **같아야 하는데 서로 다른 명령에 적힌다.**
+**어떤 명령이 경로를 쓰고 뒤의 명령이 그것을 읽으면, 그 둘을 이어 주는 것은 shell 에 없다.**
+어긋나도 앞의 명령은 성공하고, 뒤의 명령이 돌 때가 되어서야 드러난다. 짝은 여러 모양이다 —
+checkpoint 디렉터리와 `--resume-from`, tokenize 한 데이터셋과 `--data-dir`, 내보낸 ONNX 파일과
+그것을 읽는 server, 그리고 아래의 LoRA adapter. **한 변수를 만들어 양쪽에 쓴다.**
+
+아래는 우리 job 의 예시다(TRL preference tuning + 추론).
 
 ```bash
 # 이렇게 하지 않는다
@@ -38,8 +43,10 @@ python train_dpo_m3.py --out "$ADAPTER"
 python gen_openrca_tasks_fast.py --lora "/root/ab/$ADAPTER"
 ```
 
-**어긋나면 학습이 먼저 끝나고 그 다음에 추론이 실패한다.** AIOps 는 학습만 31 시간이다.
-`ddpsrun validate --script run.sh` 가 이것을 `adapter-path-mismatch` 로 잡는다.
+**어긋나면 앞이 먼저 끝나고 그 다음에 뒤가 실패한다.** AIOps 는 학습만 31 시간이다.
+`ddpsrun validate --script run.sh` 가 `--out`/`--lora` 라는 **그 두 flag 이름일 때만**
+`adapter-path-mismatch` 로 잡는다(recipe 층, DDPSRUN-CHECK-TIERS). 다른 이름을 쓰는 짝은
+검사가 못 본다 — 그래서 이 규칙이 검사보다 먼저 있다.
 
 ---
 
@@ -166,7 +173,7 @@ trap upload_everything EXIT
 
 ---
 
-## 7. 학습이 끝나면 추론을 기다리지 말고 어댑터를 먼저 올린다
+## 7. 앞 단계의 산출물은 뒤 단계를 기다리지 말고 먼저 내보낸다
 
 ```bash
 python train_dpo_m3.py ... | tee "train_${JOB}.log"
@@ -175,8 +182,10 @@ echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
 python gen_openrca_tasks_fast.py ...                                 # 그 다음 추론
 ```
 
-학습이 25 시간이고 추론이 1 시간이면, **추론에서 죽었을 때 25 시간을 잃으면 안 된다.**
-announce 는 driver 에게 "이건 지금 가져가라" 는 뜻이고, 추론이 도는 동안 회수가 병행된다.
+**긴 단계 뒤에 짧은 단계가 오는 job 은 모두 이 모양이다** — 학습 뒤 추론, pretraining 뒤
+평가, 학습 뒤 export. 25 시간 + 1 시간이면 **뒤의 1 시간에서 죽었을 때 앞의 25 시간을 잃으면
+안 된다.** announce 는 driver 에게 "이건 지금 가져가라" 는 뜻이고, 뒤 단계가 도는 동안 회수가
+병행된다.
 
 ---
 
@@ -470,3 +479,65 @@ nvidia-smi --query-gpu=index,name,memory.total --format=csv
 : "${NCCL_P2P_DISABLE:=0}"; export NCCL_P2P_DISABLE
 echo "NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE"
 ```
+
+---
+
+## 16. 분산학습 — 좌표는 우리가 주고, launcher 에 넘기는 것은 script 가 한다
+
+**pod 이 서로 이야기해야 하면 `--group-size N --group-mode distributed` 로 낸다.** 그것이
+없으면 pod N 개는 **서로 모르는 독립 실행 N 개**다. 끝나기는 하고, 기계 N 대 값을 내고,
+관계없는 결과 N 개를 남긴다.
+
+### 우리가 주는 것, 이름 그대로
+
+| 변수 | 무엇 | 누가 채우나 |
+|---|---|---|
+| `PACSRUN_GROUP_SIZE` | 이 group 이 pod 몇 개인가 | operator (`PACSRUN-GROUP-COORDS`) |
+| `PACSRUN_GROUP_RANK` | 이 pod 이 자기 group 의 몇 번째인가 | operator |
+| `PACSRUN_GROUP_INDEX` | 이 group 이 job 의 몇 번째 group 인가 | operator |
+| `PACSRUN_MASTER_ADDR` | rank 0 machine 의 **사설** 주소 | driver (`PACSRUN-GROUP-HOSTNET`) |
+| `PACSRUN_MASTER_PORT` | `29500 + group_index` | driver |
+| `PACSRUN_POD_INDEX` | job 의 pod 전체에서 몇 번째인가. group 과 별개로 남는다 | operator |
+
+**이름이 어느 framework 것도 아닌 것은 의도다.** torchrun 은 `--node_rank`/`--master_addr` 를
+원하고 다른 launcher 는 다른 것을 원한다. **그 번역이 script 가 쓸 줄이다.**
+
+```bash
+torchrun \
+  --nnodes "$PACSRUN_GROUP_SIZE" \
+  --node_rank "$PACSRUN_GROUP_RANK" \
+  --master_addr "$PACSRUN_MASTER_ADDR" \
+  --master_port "$PACSRUN_MASTER_PORT" \
+  --nproc_per_node 4 \
+  train.py
+```
+
+### ★ 좌표를 안 읽으면 아무 소리 없이 멈춘다
+
+`driver/common/remotek8s.py` 에 그 실측이 적혀 있다: **"NEITHER RANK PRINTED ANYTHING. Both
+sat in `dist.init_process_group` with no error and no output."** 모든 rank 가 아무도 열지 않은
+rendezvous 를 기다리고, **카드는 busy 로 읽히고**(NCCL 의 대기는 도는 kernel 이다),
+3,600초 뒤 stall detector 가 exit 21 로 끝낼 때까지 과금된다.
+
+`ddpsrun validate --group-size N --group-mode distributed --script run.sh` 가 넷을 본다:
+좌표를 하나도 안 읽으면 **error**(`group-coords-unread`), launcher 가 없으면 warning,
+`--nproc_per_node` 가 `--gpu-count` 와 다르면 error, `--nnodes` 가 group size 와 다르면 error.
+
+### 값을 두 곳에 적지 않는다
+
+`--nnodes 2` 라고 박아 두면 `--group-size 4` 로 바꾼 날 조용히 어긋난다. **`$PACSRUN_GROUP_SIZE`
+를 쓴다.** `--nproc_per_node` 는 pod 당 카드 수이므로 `--gpu-count` 와 같아야 하고, 그 둘은
+validate 가 대조한다.
+
+### 성능 기대치는 낮춰 잡는다
+
+**pod 경계 하나가 카드 한 장보다 느리다.** 같은 machine 안에서도 0.56배였다
+(`facts/pod-boundary-costs-ddp.md`). 앗아가는 것은 P2P 가 아니라 **shared memory** 하나다.
+기계 두 대는 그보다 3.07배 더 느리다. 그리고 region 을 넘으면 왕복 60~70 ms 에 GB 당 $0.02 가
+붙는다 — 한 step 이 866,890,752 바이트를 옮긴 실측이 있다(2026-09-05).
+**즉 분산은 "더 빠르게" 가 아니라 "한 장에 안 들어가서" 하는 것이다.**
+
+### `/dev/shm` 과 NCCL P2P 는 뜬 뒤에야 안다
+
+15번의 표가 그것이다. 특히 **RunPod 일부 host 에서 첫 all-reduce 가 정지한다** —
+`NCCL_P2P_DISABLE=1` 로 되돌릴 수 있게 그 값을 한 곳에서 정해 둔다.

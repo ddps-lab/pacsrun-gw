@@ -45,6 +45,37 @@ INFO = "info"
 
 # The environment variable that stops CUDA's allocator from fragmenting the
 # free memory into pieces too small to serve a large request.
+# ---------------------------------------------------------------------------
+# ★ TWO TIERS, AND WHICH TIER A CHECK IS IN IS A DECISION, NOT AN ACCIDENT.
+#
+# DDPSRUN-CHECK-TIERS. Decided 2026-09-09 after the user read the finding list
+# and said it was biased: "학습을 dpo와 같은 걸로 진행하지 않아, 추론이 학습이
+# 쓴 경로와 같은 지 이런 거는 너무 그 실험에 한정된거야."
+#
+#   PLATFORM   True for every job this server can submit, because it is a fact
+#              about PACSrun, the vendors, or the credentials -- not about what
+#              the job computes. Can a machine of that shape be bought. Does a
+#              secret name exist. Does anything leave the container. Does a
+#              group have a rendezvous. These run always.
+#
+#   RECIPE     True only for one way of training, and stated in one lab's own
+#              flag names. `--max-prompt-len` inside `--max-len`, an adapter
+#              directory written by `--out` and read by `--lora`, the logits
+#              buffer a DPO trainer builds. These run ONLY when the script
+#              shows that recipe, and the finding says which recipe it
+#              recognised -- so a pretraining job, a PPO job, an inference
+#              sweep or a distributed run never hears about them.
+#
+# WHY THE RECIPE TIER IS KEPT AT ALL RATHER THAN DELETED. Each of those caught a
+# real loss: an adapter path mismatch would have surfaced after 31 hours of GPU
+# time. The defect was never that the checks are wrong; it is that they were
+# presented as general. A gated check costs a reader nothing and still catches
+# the run it was written for.
+#
+# WHAT NEITHER TIER CAN DO, said here so nobody looks for it: judge whether the
+# training is CORRECT. Nothing here reads a loss curve or a hyperparameter.
+# ---------------------------------------------------------------------------
+
 ALLOC_CONF = "PYTORCH_CUDA_ALLOC_CONF"
 ALLOC_CONF_VALUE = "expandable_segments:True"
 
@@ -207,45 +238,53 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
     Returns:
         Findings.
     """
-    if cap is None or vram_gb is None:
-        return []
-
-    peak = estimator.peak_logits_gib(cap)
     findings: list[Finding] = []
 
-    if not alloc_on and deferred is not None:
-        # DDPSRUN-DEFERRED-SCRIPT. Nothing to warn about and nothing to say
-        # here: the caller gets this as a `not_checked` line instead, because
-        # "we could not look" is a different sentence from "it is missing".
-        pass
-    elif not alloc_on:
+    # A CPU-only job has no CUDA allocator to configure, so nothing below
+    # applies to it. `vram_gb is None` IS "no GPU was asked for".
+    if vram_gb is None:
+        return findings
+
+    # ── PLATFORM. The allocator setting is not about DPO and not about any
+    # recipe: it stops CUDA's caching allocator fragmenting free memory into
+    # pieces too small to serve one large contiguous request. ANY job that
+    # makes a big allocation near the card's ceiling is exposed -- a long
+    # sequence, a big batch, a fused kernel's workspace, an inference server's
+    # KV cache. So it is reported whether or not we can compute a peak, and its
+    # message no longer quotes a DPO figure it cannot justify for other jobs.
+    if not alloc_on and deferred is None:
         findings.append(
             Finding(
                 WARNING, "alloc-conf-missing",
-                f"{ALLOC_CONF} is not set. The logits buffer at cap {cap:,} is "
-                f"{peak:.2f} GiB, and it has to be one contiguous block. "
+                f"{ALLOC_CONF} is not set. CUDA's allocator fragments free "
+                f"memory into pieces, and one large contiguous request can then "
+                f"fail on a card with plenty free. "
                 f"{INCIDENTS['aiops-oom'].what_happened}",
                 f"add {ALLOC_CONF}={ALLOC_CONF_VALUE} to env, or prefix the "
-                f"training command with it.",
+                f"training command with it. It costs nothing when nothing needs "
+                f"it.",
             )
         )
-    patch_applies = trainer in (None, "DPO")
-    if not patch_on and not patch_applies:
-        # NOT a warning, because there is nothing for the reader to do: the
-        # patch cannot be applied to this trainer at all. What they need is to
-        # know that the peak figure came from a DPO measurement.
-        findings.append(
-            Finding(
-                INFO, "trl-patch-not-applicable",
-                f"{TRL_PATCH} edits `trl.trainer.dpo_trainer` and this script "
-                f"trains with {trainer}, so it does not apply here. The "
-                f"{peak:.2f} GiB above was measured on the DPO path; treat it "
-                f"as an upper bound for {trainer} rather than a figure for it.",
-                f"leave {TRL_PATCH} out. Keep {ALLOC_CONF}={ALLOC_CONF_VALUE} "
-                f"-- that one is the allocator's and applies to every trainer.",
-            )
-        )
-    if not patch_on and patch_applies:
+    # DDPSRUN-DEFERRED-SCRIPT: when `deferred` is set the setting may be in the
+    # file this script calls, and the caller gets a `not_checked` line instead.
+
+    # ── RECIPE from here down. Everything below is the DPO logits arithmetic:
+    # `peak_logits_gib` is `cap x vocab x bytes`, measured on ONE trainer, and
+    # `recommend_gpu` reads from the same table. A pretraining run, an RL
+    # pipeline, a distributed job or an inference sweep has a different largest
+    # allocation entirely, and applying this to them would be a confident wrong
+    # number -- which docs/04-estimate.md says is worse than `unknown`.
+    if cap is None:
+        return findings
+    if trainer not in (None, "DPO"):
+        # A trainer we recognised and it is not the one this arithmetic is for.
+        # Nothing further is said: the honest answer is that we have not
+        # measured this shape, and `not_checked` carries that.
+        return findings
+
+    peak = estimator.peak_logits_gib(cap)
+    patch_applies = True
+    if not patch_on:
         findings.append(
             Finding(
                 WARNING, "trl-patch-missing",
@@ -276,11 +315,17 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
 
 
 def check_caps(script: str | None, env: dict[str, str]) -> list[Finding]:
-    """Is the prompt cap below the sequence cap.
+    """RECIPE TIER. Is the prompt cap below the sequence cap.
 
     `--max-prompt-len` has to leave room for the answer inside `--max-len`. When
     it does not, training stops seconds after it starts with a message about
     dropped samples, which is a cheap failure but a confusing one.
+
+    SELF-GATING BY CONSTRUCTION, and that is why it stays. Both patterns are one
+    repository's flag spellings, so a job that does not use them matches
+    nothing and this returns []. It is in the recipe tier because the ADVICE is
+    that lab's too -- "our runs used a gap of 1,024 tokens" is a fact about two
+    of our jobs, not about sequence models.
     """
     text = (script or "") + " " + " ".join(f"{k}={v}" for k, v in env.items())
     max_len = MAX_LEN_PATTERN.search(text)
@@ -303,7 +348,13 @@ def check_caps(script: str | None, env: dict[str, str]) -> list[Finding]:
 
 
 def check_adapter_paths(script: str | None) -> list[Finding]:
-    """Does inference read the adapter that training wrote.
+    """RECIPE TIER. Does inference read the adapter that training wrote.
+
+    ONLY MEANINGFUL FOR A TRAIN-THEN-INFER LoRA SCRIPT, and only when both
+    commands spell their paths `--out` and `--lora`, which is one repository's
+    convention. Anything else matches nothing and this returns []. Kept because
+    a mismatch here cost 31 hours of GPU time once; gated because a pretraining
+    or PPO job has no adapter and must not be told about one.
 
     They are two separate commands and nothing links them. When they disagree,
     training runs to completion, and only then does inference fail with a
@@ -348,6 +399,189 @@ def check_partial_results(script: str | None) -> list[Finding]:
             "the script has no `trap ... EXIT`. If it dies partway, whatever it "
             "had already produced is lost with the machine.",
             "add `trap upload_everything EXIT` so the upload runs on any exit.",
+        )
+    ]
+
+
+# The launchers that start more than one process and expect a rendezvous. Any of
+# them in a script means the author is doing distributed work; none of them, in a
+# job with a group, means N single-process runs that will never meet.
+DISTRIBUTED_LAUNCHERS = (
+    "torchrun", "torch.distributed.run", "torch.distributed.launch",
+    "accelerate launch", "deepspeed", "mpirun", "horovodrun", "srun",
+)
+
+# What PACSrun tells a pod in a distributed group. Exact names, from
+# `internal/controller/pacsjob_controller.go` (PACSRUN-GROUP-COORDS) and
+# `driver/aws/driver.py` (PACSRUN-GROUP-HOSTNET). A script that reads NONE of
+# these cannot know where its rendezvous is.
+GROUP_COORDS = (
+    "PACSRUN_MASTER_ADDR", "PACSRUN_MASTER_PORT",
+    "PACSRUN_GROUP_RANK", "PACSRUN_GROUP_SIZE", "PACSRUN_GROUP_INDEX",
+)
+
+NPROC_PATTERN = re.compile(r"--nproc[-_]per[-_]node[= ]+(\d+)")
+NNODES_PATTERN = re.compile(r"--nnodes[= ]+(\d+)")
+
+
+def check_distributed(script: str | None, group_size: int, group_mode: str,
+                      parallelism: int, gpu_count: int) -> list[Finding]:
+    """PLATFORM TIER. Can the pods of a group actually find each other.
+
+    DDPSRUN-GROUP. The failure this exists for is SILENT, which is why it is
+    worth a check rather than a paragraph. `driver/common/remotek8s.py` records
+    it: "NEITHER RANK PRINTED ANYTHING. Both sat in dist.init_process_group with
+    no error and no output." Every rank waits for a rendezvous nobody is
+    hosting, the cards read busy, and the run bills until the stall detector
+    fires at 3,600 s -- or until the lifetime ceiling, on a driver too old for
+    that detector.
+
+    THREE THINGS ARE CHECKED AND ALL THREE ARE ABOUT WIRING, NOT ABOUT THE
+    MODEL. Nothing here knows whether the parallelism strategy is a good one.
+
+      the script never reads the coordinates   PACSrun hands them over as
+                                               PACSRUN_MASTER_ADDR and friends
+                                               and translates nothing: torchrun
+                                               wants --master_addr, another
+                                               launcher wants something else,
+                                               and that translation is the
+                                               script's line to write.
+      there is no launcher at all              `python train.py` under a group
+                                               of four is four independent
+                                               single-process runs. They will
+                                               finish, cost four machines, and
+                                               produce four unrelated results.
+      the launcher's world size disagrees      `--nproc_per_node 8` on a pod
+                                               given 4 GPUs, or `--nnodes 2` in
+                                               a group of 4. NCCL then waits for
+                                               ranks that do not exist.
+
+    Args:
+        script: the submitted text, or None.
+        group_size: `group.size`. 1 means no group.
+        group_mode: `group.mode`. Only "distributed" makes a rendezvous.
+        parallelism: how many pods the job asks for in total.
+        gpu_count: GPUs per pod.
+
+    Returns:
+        Findings. Nothing for a job with no group, which is every job written
+        before `spec.group` existed.
+    """
+    findings: list[Finding] = []
+    distributed = group_mode == "distributed" and group_size > 1
+
+    # A group that divides badly is refused by the CRD, but saying so here
+    # costs nothing and saves a round trip through a rejected submit.
+    if group_size > 1 and parallelism % group_size != 0:
+        findings.append(Finding(
+            ERROR, "group-does-not-divide",
+            f"parallelism {parallelism} is not a multiple of group.size "
+            f"{group_size}, so the last group would be short. The number of "
+            f"groups is derived as parallelism / size.",
+            f"use a parallelism that divides by {group_size} "
+            f"({group_size * max(1, parallelism // group_size)}, for instance), "
+            f"or change the size.",
+        ))
+
+    if not distributed or not script:
+        return findings
+
+    if not any(coord in script for coord in GROUP_COORDS):
+        findings.append(Finding(
+            ERROR, "group-coords-unread",
+            "this job asks for a distributed group and the script reads none of "
+            + ", ".join(GROUP_COORDS[:2])
+            + " or the rank variables. PACSrun hands the rendezvous over in "
+              "those and translates nothing, so every rank would start alone and "
+              "wait for a peer that is not coming -- with no error and no output.",
+            "read them and pass them to your launcher, e.g. `torchrun "
+            "--nnodes $PACSRUN_GROUP_SIZE --node_rank $PACSRUN_GROUP_RANK "
+            "--master_addr $PACSRUN_MASTER_ADDR --master_port $PACSRUN_MASTER_PORT "
+            "--nproc_per_node <GPUs per pod> train.py`.",
+        ))
+
+    if not any(launcher in script for launcher in DISTRIBUTED_LAUNCHERS):
+        findings.append(Finding(
+            WARNING, "no-distributed-launcher",
+            f"this job asks for groups of {group_size} and the script starts no "
+            f"launcher ({', '.join(DISTRIBUTED_LAUNCHERS[:4])}, ...). If each pod "
+            f"runs one process that never joins a process group, the group buys "
+            f"{group_size} machines to do {group_size} unrelated single-GPU runs.",
+            "if the script starts its own processes (a framework that calls "
+            "init_process_group itself, or an MPI job launched inside), this is "
+            "nothing to act on -- say so and move on.",
+        ))
+
+    nproc = NPROC_PATTERN.search(script)
+    if nproc and gpu_count and int(nproc.group(1)) != gpu_count:
+        findings.append(Finding(
+            ERROR, "world-size-mismatch",
+            f"the launcher asks for {nproc.group(1)} processes per node and this "
+            f"job asks for {gpu_count} GPU(s) per pod. NCCL would wait for ranks "
+            f"that have no card, or leave cards idle that you are paying for.",
+            f"make them agree: either --nproc_per_node {gpu_count}, or ask for "
+            f"gpu.count {nproc.group(1)}.",
+        ))
+
+    nnodes = NNODES_PATTERN.search(script)
+    if nnodes and int(nnodes.group(1)) != group_size:
+        findings.append(Finding(
+            ERROR, "nnodes-mismatch",
+            f"the launcher asks for {nnodes.group(1)} node(s) and one group is "
+            f"{group_size} pod(s). Every rank has to agree on the world size or "
+            f"the rendezvous never completes.",
+            f"use --nnodes $PACSRUN_GROUP_SIZE so the two cannot drift.",
+        ))
+    return findings
+
+
+def check_results_leave(script: str | None) -> list[Finding]:
+    """PLATFORM TIER. Does anything at all leave the container.
+
+    THE MOST EXPENSIVE MISTAKE THERE IS, and until 2026-09-09 nothing checked
+    for it: a job that computes for 21 hours, exits 0, and is marked Succeeded
+    with an empty result prefix. `no-exit-trap` catches the narrower case
+    (results exist and a mid-run death loses them); this catches the script that
+    never had a way out in the first place.
+
+    THREE WAYS OUT COUNT, because all three are real:
+
+      `PACSRUN_ARTIFACT=`   the contract (script-contract 13). Works on every
+                            vendor.
+      `aws s3 cp` and kin   the workload uploading with the credential it was
+                            given. Still works, and is what AWS/GCP jobs do
+                            until the k3s fetch is deployed.
+      `$PACSRUN_RESULT_PATH` a script that reads the destination and does
+                            something with it that we cannot name -- boto3, a
+                            framework's own writer. Its presence is enough:
+                            guessing further would produce false alarms.
+
+    Args:
+        script: the submitted text, or None -- then nothing is claimed.
+
+    Returns:
+        One WARNING when none of the three appears. Not an ERROR: an inference
+        sweep whose whole output is its log, or a job whose point is a metric in
+        Prometheus, is legitimate and must not be blocked.
+    """
+    if not script:
+        return []
+    ways_out = ("PACSRUN_ARTIFACT", "PACSRUN_RESULT_PATH", "aws s3 ", "gsutil ",
+                "s3.upload", "upload_file", "boto3")
+    if any(way in script for way in ways_out):
+        return []
+    return [
+        Finding(
+            WARNING, "nothing-leaves-the-container",
+            "the script mentions no way of getting anything out: no "
+            "`PACSRUN_ARTIFACT=` line, no `$PACSRUN_RESULT_PATH`, no upload. The "
+            "machine is deleted seconds after the workload exits, and its disk "
+            "goes with it, so a job like this can spend its whole runtime and be "
+            "marked Succeeded with an empty result prefix.",
+            "announce each finished file with "
+            "`echo \"PACSRUN_ARTIFACT=/path/to/file\"` (script-contract 13). If "
+            "the output really is only the log, that is fine -- the log is "
+            "relayed and kept, and this warning is one to dismiss out loud.",
         )
     ]
 
@@ -871,6 +1105,11 @@ def check_aws_credential_collision(env: dict[str, str], secrets: list[str],
 
 # What no check here can see, because it would need the user's repository.
 NOT_CHECKED = (
+    "whether this job's own arithmetic fits the card. Our memory and time "
+    "figures were measured on ONE recipe (a TRL DPO run at two sequence caps), "
+    "so for a pretraining run, an RL pipeline, an inference sweep or a "
+    "distributed job we can price an hour and say nothing about how many. "
+    "`expected_hours` is where your own figure goes.",
     "whether the paths in your script match your repository's real layout. Our "
     "own recipe said `runs/xxx/` and the repository had `dpo-training/runs/xxx/`.",
     "whether your commands actually produce every file you expect back. Three of "
@@ -900,6 +1139,8 @@ def validate(
     secrets: list[str] | None = None,
     known_secrets: dict[str, object] | None = None,
     secret_expiries: dict[str, str | None] | None = None,
+    group_size: int = 1,
+    group_mode: str = "independent",
 ) -> Validation:
     """Run every check and sort what comes back.
 
@@ -915,6 +1156,9 @@ def validate(
             default. Both are needed together: whether naming a price-only
             vendor is sensible depends entirely on the mode.
         secrets: the vault words the job asks for.
+        group_size: `group.size`, and `group_mode` its mode. Both together:
+            whether the pods need a rendezvous is the two of them, and a size
+            without a mode says nothing. DDPSRUN-GROUP.
         secret_expiries: name -> the date it was stored with, for this
             namespace's own registrations. DDPSRUN-SECRET-EXPIRY.
         known_secrets: what the deployment holds (`Settings.secret_bindings`).
@@ -928,6 +1172,9 @@ def validate(
     alloc_on, patch_on = mitigations_from(env, script)
 
     findings: list[Finding] = []
+    # ── PLATFORM TIER (DDPSRUN-CHECK-TIERS). True for every job, because each is
+    # a fact about PACSrun, a vendor or a credential -- not about what the job
+    # computes.
     findings += check_vendors_can_run(vendors or [], placement_mode)
     # vendors GOES IN, and until 2026-09-08 it did not: the check judged every
     # ask against AWS's catalogue, so `vendors: ["runpod"]` left an AWS-shaped
@@ -940,13 +1187,19 @@ def validate(
         findings += check_secret_names(secrets or [], known_secrets)
     findings += check_secret_expiry(secrets or [], secret_expiries or {})
     findings += check_aws_credential_collision(env, secrets or [], script)
+    findings += check_distributed(script, group_size, group_mode, parallelism,
+                                  gpu_count)
+    findings += check_results_leave(script)
+    findings += check_partial_results(script)
+    findings += check_runtime(job_estimate)
+    # ── RECIPE TIER. Each of these self-gates on the recipe it was written for
+    # and returns nothing for anything else, so a pretraining run, an RL
+    # pipeline, an inference sweep or a distributed job hears none of it.
     deferred = defers_to_another_script(script)
     findings += check_memory(cap, vram_gb, alloc_on, patch_on, trainer_in(script),
                              deferred=deferred)
     findings += check_caps(script, env)
     findings += check_adapter_paths(script)
-    findings += check_partial_results(script)
-    findings += check_runtime(job_estimate)
 
     order = {ERROR: 0, WARNING: 1, INFO: 2}
     findings.sort(key=lambda finding: order.get(finding.level, 3))

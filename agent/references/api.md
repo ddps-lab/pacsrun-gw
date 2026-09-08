@@ -171,6 +171,15 @@ One nvidia-smi reading.
 | `time` |  | When the apiserver stamped this reading, RFC 3339. The chart's x axis; empty on logs that were read without timestamps. |
 | `utilization_percent` | yes |  |
 
+### GroupRequest
+
+DDPSRUN-GROUP. Do this job's pods talk to each other.
+
+| field | required | description |
+|---|---|---|
+| `mode` |  | `independent` -- the pods never talk, identical to sending no group at all. `distributed` -- they form one process group: every pod is told its peers' addresses through PACSRUN_MASTER_ADDR / PACSRUN_MASTER_PORT and PACSRUN_GROUP_RANK, and NONE starts its workload until the whole group has a machine. Your script has to read those and hand them to its launcher; nothing translates them for you. |
+| `size` |  | How many pods form one group. `parallelism` divided by this is the number of groups, so parallelism 6 with size 2 is three groups of two. |
+
 ### HTTPValidationError
 
 | field | required | description |
@@ -263,6 +272,7 @@ A submit request plus the facts needed to judge it.
 | `env` |  | Non-secret configuration, passed to the container verbatim. |
 | `expected_hours` |  | Your own guess at the runtime. Recorded, and used for the cost line when our own time model cannot answer -- then the estimate labels the figure `user-supplied`, because it is your number and not ours. |
 | `gpu` |  | Omit for a CPU-only job. |
+| `group` |  | Omit for independent pods, which is what parallelism alone means. Send it with mode 'distributed' for one process group per `size` pods -- data-parallel training, tensor parallel across pods, anything that needs a rendezvous. DDPSRUN-GROUP. |
 | `image` | yes | Container image to run. |
 | `memory` |  | Memory request, e.g. "16Gi". |
 | `name` | yes | A name for your own benefit. It appears in the result path and in the job listing. It does not have to be unique. |

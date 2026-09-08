@@ -342,17 +342,46 @@ def test_spot_without_aws_has_no_vendor_left():
     assert "spot-excludes-runpod" not in {f.code for f in result}
 
 
-def test_a_ppo_script_is_not_told_to_patch_the_dpo_trainer():
-    """DDPSRUN-TRAINER. patch 는 `trl.trainer.dpo_trainer` 를 고친다."""
+def test_a_ppo_script_hears_nothing_about_the_dpo_arithmetic():
+    """★ 2026-09-09 에 답이 바뀌었다. INFO 한 줄에서 침묵으로.
+
+    옛 판은 "이 patch 는 DPO 것이라 안 맞는다" 를 INFO 로 알려 줬다. 그것도
+    개선이었지만 여전히 남의 recipe 를 이 job 의 화면에 올리는 것이다.
+    DDPSRUN-CHECK-TIERS: `peak_logits_gib` 는 **한 trainer 에서 측정한 산술**이고,
+    PPO 의 가장 큰 allocation 은 그것이 아니다. 그래서 recipe 층 전체가 꺼지고,
+    못 봤다는 사실은 `not_checked` 가 말한다.
+    """
     script = "python -m trl.trainer.ppo --max-len 2048 --max-prompt-len 1024"
     result = v.check_memory(2048, 40, alloc_on=True, patch_on=False,
                             trainer=v.trainer_in(script))
     codes = {f.code for f in result}
-    assert "trl-patch-missing" not in codes
-    info = [f for f in result if f.code == "trl-patch-not-applicable"]
-    assert len(info) == 1
-    assert info[0].level == v.INFO
-    assert "PPO" in info[0].message
+    assert "trl-patch-missing" not in codes, "DPO patch 를 권하지 않는다"
+    assert "gpu-too-small" not in codes, (
+        "DPO 표에서 나온 카드 권고도 하지 않는다 — 그 표는 PPO 를 재 본 적이 없다")
+    assert codes == set(), f"recipe 층은 통째로 침묵한다: {codes}"
+
+
+def test_the_allocator_warning_is_platform_and_survives_a_ppo_script():
+    """allocator 설정은 recipe 와 무관하다 — 어떤 job 이든 큰 연속 할당을 한다."""
+    script = "python -m trl.trainer.ppo --max-len 2048"
+    result = v.check_memory(2048, 40, alloc_on=False, patch_on=False,
+                            trainer=v.trainer_in(script))
+    finding = [f for f in result if f.code == "alloc-conf-missing"]
+    assert len(finding) == 1
+    assert "fragments free memory" in finding[0].message, (
+        "이유가 allocator 의 성질로 적혀 있다 — 어느 job 에나 참인 문장")
+    assert "at cap" not in finding[0].message, (
+        "★ **이 job 의** peak 를 계산해 내밀지 않는다. 옛 메시지는 "
+        "'The logits buffer at cap 2,048 is N GiB' 였고, 그 산술은 한 trainer 를 "
+        "재 본 것이라 PPO job 에 대해 정당화할 수 없다")
+    assert "aiops-exp1" in finding[0].message, (
+        "대신 실측 incident 을 출처와 함께 인용한다 — 그것이 이 설정이 중요한 이유의 근거이고, "
+        "읽는 사람에게 '당신 job 에 logits buffer 가 있다' 고 말하지는 않는다")
+
+
+def test_a_cpu_job_gets_no_allocator_warning_either():
+    assert v.check_memory(2048, None, alloc_on=False, patch_on=False) == [], (
+        "CPU job 에는 설정할 CUDA allocator 가 없다")
 
 
 def test_a_dpo_script_still_gets_the_patch_warning():
@@ -432,3 +461,107 @@ def test_the_launcher_rule_does_not_fire_on_a_mention():
     for text in ('echo "then run bash setup.sh"\npython train.py\n',
                  '# bash old_run.sh -- 옛 방식\npython train.py\n'):
         assert v.defers_to_another_script(text) is None, text
+
+
+# ------------------------------------------- DDPSRUN-GROUP / DDPSRUN-CHECK-TIERS
+# 2026-09-09. validate 가 한 recipe 에 편향돼 있었고, 정작 분산학습은 판단할
+# 대상조차 없었다 -- `spec.group` 이 CRD 에는 있고 이 API 에는 없었다.
+
+
+def test_a_job_with_no_group_hears_nothing_about_groups():
+    """2026-09-05 이전에 쓰인 모든 job 이 이 모양이다. 회귀가 곧 전면 회귀다."""
+    assert v.check_distributed("python train.py", 1, "independent", 1, 1) == []
+    assert v.check_distributed("python train.py", 1, "independent", 8, 1) == []
+
+
+def test_a_distributed_group_that_reads_none_of_the_coordinates_is_blocking():
+    """★ 이 실패는 조용하다. 그래서 문장이 아니라 검사여야 한다.
+
+    `remotek8s.py` 가 적어 둔 실측: "NEITHER RANK PRINTED ANYTHING. Both sat in
+    dist.init_process_group with no error and no output." 모든 rank 가 아무도
+    열지 않은 rendezvous 를 기다리고, 카드는 busy 로 읽히고, 3,600초 뒤
+    stall detector 가 뜰 때까지 과금된다.
+    """
+    result = v.check_distributed(
+        "torchrun --nproc_per_node 4 train.py", 2, "distributed", 4, 4)
+    finding = [f for f in result if f.code == "group-coords-unread"]
+    assert len(finding) == 1
+    assert finding[0].level == v.ERROR
+    assert "PACSRUN_MASTER_ADDR" in finding[0].message
+    assert "torchrun --nnodes $PACSRUN_GROUP_SIZE" in finding[0].fix
+
+
+def test_reading_the_coordinates_is_enough_to_pass():
+    script = ("torchrun --nnodes $PACSRUN_GROUP_SIZE --node_rank $PACSRUN_GROUP_RANK "
+              "--master_addr $PACSRUN_MASTER_ADDR --master_port $PACSRUN_MASTER_PORT "
+              "--nproc_per_node 4 train.py")
+    assert v.check_distributed(script, 2, "distributed", 4, 4) == []
+
+
+def test_a_group_with_no_launcher_is_a_warning_and_not_an_error():
+    """framework 가 스스로 init_process_group 을 부르는 경우가 있어 error 가 아니다."""
+    script = "python train.py  # PACSRUN_MASTER_ADDR is read inside\n"
+    result = v.check_distributed(script, 4, "distributed", 8, 1)
+    finding = [f for f in result if f.code == "no-distributed-launcher"]
+    assert len(finding) == 1
+    assert finding[0].level == v.WARNING
+    assert "4 machines to do 4 unrelated single-GPU runs" in finding[0].message
+
+
+def test_the_launchers_world_size_must_match_what_was_bought():
+    script = ("torchrun --nproc_per_node 8 --nnodes 4 --master_addr "
+              "$PACSRUN_MASTER_ADDR train.py")
+    codes = {f.code for f in v.check_distributed(script, 2, "distributed", 4, 4)}
+    assert "world-size-mismatch" in codes, "8 프로세스인데 카드는 4장"
+    assert "nnodes-mismatch" in codes, "4 node 인데 group 은 2 pod"
+
+
+def test_a_group_that_does_not_divide_the_parallelism_is_refused_before_the_crd():
+    result = v.check_distributed(None, 3, "distributed", 8, 1)
+    finding = [f for f in result if f.code == "group-does-not-divide"]
+    assert len(finding) == 1
+    assert finding[0].level == v.ERROR
+    assert "8" in finding[0].message and "3" in finding[0].message
+
+
+def test_a_script_with_no_way_out_is_named():
+    """가장 비싼 실수이고 2026-09-09 까지 아무도 검사하지 않았다."""
+    result = v.check_results_leave("python train.py --epochs 3\n")
+    assert len(result) == 1
+    assert result[0].code == "nothing-leaves-the-container"
+    assert result[0].level == v.WARNING, (
+        "error 가 아니다 -- 출력이 로그뿐인 추론 실험이나 metric 만 남기는 job 은 정당하다")
+
+
+def test_any_of_the_three_ways_out_is_enough():
+    for script in ('echo "PACSRUN_ARTIFACT=/root/out.tar"\n',
+                   'aws s3 cp out.tar "$RESULT_PATH"\n',
+                   'python - <<PY\nimport os; print(os.environ["PACSRUN_RESULT_PATH"])\nPY\n',
+                   'boto3.client("s3").upload_file(...)\n'):
+        assert v.check_results_leave(script) == [], script
+
+
+def test_the_recipe_tier_is_silent_for_a_job_that_is_not_that_recipe():
+    """★ 사용자의 지적 그 자체. 분산 pretraining job 이 DPO 얘기를 듣지 않는다."""
+    script = ("torchrun --nnodes $PACSRUN_GROUP_SIZE --node_rank $PACSRUN_GROUP_RANK "
+              "--master_addr $PACSRUN_MASTER_ADDR --nproc_per_node 4 pretrain.py\n"
+              "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True\n"
+              "trap 'echo PACSRUN_ARTIFACT=/root/ckpt.pt' EXIT\n")
+    result = v.validate(env={}, script=script, cap=None, vram_gb=80,
+                        job_estimate=KNOWN, gpu_name="A100-80GB", gpu_count=4,
+                        capacity_type="on-demand", parallelism=4,
+                        group_size=2, group_mode="distributed")
+    codes = {f.code for f in result.findings}
+    for recipe_code in ("trl-patch-missing", "prompt-cap-too-high",
+                        "adapter-path-mismatch", "gpu-too-small"):
+        assert recipe_code not in codes, f"{recipe_code} 가 이 job 에 나왔다: {codes}"
+    assert "alloc-conf-missing" not in codes, "그 job 은 스스로 켰다"
+    assert "nothing-leaves-the-container" not in codes
+    assert "no-exit-trap" not in codes
+
+
+def test_not_checked_says_the_time_model_is_one_recipe():
+    result = v.validate(env={}, script="python pretrain.py", cap=None, vram_gb=80,
+                        job_estimate=KNOWN)
+    assert any("measured on ONE recipe" in line for line in result.not_checked), (
+        "무엇을 못 보는지가 문장으로 있어야 한다 -- 통과가 보장이 아니다")

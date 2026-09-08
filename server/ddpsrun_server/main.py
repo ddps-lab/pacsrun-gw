@@ -822,6 +822,9 @@ def validate_route(body: JudgementRequest, request: Request,
         # operator's business and this server is not told about it.
         secret_expiries=(_own_secret_names(request, principal.namespace)
                          if body.secrets else {}),
+        # DDPSRUN-GROUP. Whether the pods need a rendezvous, and how big one is.
+        group_size=(body.group.size if body.group else 1),
+        group_mode=(body.group.mode if body.group else "independent"),
     )
     return ValidateResponse(
         ok=result.ok,

@@ -68,17 +68,17 @@ the rule set, it is fifteen rules long, and every one of them came from a job th
 broke. The paths in this document are relative to THIS file: the references sit two
 levels up, at the plugin root (`<plugin>/references/`), not beside SKILL.md.
 
-The fifteen, so you know which to open:
+The sixteen, so you know which to open:
 
 | # | rule | when it matters |
 |---|---|---|
 | 1 | check their documentation's paths against the repository's real layout | always |
-| 2 | find the pairs that must share one variable (`--out` / `--lora`) | always |
+| 2 | find the pairs of flags that must share one variable | always |
 | 3 | the script makes the outputs the commands do not | always |
 | 4 | put the cheap checkpoints first | always |
 | 5 | prove the dataset, the model and the result path are reachable BEFORE training | always |
 | 6 | upload what exists whenever a stage dies (`trap ... EXIT`) | always |
-| 7 | ship the adapter before inference, not after | training + inference |
+| 7 | ship the trained artifact before any second stage, not after | two-stage jobs |
 | 8 | watch the checkpoints on a long run | over ~4 h |
 | 9 | do NOT write your own GPU watcher — the platform prints the reading | always |
 | 10 | ask the user for spot vs on-demand, with the numbers | always |
@@ -87,14 +87,18 @@ The fifteen, so you know which to open:
 | 13 | results leave through `PACSRUN_ARTIFACT=`, never `aws s3 cp` | always |
 | 14 | a second AWS account gets its own variable names | Bedrock/judge jobs |
 | 15 | disk, `/dev/shm` and NCCL P2P are printed once and read after | multi-card jobs |
+| 16 | pass our group coordinates to your launcher yourself | distributed jobs |
 
 The two that cost the most:
 
 - **Check the paths in their documentation against the repository's real layout.**
   A recipe said `runs/xxx/` and the repository had `dpo-training/runs/xxx/`.
-- **Find the pairs that must share one variable.** Training's `--out` and inference's
-  `--lora` are separate commands and nothing links them. When they disagree, training
-  finishes first and only then does inference fail. On a 31-hour job that is 31 hours.
+- **Find the pairs of flags that must share one variable.** Whenever one command WRITES
+  a path and a later command READS it, nothing in the shell links them, and a
+  disagreement is discovered only when the later one runs. Our own instance was a LoRA
+  run's `--out` and `--lora`, and the shape is general: a checkpoint directory and a
+  `--resume-from`, a tokenised dataset and a `--data-dir`, an exported ONNX file and the
+  server that loads it. On a 31-hour job the mismatch costs 31 hours.
 - **Put a reachability check on the data, the model and the result path BEFORE the
   training command.** All three come from outside the container and all three can fail
   after a GPU has already been rented. `model_info()` confirms a model without
@@ -106,12 +110,35 @@ The two that cost the most:
 ## Step 2 — never decide the GPU, the runtime or the purchase type yourself
 
 ```bash
-ddpsrun estimate --name <n> --image <i> --gpu-vram 48 \
-  --pairs 1110 --epochs 4 --row-tokens 4100 --cap 12288
+ddpsrun estimate --name <n> --image <i> --gpu-vram 48        # any job
+# and, ONLY if the job really is a TRL preference-tuning run at a sequence cap:
+#   --pairs 1110 --epochs 4 --row-tokens 4100 --cap 12288
 ```
 
 Report what it says, including the `confidence` and the `capacity_type` it recommends.
 **`unknown` is a real answer — pass it through.**
+
+### ★ What the estimate can and cannot answer, and this decides how you use it
+
+**The RATE is always answerable** — it is a published price, so a cost per hour comes back
+for any card, any vendor, any shape.
+
+**The HOURS are answerable for one recipe only.** The throughput table was measured on TRL
+preference tuning at two sequence caps, so `--pairs / --row-tokens / --cap` describe THAT
+shape. For anything else — pretraining, SFT, an RL pipeline, a distributed run, an
+inference sweep, an analytics job — the honest answer is `unknown`, and the tool gives it.
+
+**So do not translate a job into those flags to make a number appear.** Calling a
+pretraining corpus "pairs" produces a confident figure with nothing behind it, which is
+the failure `unknown` exists to prevent (a prediction for an unmeasured combination was
+once 96% wrong). Instead: leave them out, and ask the user for `--expected-hours`. The
+estimate then multiplies THEIR hours by the real rate and labels the total
+`user-supplied`, so the reader can see whose number it is.
+
+```bash
+ddpsrun estimate --name <n> --image <i> --gpu A100-80GB --gpu-count 4 \
+  --vendor runpod --expected-hours 21        # cost_basis: user-supplied
+```
 
 **`capacity_type` is the user's decision and you must ask for it.** `submit` refuses without
 it. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed
@@ -120,8 +147,10 @@ recommendation and its reason, and let them choose. It exists because a predicti
 measured and it was 96% wrong. Filling that gap with your own guess removes the only
 protection against repeating it.
 
-If `estimate` asks for a fact you do not have (`pairs`, `row_tokens`, `cap`), look for it
-in their repository or ask them. Do not supply a plausible number.
+If the job IS that recipe and `estimate` wants a fact you do not have (`pairs`,
+`row_tokens`, `cap`), look for it in their repository or ask them. Do not supply a
+plausible number. If the job is NOT that recipe, leave those flags out entirely —
+omitting them is the correct answer, not a gap to fill.
 
 **`--region` is theirs to decide too, and leaving it out is a decision rather than a
 default.** An AWS ask that names no region gets the operator's ONE default region, not a
@@ -136,9 +165,10 @@ filled and the job sits in Pending. `ddpsrun schema` lists what is on offer.
 ddpsrun validate --name <n> --image <i> ... --script run.sh
 ```
 
-**ALWAYS pass `--script`.** Four checks read the script itself and are simply off
-without it — including the allocator setting, which a script may export just
-before training rather than in the job's env. A validate that never saw the
+**ALWAYS pass `--script`.** Most checks read the script itself and are simply
+off without it — the allocator setting a script may export just before training
+rather than in the job's env, whether anything leaves the container, whether a
+distributed group reads its coordinates, whether there is an exit trap. A validate that never saw the
 script warns about things the script already does, and the `not_checked` list is
 what says so. If you built the request as a JSON file, put the script text in it.
 
@@ -165,10 +195,31 @@ Exit 1 means something would actually stop the job. Fix it and run it again. Rea
 `not_checked` list aloud to the user: those are things no check could look at, so a pass
 is not a guarantee.
 
-**Two findings mean "know this", not "change this".** `trl-patch-not-applicable`
-says the TRL patch edits `trl.trainer.dpo_trainer` and your script trains with
-something else, so the memory figure beside it is a DPO measurement and an
-upper bound. `aws-credential-collision` says the job carries a second AWS
+### ★ The findings come in two tiers, and knowing which is which is your job
+
+**PLATFORM findings are true for every job.** Can a machine of that shape be
+bought; does a secret name exist and has it expired; does a group have a
+rendezvous; does anything at all leave the container; is this long enough that
+the credential expires first. Act on these.
+
+**RECIPE findings are true for ONE way of training** and appear only when the
+script shows that recipe — `trl-patch-missing`, `prompt-cap-too-high`,
+`adapter-path-mismatch`, `gpu-too-small`. They are our own TRL preference-tuning
+run's flags and its measured logits arithmetic. **If the job you are submitting
+is pretraining, SFT, RL, distributed, an inference sweep or analytics, you will
+not see them, and their absence is not a clean bill of health** — it means we
+have not measured that shape. The `not_checked` list says so in one line; read
+it out.
+
+**Distributed jobs: pass `--group-size` and `--group-mode distributed`.**
+Without them validate cannot judge the wiring, and four checks are waiting for
+it: whether the script reads `PACSRUN_MASTER_ADDR` at all (an error — every rank
+would wait for a rendezvous nobody hosts, with no error and no output), whether
+there is a launcher, and whether `--nproc_per_node` and `--nnodes` agree with
+the cards and the group size.
+
+**One finding means "know this", not "change this".**
+`aws-credential-collision` says the job carries a second AWS
 identity: PACSrun injects the result-upload credentials as `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, boto3 reads the environment
 before any profile, and the upload happens at the END of the run — so getting
