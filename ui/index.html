@@ -75,8 +75,11 @@
     <p class="dim tiny">You will be sent to the sign-in page and brought back here.</p>
   </div>
 
-  <!-- The original way in. It stays because a deployment with no user pool is
-       still supported, and because CI and scripts have no browser. -->
+  <!-- The token box is NOT offered when Cognito is on (2026-09-08: sign-in is
+       Google-only). It survives in the markup as the sole fallback for a
+       deployment that has no user pool at all — app.js unhides it only when
+       /v1/login-config says Cognito is off, where it is the only way in. The
+       "Use a token instead" toggle that used to sit next to it is gone. -->
   <div id="token-box" class="stack" hidden>
     <!-- Hidden once the page knows the address from config.json. It stays for
          a deployment that ships no config.json, and for pointing the page at a
@@ -87,9 +90,6 @@
       <input id="in-token" type="password" placeholder="ddpsrun-..." autocomplete="off"></label>
     <button class="go" id="do-login">Sign in with a token</button>
   </div>
-
-  <button class="flat tiny" id="token-toggle" hidden
-          style="align-self:center;padding:4px 10px">Use a token instead</button>
 
   <div id="login-err"></div>
 </div>
