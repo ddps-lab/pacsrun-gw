@@ -183,7 +183,16 @@ const poll = {
 
 /* ------------------------------------------------------------------ routing */
 
-const VIEWS = ["home", "jobs", "detail", "submit", "scripts", "team", "vendors"];
+/* The screens, DERIVED FROM THE MARKUP rather than listed by hand. It was a
+   hand-written array until 2026-09-08, and the Prices screen shipped without
+   being added to it: nav lit up, route() ran drawPrices, the data arrived (610
+   rows, 10,702 characters of HTML in the section) — and show("prices") never
+   unhid the section, because a name absent from this array is a name it does
+   not touch. The page looked completely empty. Reading the ids off the DOM
+   means adding a <section id="view-x"> is enough, and the three places that
+   used to have to agree (markup, this array, route()) are now two. */
+const VIEWS = [...document.querySelectorAll('main section[id^="view-"]')]
+  .map((s) => s.id.slice("view-".length));
 
 function show(view) {
   VIEWS.forEach((v) => { $("view-" + v).hidden = v !== view; });
