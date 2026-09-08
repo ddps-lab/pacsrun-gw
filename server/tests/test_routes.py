@@ -37,17 +37,27 @@ class FakeCluster:
         # comes_back` is what holds that.
         self.secrets: dict[str, dict[str, str]] = {}
         self.secrets_forbidden: set[str] = set()
+        # DDPSRUN-SECRET-EXPIRY. (namespace, name) -> ISO-8601 string.
+        self.expiries: dict[tuple[str, str], str] = {}
 
-    def user_secret_names(self, namespace):
+    def user_secrets(self, namespace):
         if namespace in self.secrets_forbidden:
             raise k8s.ClusterError("secrets is forbidden: User cannot list resource")
-        return sorted(self.secrets.get(namespace, {}))
+        return {name: self.expiries.get((namespace, name))
+                for name in sorted(self.secrets.get(namespace, {}))}
 
-    def put_user_secret(self, namespace, name, value):
+    def put_user_secret(self, namespace, name, value, expires_at=None):
         if namespace in self.secrets_forbidden:
             raise k8s.ClusterError("secrets is forbidden: User cannot patch resource")
         created = namespace not in self.secrets
         self.secrets.setdefault(namespace, {})[name] = value
+        # A put with no date CLEARS any date the name had, exactly as the merge
+        # patch does -- a re-minted credential that is now permanent must not
+        # keep the old one's expiry.
+        if expires_at:
+            self.expiries[(namespace, name)] = expires_at
+        else:
+            self.expiries.pop((namespace, name), None)
         return created
 
     def delete_user_secret(self, namespace, name):
@@ -63,6 +73,7 @@ class FakeCluster:
             raise k8s.ClusterError("secrets is forbidden: User cannot patch resource")
         if name not in self.secrets.get(namespace, {}):
             raise k8s.NotFound(name)
+        self.expiries.pop((namespace, name), None)
         # The patch itself is the no-op the API server performs; the guard above
         # is what turns it into an answer.
         del self.secrets[namespace][name]
@@ -1607,7 +1618,8 @@ def test_the_answer_is_404_and_not_403(shared_ns_client, cluster):
 def test_a_registered_name_becomes_usable_and_lands_in_that_namespace(client, cluster):
     put = as_alice(client, "PUT", "/v1/secrets/HF_TOKEN", json={"value": "hf_xxx"})
     assert put.status_code == 200
-    assert put.json() == {"name": "HF_TOKEN", "namespace": "lab-alice", "created": True}
+    assert put.json() == {"name": "HF_TOKEN", "namespace": "lab-alice",
+                          "created": True, "expires_at": None}
     # 값은 alice 의 namespace 에만 있다.
     assert cluster.secrets == {"lab-alice": {"HF_TOKEN": "hf_xxx"}}
 
@@ -1736,3 +1748,171 @@ def test_validate_accepts_a_name_this_namespace_registered(client, cluster):
     unknown = as_alice(client, "POST", "/v1/validate",
                        json=submit_body(secrets=["NOPE"])).json()
     assert "secret-name-unknown" in {f["code"] for f in unknown["findings"]}
+
+
+# ------------------------------------------------- DDPSRUN-CONTINUE-FROM
+# 2026-09-09 결정 1번. 회차를 이어 가려면 앞 job 의 result path 를 물려받아야 한다 —
+# wrapper 의 되받기는 자기 `PACSRUN_RESULT_PATH` 안만 읽고 container 자격증명도 그
+# prefix 에만 붙으므로, 제출마다 path 가 바뀌면 iteration 2 가 1 의 checkpoint 를 못 본다.
+
+
+def test_continue_from_reuses_the_previous_jobs_result_path(client, cluster):
+    first = as_alice(client, "POST", "/v1/jobs", json=submit_body(name="c-iter-1")).json()
+    first_ns, first_obj = cluster.created[-1]
+    first_path = first_obj["spec"]["resultPath"]
+    # 서버가 만든 object 를 cluster 가 조회할 수 있게 둔다 (FakeCluster.create_job 이 이미 한다).
+    second = as_alice(client, "POST", "/v1/jobs",
+                      json=submit_body(name="c-iter-2", continue_from=first["job_id"]))
+    assert second.status_code == 201
+    _, second_obj = cluster.created[-1]
+    assert second_obj["spec"]["resultPath"] == first_path, (
+        "두 회차가 한 곳을 읽고 쓴다")
+    assert second.json()["result_path"] == first_path
+    assert second_obj["metadata"]["name"] != first_obj["metadata"]["name"], (
+        "job id 와 object 이름은 그대로 회차마다 다르다 — 물려받는 것은 path 뿐이다")
+
+
+def test_continue_from_someone_elses_job_is_a_404(client, cluster):
+    mine = client.request("POST", "/v1/jobs",
+                          headers={"Authorization": "Bearer bob-token"},
+                          json=submit_body(name="bobs-run")).json()
+    refused = as_alice(client, "POST", "/v1/jobs",
+                       json=submit_body(name="mine", continue_from=mine["job_id"]))
+    assert refused.status_code == 404, (
+        "404 이고 403 이 아니다 — 403 은 그 id 의 job 이 존재하고 누군가의 것이라는 사실을 "
+        "확인해 주는 것이라 한 비트를 더 준다")
+    assert len(cluster.created) == 1, "거부 전에 두 번째 job 은 만들지 않았다"
+
+
+def test_continue_from_a_job_that_does_not_exist_is_a_404(client, cluster):
+    refused = as_alice(client, "POST", "/v1/jobs",
+                       json=submit_body(continue_from="job-000000000000"))
+    assert refused.status_code == 404
+    assert cluster.created == []
+
+
+def test_continue_from_a_job_with_no_result_path_is_refused_not_inherited(client, cluster):
+    """kubectl 로 낸 옛 job 은 `spec.resultPath` 가 없다. 빈 문자열을 물려받으면
+    21시간을 돌린 결과가 갈 곳이 없고, 그것은 끝에서야 드러난다."""
+    cluster.objects[("lab-alice", "hand-applied")] = {
+        "metadata": {"name": "hand-applied",
+                     "labels": {"ddpsrun.io/owner": "alice"}},
+        "spec": {}, "status": {},
+    }
+    refused = as_alice(client, "POST", "/v1/jobs",
+                       json=submit_body(continue_from="hand-applied"))
+    assert refused.status_code == 400
+    assert "nothing to continue from" in refused.json()["detail"]
+    assert cluster.created == []
+
+
+def test_without_continue_from_every_submit_still_gets_its_own_path(client, cluster):
+    one = as_alice(client, "POST", "/v1/jobs", json=submit_body(name="a")).json()
+    two = as_alice(client, "POST", "/v1/jobs", json=submit_body(name="a")).json()
+    assert one["result_path"] != two["result_path"], (
+        "이름이 같아도 path 가 갈리는 것이 기본이다 — 이어 가기는 명시해야 일어난다")
+
+
+def test_validate_answers_a_body_with_nothing_in_it(client, cluster):
+    """★ F-11 이 이 테스트가 없어서 배포됐다.
+
+    2026-09-08 에 production 의 `POST /v1/validate` 가 500 을 답했다. 원인은
+    `check_gpu_is_buyable()` 에 인자를 6개 넘기고 5개만 받게 한 것이었고
+    (`TypeError`, `validate.py:751`, CloudWatch 10건 10:38:07Z~10:39:19Z),
+    **어떤 요청 모양이든 예외가 나면 findings 가 없다** — 그리고 exit 1 이 안
+    나니 agent 는 그냥 다음 단계로 간다. "검사 통과" 와 "검사가 죽었다" 가
+    구분되지 않는다.
+
+    그래서 이것은 findings 를 보는 테스트가 아니다. **route 가 응답을 만들어
+    내는지**를 보는 테스트다. 가장 작은 body 로.
+    """
+    smallest = as_alice(client, "POST", "/v1/validate",
+                        json={"name": "n", "image": "python:3.12-slim"})
+    assert smallest.status_code == 200, smallest.text
+    body = smallest.json()
+    assert set(body) >= {"ok", "findings", "not_checked"}
+    assert isinstance(body["findings"], list)
+
+
+def test_validate_answers_every_shape_the_screen_and_the_cli_can_send(client, cluster):
+    """한 모양이 아니라 여러 모양. 500 을 낸 결함은 gpu 가 있는 요청에서만 났다."""
+    shapes = [
+        {},
+        {"gpu": {"name": "L40S", "count": 1}},
+        {"gpu": {"vram_gb": 48}},
+        {"gpu": {"name": "A100-80GB", "count": 4}, "vendors": ["runpod"]},
+        {"gpu": {"name": "A100-80GB", "count": 4}, "vendors": ["runpod"],
+         "capacity_type": "spot"},
+        {"gpu": {"name": "L4", "count": 1}, "vendors": ["gcp"],
+         "placement_mode": "cheapest"},
+        {"gpu": {"name": "H100", "count": 1}, "regions": ["aws/ap-northeast-2"]},
+        {"gpu": {"name": "A100-80GB", "count": 8}, "parallelism": 8},
+        {"secrets": ["GITHUB_PAT"]},
+        {"secrets": ["NOPE"]},
+        {"script": "bash runs/run_C.sh\n"},
+        {"training": {"pairs": 5000, "epochs": 1, "avg_response_tokens": 600},
+         "expected_hours": 21.0},
+    ]
+    for extra in shapes:
+        answer = as_alice(client, "POST", "/v1/validate", json=submit_body(**extra))
+        assert answer.status_code == 200, (extra, answer.status_code, answer.text[:200])
+        assert "findings" in answer.json(), extra
+
+
+# ------------------------------------------- DDPSRUN-SECRET-EXPIRY
+# 2026-09-09. 09-08 에 judge 자격증명이 14:27Z 에 만료됐고 그것을 알 방법이
+# "job 을 내고 한 시간 뒤 Bedrock 호출이 거부되는 것을 보는 것" 뿐이었다.
+
+
+def test_an_expiry_is_stored_and_shown_without_hiding_the_name(client, cluster):
+    as_alice(client, "PUT", "/v1/secrets/JUDGE_AWS_SESSION_TOKEN",
+             json={"value": "tok", "expires_at": "2020-01-01T00:00:00Z"})
+    listed = as_alice(client, "GET", "/v1/secrets").json()
+    assert "JUDGE_AWS_SESSION_TOKEN" in listed["names"], (
+        "이름은 그대로 보인다 — API 입장에서는 아직 쓸 수 있는 이름이고, 멈춘 것은 "
+        "그 안의 자격증명이다. 감추면 validate 의 거부가 오타처럼 보인다")
+    assert "PAST ITS DATE" in listed["note"]
+    assert "2020-01-01" in listed["note"]
+
+
+def test_validate_refuses_a_job_that_asks_for_an_expired_name(client, cluster):
+    as_alice(client, "PUT", "/v1/secrets/JUDGE_AWS_SESSION_TOKEN",
+             json={"value": "tok", "expires_at": "2020-01-01T00:00:00Z"})
+    result = as_alice(client, "POST", "/v1/validate",
+                      json=submit_body(secrets=["JUDGE_AWS_SESSION_TOKEN"])).json()
+    finding = [f for f in result["findings"] if f["code"] == "secret-expired"]
+    assert len(finding) == 1
+    assert finding[0]["level"] == "error", (
+        "warning 이 아니다 — 값은 그대로 주입되므로 job 은 뜨고, 기계를 빌리고, "
+        "그 자격증명이 필요한 호출에서 실패한다. 확실하고 비싸다")
+    assert result["ok"] is False
+
+
+def test_a_name_still_in_date_passes(client, cluster):
+    as_alice(client, "PUT", "/v1/secrets/JUDGE_AWS_SESSION_TOKEN",
+             json={"value": "tok", "expires_at": "2099-01-01T00:00:00Z"})
+    result = as_alice(client, "POST", "/v1/validate",
+                      json=submit_body(secrets=["JUDGE_AWS_SESSION_TOKEN"])).json()
+    assert "secret-expired" not in {f["code"] for f in result["findings"]}
+
+
+def test_re_storing_without_a_date_clears_the_old_one(client, cluster):
+    """재발급해서 이제 영구적인 값이 옛 만료를 물고 있으면 안 된다."""
+    as_alice(client, "PUT", "/v1/secrets/TOK", json={"value": "a",
+                                                     "expires_at": "2020-01-01T00:00:00Z"})
+    as_alice(client, "PUT", "/v1/secrets/TOK", json={"value": "b"})
+    listed = as_alice(client, "GET", "/v1/secrets").json()
+    assert "PAST ITS DATE" not in listed["note"]
+    result = as_alice(client, "POST", "/v1/validate",
+                      json=submit_body(secrets=["TOK"])).json()
+    assert "secret-expired" not in {f["code"] for f in result["findings"]}
+
+
+def test_an_unparseable_date_is_a_400_at_the_door(client, cluster):
+    refused = as_alice(client, "PUT", "/v1/secrets/TOK",
+                       json={"value": "a", "expires_at": "next tuesday"})
+    assert refused.status_code == 400
+    assert "ISO-8601" in refused.json()["detail"]
+    assert cluster.secrets == {}, (
+        "읽을 수 없는 날짜는 들어오는 문에서 막는다 — 저장해 두면 영원히 만료 안 되는 "
+        "이름이 되고, 그것을 나중에 거부하면 우리가 못 읽는 것으로 남의 일을 막는 것이다")

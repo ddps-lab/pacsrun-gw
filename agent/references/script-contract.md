@@ -143,8 +143,16 @@ echo probe | aws s3 cp - "$PACSRUN_RESULT_PATH.probe" \
 
 ```bash
 upload_everything() {
+  # 파일을 만들고 -> announce 한다. announce 가 §13 의 규약이고, driver 가 회수한다.
+  cp "train_${JOB}.log" /root/work/ && echo "PACSRUN_ARTIFACT=/root/work/train_${JOB}.log"
+  if [ -d "$ADAPTER" ]; then
+    tar czf /root/work/adapter.tar.gz "$ADAPTER" \
+      && echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
+  fi
+  # k3s fetch 가 배포되기 전까지 AWS/GCP 에서만 필요한 이중 안전장치 (§13 의 ★).
   aws s3 cp "train_${JOB}.log" "$RESULT_PATH" || true
-  [ -d "$ADAPTER" ] && tar czf - "$ADAPTER" | aws s3 cp - "$RESULT_PATH$ADAPTER.tar.gz" || true
+  [ -f /root/work/adapter.tar.gz ] \
+    && aws s3 cp /root/work/adapter.tar.gz "$RESULT_PATH$ADAPTER.tar.gz" || true
 }
 trap upload_everything EXIT
 ```
@@ -152,17 +160,23 @@ trap upload_everything EXIT
 `trap ... EXIT` 는 정상 종료에서도, 오류에서도, SIGTERM 에서도 실행된다. 없으면 20 시간째에
 죽었을 때 **돈은 다 쓰고 남는 것이 없다.** `ddpsrun validate` 가 `no-exit-trap` 으로 잡는다.
 
+**★ announce 를 trap 안에 두는 것이 왜 안전한가.** driver 는 workload 가 끝난 뒤에도 큐가
+빌 때까지 최대 600초 machine 을 잡고 기다린다(§13). 그래서 마지막 순간에 찍은 줄도 회수된다 —
+`aws s3 cp` 와 달리 announce 는 자격증명 만료와 무관하다.
+
 ---
 
 ## 7. 학습이 끝나면 추론을 기다리지 말고 어댑터를 먼저 올린다
 
 ```bash
 python train_dpo_m3.py ... | tee "train_${JOB}.log"
-tar czf - "$ADAPTER" | aws s3 cp - "$RESULT_PATH$ADAPTER.tar.gz"   # 여기서 먼저 올린다
+tar czf /root/work/adapter.tar.gz "$ADAPTER"                       # 여기서 먼저 내보낸다
+echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
 python gen_openrca_tasks_fast.py ...                                 # 그 다음 추론
 ```
 
 학습이 25 시간이고 추론이 1 시간이면, **추론에서 죽었을 때 25 시간을 잃으면 안 된다.**
+announce 는 driver 에게 "이건 지금 가져가라" 는 뜻이고, 추론이 도는 동안 회수가 병행된다.
 
 ---
 
@@ -180,9 +194,10 @@ watch_checkpoints() {
       [ -f "$dir/.uploaded" ] && continue
       # 120 초 동안 안 바뀐 것만 건드린다. 쓰는 중에 tar 를 뜨면 반쪽이 올라간다
       [ -n "$(find "$dir" -newermt '-120 seconds' -print -quit)" ] && continue
-      tar czf - "$dir" | aws s3 cp - "$RESULT_PATH$(basename "$dir").tar.gz.part" \
-        && aws s3 mv "$RESULT_PATH$(basename "$dir").tar.gz.part" \
-                     "$RESULT_PATH$(basename "$dir").tar.gz" \
+      # tar 를 먼저 닫고 그 다음에 announce 한다. 순서가 규칙이다 -- §13 의 크기 대조는
+      # 쓰는 중인 파일을 회수 실패로 만든다(잘린 파일이 올라가는 것이 아니라 안 올라간다).
+      tar czf "/root/work/$(basename "$dir").tar.gz" "$dir" \
+        && echo "PACSRUN_ARTIFACT=/root/work/$(basename "$dir").tar.gz" \
         && touch "$dir/.uploaded"
     done
   done
@@ -326,12 +341,45 @@ echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
 - **완성한 뒤에 찍는다.** 쓰는 중인 파일을 알리면 잘린 파일이 회수된다. `tar` 는 닫힌 뒤,
   로그는 마지막 flush 뒤.
 
+### 파일 이름이 곧 S3 의 이름이다 — 같은 이름 둘은 서로를 덮는다
+
+key 는 **job 의 result prefix + 파일 이름(basename)** 이다. `/root/work/adapter.tar.gz` 는
+`s3://<bucket>/<prefix>adapter.tar.gz` 로 간다. 경로의 앞부분은 버려지므로
+`runs/iter_1/ckpt.pt` 와 `runs/iter_2/ckpt.pt` 를 둘 다 announce 하면 **뒤엣것이 앞엣것을
+덮는다.** 회차나 rank 를 파일 이름에 넣는다: `ckpt_iter2.pt`, `adapter_rank0.tar.gz`.
+
 ### 왜 `aws s3 cp` 가 아닌가
 
-이 클러스터는 **fetch mode** 로 돈다(`PACSRUN_FETCH_MODE=on`). 그 모드에서 컨테이너가 받는
-자격증명은 결과를 직접 올리는 용도가 아니고, 밖으로 내보내는 길은 driver 의 회수 하나뿐이다.
-driver 쪽 구현은 `PACSrun/driver/runpod/driver.py:232`(`ARTIFACT_RE` 가 이 줄을 찾는다)와
-`:47`(FetchWorker 가 큐에서 꺼내 올린다).
+결과를 S3 에 쓰는 주체는 **어느 vendor 에서도 driver** 다. 이유는 둘이다.
+
+- **컨테이너에 주는 자격증명이 먼저 만료된다.** AWS 상한이 43,200초(12시간)라 21시간 job 의
+  **마지막** 업로드 — 그 run 을 한 이유 — 가 만료 뒤에 일어난다.
+- **업로드 방식이 vendor 마다 다르다.** script 가 그것을 알아야 하면 script 가 vendor 종속이
+  된다. announce 한 줄은 어디서나 같은 문장이다.
+
+컨테이너가 받는 자격증명이 아무 쓸모가 없다는 뜻은 아니다. **그것으로 자기 prefix 를 읽는다** —
+회차를 이어 갈 때 앞 회차의 checkpoint 를 되받는 것이 그 용도다(§13 마지막 절, `continue_from`).
+
+driver 가 파일을 가져오는 길만 vendor 마다 다르고, **script 는 그 차이를 몰라도 된다.**
+
+| vendor | driver 가 어떻게 가져오나 |
+|---|---|
+| RunPod | 컨테이너 안의 작은 HTTP server 에 `<pod-id>-8888.proxy.runpod.net` 으로 GET (`PACSrun/driver/runpod/driver.py:233` `ARTIFACT_RE`, `:2012` `_fetch_one`) |
+| VM + k3s (AWS, GCP, 이후 Shadeform / Seeweb) | k3s API 의 exec 로 `stat -c %s` 로 크기를 받고 `cat` 으로 바이트를 받는다 (`PACSrun/driver/common/artifact_fetch.py`, grep `PACSRUN-K3S-FETCH`) |
+
+**★ 2026-09-09 현재 상태: k3s 경로는 구현됐고 아직 배포되지 않았다.** 그래서 **AWS/GCP 에서는
+그동안 `aws s3 cp` 를 announce 와 함께 둔다** — 그러면 어느 경로에서도 산다(RunPod 에서는
+`aws s3 cp` 가 AccessDenied 로 조용히 실패하고 announce 가 일한다). 배포된 뒤에는 announce
+하나로 충분하고, `aws s3 cp` 는 12시간 뒤 만료되는 그 자격증명에 의존하는 부분이라 지우는 것이
+낫다. **어느 쪽인지는 `ddpsrun explain` 이 답한다** — 이 문서가 아니라 서버에 물어본다.
+
+#### k3s 경로가 하는 검사 둘, script 가 알아야 하는 것
+
+- **크기를 대조한다.** `stat` 이 말한 바이트 수와 실제로 올라간 수가 다르면 **object 를 지우고**
+  다시 시도한다(3회). 그래서 **쓰는 중인 파일을 announce 하면 회수가 실패한다** — 잘린 파일이
+  올라가는 것이 아니라 아예 안 올라간다. 완성 뒤에 찍으라는 위 규칙이 이것 때문이다.
+- **exit 0 인데 announce 한 것이 S3 에 없으면 job 은 exit 34 로 끝난다.** 학습이 성공했는데
+  결과가 안 나갔으면 그것은 성공이 아니라는 판정이고, Succeeded 로 표시된 빈 prefix 보다 낫다.
 
 `explain` 이 "Write it there yourself" 라고만 말하는 것은 이 절이 있기 전의 문장이다.
 
@@ -348,7 +396,7 @@ echo "PACSRUN_ARTIFACT=/root/work/_probe.txt"
 
 **로그에서 그 줄은 `<internal>=/root/work/_probe.txt` 로 보인다.** gateway 의 로그 relay 가
 `PACSRUN_` 로 시작하는 이름을 가리기 때문이고(`server/ddpsrun_server/k8s.py` 의 `redact`,
-`test_k8s.py:23` 이 그 동작을 고정한다), **경로는 그대로 남으므로 확인은 된다.** 이름이 안 보이는
+`server/tests/test_k8s.py:23` 이 그 동작을 고정한다), **경로는 그대로 남으므로 확인은 된다.** 이름이 안 보이는
 것이 실패가 아니다 — 그 줄이 아예 없는 것이 실패다.
 
 ### 회차로 나눠 내보내면 중단에도 남는다

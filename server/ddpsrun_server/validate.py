@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 
 from . import catalogue
 from . import estimate as estimator
+from . import secret_expiry
 from . import models          # DDPSRUN-VENDOR-CHOICE: the two vendor lists live there
 from . import measurements
 from .measurements import INCIDENTS
@@ -149,8 +150,46 @@ def mitigations_from(env: dict[str, str], script: str | None) -> tuple[bool, boo
     return alloc_on, patch_on
 
 
+# A line that hands the real work to ANOTHER script: `bash runs/run_C.sh`,
+# `sh ./train.sh`, `./wrapper.sh`, `source setup.sh`. The submitted text is then a
+# launcher and the settings we look for live in a file we were never sent.
+CALLS_ANOTHER_SCRIPT = re.compile(
+    r'^\s*(?:exec\s+)?(?:(?:bash|sh|zsh|source|\.)\s+\S*\.sh\b|\./\S*\.sh\b)',
+    re.MULTILINE)
+
+
+def defers_to_another_script(script: str | None) -> str | None:
+    """The first line that hands the work to a script we were not sent, or None.
+
+    DDPSRUN-DEFERRED-SCRIPT. Decided 2026-09-09 after `alloc-conf-missing` fired
+    on a job whose `run_C_wrapper.sh` exported the setting three lines into the
+    file it calls. The check was not wrong about what it could see -- the
+    submitted text really has no `PYTORCH_CUDA_ALLOC_CONF` -- and it was wrong
+    about what that means. A warning that cannot be acted on (the fix is already
+    there, one file away) is worse than no warning: it teaches a reader that
+    these warnings are noise, and the next one they skip will be real.
+
+    Args:
+        script: the submitted text, or None.
+
+    Returns:
+        The offending line, stripped, so the message can quote it. None when the
+        script does its own work and the checks below can be trusted.
+    """
+    if not script:
+        return None
+    hit = CALLS_ANOTHER_SCRIPT.search(script)
+    if hit is None:
+        return None
+    line_start = script.rfind('\n', 0, hit.start()) + 1
+    line_end = script.find('\n', hit.start())
+    line = script[line_start:line_end if line_end != -1 else len(script)]
+    return line.strip()
+
+
 def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on: bool,
-                 trainer: str | None = None) -> list[Finding]:
+                 trainer: str | None = None,
+                 deferred: str | None = None) -> list[Finding]:
     """Will the largest allocation fit on the card that was asked for.
 
     Args:
@@ -158,6 +197,9 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
         vram_gb: the memory the job asked for. None for a CPU-only job.
         alloc_on: `PYTORCH_CUDA_ALLOC_CONF` is set.
         patch_on: the TRL patch runs.
+        deferred: the line from `defers_to_another_script`, or None. When set,
+            `alloc-conf-missing` is NOT reported: the setting may well be in the
+            file this script calls, and we were not sent that file.
         trainer: what `trainer_in` found, or None for unknown. The TRL patch
             edits `trl.trainer.dpo_trainer`, so telling a PPO run to apply it
             is advice that cannot work -- see DDPSRUN-TRAINER.
@@ -171,7 +213,12 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
     peak = estimator.peak_logits_gib(cap)
     findings: list[Finding] = []
 
-    if not alloc_on:
+    if not alloc_on and deferred is not None:
+        # DDPSRUN-DEFERRED-SCRIPT. Nothing to warn about and nothing to say
+        # here: the caller gets this as a `not_checked` line instead, because
+        # "we could not look" is a different sentence from "it is missing".
+        pass
+    elif not alloc_on:
         findings.append(
             Finding(
                 WARNING, "alloc-conf-missing",
@@ -676,6 +723,45 @@ def check_secrets_as_literals(env: dict[str, str]) -> list[Finding]:
     ]
 
 
+def check_secret_expiry(secrets: list[str],
+                        expiries: dict[str, str | None]) -> list[Finding]:
+    """Is any name this job asks for past the date it was stored with.
+
+    DDPSRUN-SECRET-EXPIRY. On 2026-09-08 a judge credential expired at 14:27Z
+    and nothing said so: the name was still there, the submit was accepted, and
+    the run failed at the Bedrock call an hour in on a rented GPU. The date was
+    known the whole time -- `GetFederationToken` returns it and the operator
+    stored it. Nobody looked.
+
+    Args:
+        secrets: what the job asks for.
+        expiries: name -> stored expiry, from the caller's own namespace. An
+            operator binding has no date here: it points at a Secret whose
+            lifetime is the operator's business and this server is not told.
+
+    Returns:
+        One ERROR naming every expired one. An error and not a warning because
+        the failure is certain and expensive: the value is injected, the job
+        starts, and the call that needs it is refused hours later.
+    """
+    stale = [(name, expiries.get(name)) for name in secrets
+             if secret_expiry.is_past(expiries.get(name))]
+    if not stale:
+        return []
+    listed = ", ".join(f"{name} (expired {when})" for name, when in stale)
+    return [
+        Finding(
+            ERROR, "secret-expired",
+            f"{listed}. The value is still stored and would still be injected, "
+            f"so this job would start, rent a machine, and fail at the call that "
+            f"needs the credential.",
+            "re-mint it and store it again with `ddpsrun secret-set <NAME> "
+            "--from-file <path> --expires-at <when>`. Until then nothing that "
+            "uses that name can succeed.",
+        )
+    ]
+
+
 def check_secret_names(secrets: list[str], known: dict[str, object]) -> list[Finding]:
     """Are the names in `secrets` ones this deployment actually holds.
 
@@ -813,6 +899,7 @@ def validate(
     placement_mode: str | None = None,
     secrets: list[str] | None = None,
     known_secrets: dict[str, object] | None = None,
+    secret_expiries: dict[str, str | None] | None = None,
 ) -> Validation:
     """Run every check and sort what comes back.
 
@@ -828,6 +915,8 @@ def validate(
             default. Both are needed together: whether naming a price-only
             vendor is sensible depends entirely on the mode.
         secrets: the vault words the job asks for.
+        secret_expiries: name -> the date it was stored with, for this
+            namespace's own registrations. DDPSRUN-SECRET-EXPIRY.
         known_secrets: what the deployment holds (`Settings.secret_bindings`).
             Both are needed together, and passing secrets without this would
             make every name look unknown — so a caller that cannot supply the
@@ -849,8 +938,11 @@ def validate(
     findings += check_secrets_as_literals(env)
     if known_secrets is not None:
         findings += check_secret_names(secrets or [], known_secrets)
+    findings += check_secret_expiry(secrets or [], secret_expiries or {})
     findings += check_aws_credential_collision(env, secrets or [], script)
-    findings += check_memory(cap, vram_gb, alloc_on, patch_on, trainer_in(script))
+    deferred = defers_to_another_script(script)
+    findings += check_memory(cap, vram_gb, alloc_on, patch_on, trainer_in(script),
+                             deferred=deferred)
     findings += check_caps(script, env)
     findings += check_adapter_paths(script)
     findings += check_partial_results(script)
@@ -860,6 +952,15 @@ def validate(
     findings.sort(key=lambda finding: order.get(finding.level, 3))
 
     not_checked = list(NOT_CHECKED)
+    if deferred is not None and not alloc_on:
+        not_checked.insert(
+            0,
+            f"whether {ALLOC_CONF} is set: your script hands the work to another "
+            f"one ({deferred!r}) and we were not sent that file. It may well be "
+            f"exported in there -- `run_C_wrapper.sh` does it three lines in -- so "
+            f"this is not reported as missing. Check it yourself, or send the "
+            f"script that actually runs the training as `script`.",
+        )
     if not script:
         not_checked.insert(
             0,

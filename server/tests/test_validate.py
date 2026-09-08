@@ -390,3 +390,45 @@ def test_an_export_inside_the_script_is_named_too():
 
 def test_a_job_with_no_aws_identity_of_its_own_is_silent():
     assert v.check_aws_credential_collision({"HF_TOKEN": "x"}, ["GITHUB_PAT"], "python x.py") == []
+
+
+# ------------------------------------------- DDPSRUN-DEFERRED-SCRIPT
+# 2026-09-09 결정 4번. `alloc-conf-missing` 이 오탐은 아니었지만 사용법이 갈렸다.
+
+
+def test_a_launcher_script_gets_not_checked_instead_of_a_warning():
+    """★ 조치할 수 없는 경고는 없는 경고보다 나쁘다.
+
+    `run_C_wrapper.sh` 는 자기가 부르는 파일 세 줄 안에서 그 설정을 export 한다.
+    제출된 텍스트만 보면 정말 없고, 검사는 자기가 본 것에 대해 틀리지 않았다 —
+    그것이 무슨 뜻인지에 대해 틀렸다. 조치할 수 없는 경고를 읽은 사람은 이런
+    경고를 잡음으로 배우고, 다음에 넘기는 경고는 진짜다.
+    """
+    script = "set -euo pipefail\nbash runs/run_C_wrapper.sh 2 2\n"
+    result = run(script=script, env={})
+    assert "alloc-conf-missing" not in codes(result)
+    deferred = [line for line in result.not_checked if "PYTORCH_CUDA_ALLOC_CONF" in line]
+    assert len(deferred) == 1, "대신 not_checked 에 한 줄이 온다"
+    assert "run_C_wrapper.sh" in deferred[0], "어느 줄 때문인지 인용한다"
+    assert "not reported as missing" in deferred[0]
+
+
+def test_a_script_that_does_its_own_work_still_gets_the_warning():
+    result = run(script="python -m trl.trainer.dpo --max-len 12288\n", env={})
+    assert "alloc-conf-missing" in codes(result), (
+        "스스로 학습을 돌리는 script 는 그 설정이 정말 없는 것이고, 그것은 실측된 OOM 이다")
+
+
+def test_a_launcher_that_sets_it_anyway_is_silent_either_way():
+    script = ("export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True\n"
+              "bash runs/run_C.sh\n")
+    result = run(script=script, env={})
+    assert "alloc-conf-missing" not in codes(result)
+    assert not any("PYTORCH_CUDA_ALLOC_CONF" in line for line in result.not_checked), (
+        "보였고 켜져 있으므로 못 봤다고 말할 이유가 없다")
+
+
+def test_the_launcher_rule_does_not_fire_on_a_mention():
+    for text in ('echo "then run bash setup.sh"\npython train.py\n',
+                 '# bash old_run.sh -- 옛 방식\npython train.py\n'):
+        assert v.defers_to_another_script(text) is None, text

@@ -54,6 +54,10 @@ from .config import (
     USER_SECRET_NAME,
 )
 
+# DDPSRUN-SECRET-EXPIRY. Where a registered value's expiry date is kept: an
+# annotation on the namespace's own Secret, one per name.
+EXPIRY_ANNOTATION_PREFIX = "ddpsrun.io/expires-"
+
 # The driver prints its own bookkeeping on the same stdout as the workload.
 # `PACSRUN_KEEPALIVE` is emitted every 30 seconds for the whole life of the job
 # purely so the log stream stays open; a user reading their training output does
@@ -360,8 +364,10 @@ class Cluster:
             raise NotFound(f"no pod yet for {job_name}")
         return pods.items[0].metadata.name
 
-    def user_secret_names(self, namespace: str) -> list[str]:
-        """Which names this namespace has registered. NAMES ONLY.
+    def user_secrets(self, namespace: str) -> dict[str, str | None]:
+        """Which names this namespace has registered, and when each stops working.
+
+        NAMES AND DATES ONLY, NEVER VALUES.
 
         DDPSRUN-USER-SECRET. `read_namespaced_secret` returns the values too --
         there is no "keys only" read in the Kubernetes API -- so this method
@@ -377,9 +383,17 @@ class Cluster:
             namespace: the caller's namespace.
 
         Returns:
-            Sorted key names. Empty when nothing is registered yet, which is
-            also what a namespace with no Secret answers -- a 404 here is the
-            normal state before the first `ddpsrun secret set`, not an error.
+            `{name: expires_at or None}`. Empty when nothing is registered yet,
+            which is also what a namespace with no Secret answers -- a 404 here
+            is the normal state before the first `ddpsrun secret-set`, not an
+            error.
+
+            DDPSRUN-SECRET-EXPIRY. The date lives in an ANNOTATION on the same
+            Secret, `ddpsrun.io/expires-<NAME>`, so it costs no second read and
+            no second object. An annotation and not a second key because a key
+            would show up in `GET /v1/secrets` as a name a job could ask for,
+            and `JUDGE_EXPIRES` would then be injectable as an environment
+            variable that happens to hold a date.
 
         Raises:
             ClusterError: the API server refused for any reason other than 404.
@@ -394,9 +408,12 @@ class Cluster:
             if exc.status == 404:
                 return []
             raise ClusterError(_api_message(exc)) from exc
-        return sorted((secret.data or {}).keys())
+        annotations = (secret.metadata.annotations or {}) if secret.metadata else {}
+        return {name: annotations.get(f"{EXPIRY_ANNOTATION_PREFIX}{name}")
+                for name in sorted((secret.data or {}).keys())}
 
-    def put_user_secret(self, namespace: str, name: str, value: str) -> bool:
+    def put_user_secret(self, namespace: str, name: str, value: str,
+                        expires_at: str | None = None) -> bool:
         """Store one value under `name` in this namespace, replacing any it had.
 
         Args:
@@ -422,7 +439,14 @@ class Cluster:
         which matters because this server cannot read the Secret's values and
         therefore could not rewrite the whole object even if it wanted to.
         """
-        body = {"stringData": {name: value}}
+        # DDPSRUN-SECRET-EXPIRY. The date rides along in the metadata. `None`
+        # under a merge patch DELETES the annotation, which is what re-storing a
+        # value without a date should mean: a re-minted credential that is now
+        # permanent must not keep the old one's expiry.
+        body = {
+            "stringData": {name: value},
+            "metadata": {"annotations": {f"{EXPIRY_ANNOTATION_PREFIX}{name}": expires_at}},
+        }
         try:
             self._core.patch_namespaced_secret(
                 name=USER_SECRET_NAME, namespace=namespace, body=body
@@ -445,6 +469,8 @@ class Cluster:
                         # it and that deleting it deletes people's registrations.
                         labels={"ddpsrun.io/managed-by": "ddpsrun-gw"},
                         annotations={
+                            **({f"{EXPIRY_ANNOTATION_PREFIX}{name}": expires_at}
+                               if expires_at else {}),
                             "ddpsrun.io/what": (
                                 "values registered through POST /v1/secrets by "
                                 "members of this namespace. One key per "
@@ -487,12 +513,17 @@ class Cluster:
         credential leaked, take it out now", answering "done" to the wrong name
         is the one wrong answer that matters.
         """
-        if name not in self.user_secret_names(namespace):
+        if name not in self.user_secrets(namespace):
             raise NotFound(name)
         try:
             self._core.patch_namespaced_secret(
                 name=USER_SECRET_NAME, namespace=namespace,
-                body={"data": {name: None}},
+                # The expiry annotation goes with the value. Leaving it behind
+                # would have `GET /v1/secrets` reporting a date for a name that
+                # no longer exists.
+                body={"data": {name: None},
+                      "metadata": {"annotations": {
+                          f"{EXPIRY_ANNOTATION_PREFIX}{name}": None}}},
             )
         except ApiException as exc:
             if exc.status == 404:

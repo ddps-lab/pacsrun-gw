@@ -282,6 +282,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="read the value from this file. Use - for stdin, which is also the "
         "default when this is omitted.",
     )
+    secret_set.add_argument(
+        "--expires-at", metavar="WHEN",
+        help="when this value stops working, ISO-8601 (e.g. 2026-09-10T02:27:00Z). "
+        "Worth sending for a TEMPORARY credential -- a federation token, an "
+        "assumed-role session. `validate` then refuses a job that asks for it "
+        "after that time, so the expiry is found before a GPU is rented instead "
+        "of an hour into the run.",
+    )
 
     secret_rm = sub.add_parser(
         "secret-rm", help="forget a name your namespace registered",
@@ -844,10 +852,14 @@ def cmd_secret_set(args: argparse.Namespace) -> int:
         )
         return EXIT_USAGE
 
-    answer = client_from_config().put_secret(args.name, value)
+    answer = client_from_config().put_secret(args.name, value,
+                                             expires_at=args.expires_at)
     where = answer.get("namespace", "your namespace")
     what = "stored" if answer.get("created") else "replaced"
     print(f"{what} {answer.get('name', args.name)} in {where}.")
+    if answer.get("expires_at"):
+        print(f"it stops working at {answer['expires_at']}; after that a job asking "
+              f"for it is refused by `ddpsrun validate`.")
     print(f"a job can now ask for it with `--secret {args.name}`.")
     return EXIT_OK
 

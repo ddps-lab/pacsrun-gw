@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 
 from .measurements import (
     AWS_PRICE_REGION,
+    billed_pod_rate,
     AWS_PRICED_ON,
     DEFAULT_BATCH_SIZE,
     DEFAULT_GRAD_ACCUM,
@@ -164,6 +165,14 @@ class Estimate:
     capacity_reason: str
     rate: Rate = field(
         default_factory=lambda: Rate(None, None, "no rate was looked up."))
+    # WHOSE NUMBER THE COST LINE IS. "measured" -- our throughput table answered
+    # the hours. "user-supplied" -- it did not, and `expected_hours` did, so the
+    # total is the caller's own guess multiplied by a published price. "" when
+    # there is no cost at all. A reader deciding whether to spend 21 hours has
+    # to be able to tell those apart, and before 2026-09-09 a `user-supplied`
+    # total was simply absent: the cost line went blank and the decision was
+    # made with no money in it.
+    cost_basis: str = ""
     warnings: list[str] = field(default_factory=list)
 
 
@@ -646,19 +655,34 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
             # AWS is NOT multiplied this way: it sells whole machines, so the
             # branch above reads machine prices out of the catalogue instead.
             cards = per_pod * pods
-            lo = hi = round(gpu.usd_per_hour * cards, 4)
             shape = (f"{pods} x one {gpu.name}" if per_pod == 1 else
                      f"{pods} pod(s) x {per_pod} x {gpu.name}")
-            options.append(Rate(
-                lo, hi,
-                f"RunPod {shape} on-demand at "
-                f"${gpu.usd_per_hour:.2f} per card-hour, which is what we paid on "
-                f"{gpu.priced_on}"
-                + ("" if cards == 1 else
-                   f", x {cards} cards. RunPod bills per card: baseline-c's "
-                   f"4 x A100 was billed 4 x $1.59 = $6.36/hr on 2026-09-04")
-                + ". Vendor prices move.",
-                "runpod", pods))
+            # DDPSRUN-BILLED-RATE. An INVOICE for this exact pod shape beats the
+            # multiplication, because it is what the vendor charged rather than
+            # what its list price implies. Per POD and then x pods: the bill we
+            # hold is for one pod of `per_pod` cards.
+            billed = billed_pod_rate(gpu_name, per_pod)
+            if billed is not None:
+                per_pod_rate, where = billed
+                lo = hi = round(per_pod_rate * pods, 4)
+                options.append(Rate(
+                    lo, hi,
+                    f"RunPod {shape} on-demand at ${per_pod_rate:.3f} per pod-hour, "
+                    f"which is what we were BILLED ({where}) -- not a list price and "
+                    f"not derived. Vendor prices move.",
+                    "runpod", pods))
+            else:
+                lo = hi = round(gpu.usd_per_hour * cards, 4)
+                options.append(Rate(
+                    lo, hi,
+                    f"RunPod {shape} on-demand at "
+                    f"${gpu.usd_per_hour:.2f} per card-hour, which is what we paid on "
+                    f"{gpu.priced_on}"
+                    + ("" if cards == 1 else
+                       f", x {cards} cards. RunPod bills per card: baseline-c's "
+                       f"4 x A100 was billed 4 x $1.59 = $6.36/hr on 2026-09-04")
+                    + ". Vendor prices move.",
+                    "runpod", pods))
 
     if not options:
         return Rate(None, None, " and ".join(reasons) + "." if reasons else
@@ -690,6 +714,7 @@ def estimate(
     vocab: int = QWEN3_4B_VOCAB,
     gpu_count: int = 1,
     parallelism: int = 1,
+    expected_hours: float | None = None,
     vendors: list[str] | None = None,
     asked_capacity: str | None = None,
     regions: list[str] | None = None,
@@ -793,11 +818,36 @@ def estimate(
             f"for. We recommend {kind} instead: {why}")
 
     cost_low = cost_high = None
+    cost_basis = ""
     if (rate.usd_per_hour_low is not None
             and duration.low_hours is not None
             and duration.high_hours is not None):
         cost_low = round(duration.low_hours * rate.usd_per_hour_low, 2)
         cost_high = round(duration.high_hours * rate.usd_per_hour_high, 2)
+        cost_basis = "measured"
+    elif rate.usd_per_hour_low is not None and expected_hours:
+        # ★ THE CALLER'S OWN HOURS, TIMES A PUBLISHED PRICE. Decided 2026-09-09.
+        #
+        # WHY THIS IS NOT GUESSING. The two halves of a cost have different
+        # standing and this keeps them apart. The hours are ours to refuse: a
+        # pipeline-shaped job -- vLLM logging, then a judge API, then PPO --
+        # is dominated by stretches `row_tokens` does not model, and inventing
+        # a figure repeats market-exp2 (9.14 h estimated against 17.87 h
+        # actual). The RATE is not a guess at all; it is what the vendor
+        # charges. So when the caller supplies the hours, the arithmetic is
+        # sound and the only uncertainty is theirs, which `cost_basis` says
+        # out loud.
+        #
+        # WHAT IT REPLACES. A blank cost line. On 2026-09-08 a session had to
+        # commit to a 21-hour four-card run with the total reading nothing at
+        # all, which is a decision with the money removed from it.
+        cost_low = cost_high = round(expected_hours * rate.usd_per_hour_low, 2)
+        cost_basis = "user-supplied"
+        warnings.append(
+            f"the total below is YOUR {expected_hours:g} hours x "
+            f"${rate.usd_per_hour_low:.4f}/hour, not our estimate: our time model "
+            f"cannot answer for this job and says so above. The rate is a published "
+            f"price; the hours are your figure.")
 
     if rate.usd_per_hour_low is not None:
         span = ("" if rate.usd_per_hour_high == rate.usd_per_hour_low
@@ -819,6 +869,7 @@ def estimate(
         duration=duration,
         cost_low_usd=cost_low,
         cost_high_usd=cost_high,
+        cost_basis=cost_basis,
         gpu=advice,
         capacity_type=kind,
         capacity_reason=why,

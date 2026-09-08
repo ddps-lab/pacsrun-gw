@@ -200,7 +200,26 @@ class SubmitRequest(BaseModel):
     expected_hours: float | None = Field(
         default=None,
         gt=0,
-        description="Your own guess at the runtime. Recorded, not yet acted on.",
+        description="Your own guess at the runtime. Recorded, and used for the "
+        "cost line when our own time model cannot answer -- then the estimate "
+        "labels the figure `user-supplied`, because it is your number and not "
+        "ours.",
+    )
+    continue_from: str | None = Field(
+        default=None,
+        # DDPSRUN-CONTINUE-FROM. A multi-iteration job cannot chain its own
+        # rounds today: each submit gets a fresh `resultPath` from its own job
+        # id, the wrapper's resume step reads only its own
+        # `PACSRUN_RESULT_PATH`, and the container's credential is scoped to
+        # that one prefix -- so iteration 2 cannot see iteration 1's
+        # checkpoint even though the same person submitted both. Naming the
+        # previous job is the whole fix: the server copies ITS resultPath, so
+        # both rounds read and write one place.
+        description="The job id of a previous run of yours whose result path "
+        "this job should reuse, e.g. \"job-3e1e34cb042c\". Use it to continue "
+        "a multi-iteration run: without it every submit writes to a fresh "
+        "prefix and the resume step finds nothing. Must be a job of YOURS in "
+        "the same namespace; anything else is refused.",
     )
     vendors: list[str] = Field(
         default_factory=list,
@@ -534,6 +553,21 @@ class SecretPutRequest(BaseModel):
         "your namespace, and never returned by any route: `GET /v1/secrets` "
         "answers names only. Max 64 KiB.",
     )
+    expires_at: str | None = Field(
+        default=None,
+        # DDPSRUN-SECRET-EXPIRY. Decided 2026-09-09, after a judge credential
+        # expired at 14:27Z on 2026-09-08 and the only way to find that out was
+        # to submit a job and watch it fail at the Bedrock call -- hours in, on
+        # a rented GPU. A temporary credential is the normal case here
+        # (GetFederationToken gives 36 h), so the tool has to be able to say
+        # "this one is past its date" before the money is spent.
+        description="When this value stops working, as an ISO-8601 timestamp "
+        "(e.g. \"2026-09-10T02:27:00Z\"). Optional, and only worth sending for "
+        "a TEMPORARY credential -- a federation token, an assumed-role session. "
+        "It is stored beside the value and `validate` refuses a job that asks "
+        "for a name whose date has passed, so an expiry is found before a GPU "
+        "is rented instead of an hour into the run.",
+    )
 
 
 class SecretPutResponse(BaseModel):
@@ -547,6 +581,10 @@ class SecretPutResponse(BaseModel):
         description="True when this was the first value registered in this "
         "namespace, false when a name was added to or replaced in the existing "
         "set. Says which of 'I added one' and 'I overwrote one' happened."
+    )
+    expires_at: str | None = Field(
+        default=None,
+        description="The expiry you sent, echoed so you can see it was stored.",
     )
 
 
@@ -734,6 +772,7 @@ def to_pacsjob(
     job_id: str,
     capacity_type: str | None = None,
     own_secrets: set[str] | frozenset[str] | None = None,
+    inherited_result_path: str | None = None,
 ) -> dict[str, Any]:
     """Turn a submit request into the PacsJob object to create.
 
@@ -768,8 +807,15 @@ def to_pacsjob(
         capacity_type: "on-demand" or "spot". None writes no placement at all,
             which is stage 1's behaviour and is what the tests for the identity
             fields still exercise.
+        inherited_result_path: DDPSRUN-CONTINUE-FROM. The `spec.resultPath` of
+            the job named by `continue_from`, already fetched AND already
+            checked to belong to this principal by the route. None means the
+            request named no previous job, and then this job gets its own path
+            as every job did before. Passed in rather than looked up here for
+            the same reason `own_secrets` is: this function makes no cluster
+            calls, which is what lets every test of it run without a server.
         own_secrets: the names this namespace registered itself, from
-            `Cluster.user_secret_names`. DDPSRUN-USER-SECRET. Passed in rather
+            `Cluster.user_secrets`. DDPSRUN-USER-SECRET. Passed in rather
             than read here because this function makes no cluster calls -- it
             is pure, which is what lets every test of it run without a server.
             None means "not looked up", and then only the operator's bindings
@@ -841,7 +887,14 @@ def to_pacsjob(
         # record which of them finished.
         "parallelism": request.parallelism,
         "serviceAccountName": settings.service_account,
-        "resultPath": result_path_for(settings, principal, job_id, request.name),
+        # DDPSRUN-CONTINUE-FROM. The inherited path when one was asked for, and
+        # this job's own otherwise. NOT a merge and not a fallback: if the
+        # route could not prove the previous job is this caller's, it raises
+        # rather than passing None, so a silent "you got a fresh prefix
+        # instead" -- which is how a resume step finds nothing and trains from
+        # scratch for 21 hours -- cannot happen here.
+        "resultPath": (inherited_result_path
+                       or result_path_for(settings, principal, job_id, request.name)),
     }
     if request.command:
         spec["command"] = request.command
@@ -1032,6 +1085,17 @@ class CostRange(BaseModel):
 
     low: float | None = None
     high: float | None = None
+    basis: str = Field(
+        default="",
+        # A reader deciding whether to spend 21 hours has to know whose number
+        # this is. Before 2026-09-09 there was no third state: either we had
+        # measured hours or the cost line was blank.
+        description="Whose figure the total is. `measured` -- our own "
+        "throughput table answered the hours. `user-supplied` -- it could not, "
+        "and your `expected_hours` was multiplied by a published rate, so the "
+        "arithmetic is ours and the uncertainty is yours. Empty when there is "
+        "no total at all.",
+    )
 
 
 class RateView(BaseModel):

@@ -65,7 +65,37 @@ fetch mode 에서 결과를 내보내는 길은 그 줄 하나뿐이고(script-c
 `ddpsrun estimate` 가 11 시간을 넘기면 미리 알려 준다.
 
 **이것은 cluster 전체 스위치다.** operator 의 `PACSRUN_FETCH_MODE` 환경변수를 읽으며
-(`internal/controller/vendorpod.go:1030-1035`), job 마다 켜고 끌 수 없다.
+(`PACSrun/internal/controller/vendorpod.go:1053` `fetchMode`, grep `PACSRUN-FETCH-MODE`),
+job 마다 켜고 끌 수 없다.
+
+**★ 그리고 이 증상 자체가 곧 사라진다.** k3s 경로(AWS/GCP)에 회수가 들어간 뒤로는
+**announce 한 것이 S3 에 없으면 job 이 `Succeeded` 가 아니라 exit 34 로 끝난다**
+(`PACSRUN-K3S-FETCH`, `PACSrun/driver/common/artifact_fetch.py`). 즉 "성공인데 비어 있다" 가
+"실패이고 왜인지 말한다" 로 바뀐다. 2026-09-09 현재 구현됐고 **아직 배포 전**이므로,
+그때까지는 위 두 원인이 그대로 유효하다.
+
+---
+
+## job 이 `exit 34` 로 끝났다
+
+```
+the workload exited 0 but 1 of 1 announced artifact(s) never reached s3://...
+```
+
+**학습은 성공했고 결과가 밖으로 못 나갔다.** exit 20 이 아닌 이유가 이것이다 — 프로그램은
+할 일을 했으므로 연구원 코드를 탓하면 잘못 짚는다. 30~39 대역이라 operator 가 다시 solve 하고
+vendor 가 blame 된다(`maxFetchFailures` 로 상한).
+
+driver 로그에서 이 셋 중 하나가 보인다.
+
+| 로그 | 뜻 | 조치 |
+|---|---|---|
+| `stat said ... No such file or directory` | announce 한 경로에 파일이 없다 | 경로 오타이거나, 파일을 만들기 전에 찍었다 |
+| `arrived short: N of M bytes` | 읽는 중에 끊겼다. **부분 object 는 지워졌다** | 대개 machine 회수. 다시 돌린다 |
+| `GIVING UP on ... after 3 attempts` | 세 번 다 실패 | 위 두 줄이 그 앞에 이유를 적어 뒀다 |
+
+**쓰는 중인 파일을 announce 한 경우가 가장 흔하다.** `tar` 가 닫힌 뒤에 찍는다
+(script-contract 13절).
 
 ---
 

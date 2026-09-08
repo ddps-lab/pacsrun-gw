@@ -131,6 +131,51 @@ GPUS: tuple[Gpu, ...] = (
 )
 
 # ---------------------------------------------------------------------------
+# DDPSRUN-BILLED-RATE. What a MULTI-CARD pod was actually BILLED, per hour.
+#
+# WHY THIS OVERRIDES THE MULTIPLICATION. `hourly_rate` prices a RunPod pod of N
+# cards as N x the per-card rate above, and that is sound -- RunPod bills per
+# card, proven on 2026-09-04. But a derived figure and an invoice are not the
+# same standing, and when we hold the invoice we should quote it: baseline-c's
+# four A100s came to $6.388/hr from RunPod's own `myself.currentSpendPerHr`
+# (2026-09-07), against 4 x $1.59 = $6.36 derived. The gap is 0.4% -- which is
+# exactly why this is worth doing NOW rather than after it grows: the two
+# numbers agree today, so a reader can see that the multiplication is right,
+# and the row is here so the answer stays the billed one if RunPod's list price
+# and its charge ever drift apart.
+#
+# WHAT A ROW MEANS: "we rented exactly this shape and this is what the bill
+# said". Not a list price, not an average. Add one only from a real invoice, and
+# say which invoice in the comment.
+#
+# Keys are (catalogue name, cards in one pod). The value is the whole pod's
+# hourly rate, so nothing multiplies it again.
+BILLED_POD_RATES: dict[tuple[str, int], tuple[float, str]] = {
+    # baseline-c, 4 x A100-SXM4-80GB on RunPod US-MO-1. 6.97 h at this rate is
+    # the $44.28 that `facts/cost-ledger.md` attributes to that run from
+    # RunPod's daily billing API.
+    ("A100-80GB", 4): (6.388, "2026-09-07, RunPod myself.currentSpendPerHr for baseline-c"),
+}
+
+
+def billed_pod_rate(gpu_name: str, cards: int) -> tuple[float, str] | None:
+    """The invoiced hourly rate for a pod of exactly this shape, or None.
+
+    Args:
+        gpu_name: the catalogue name, e.g. "A100-80GB".
+        cards: how many cards in ONE pod.
+
+    Returns:
+        `(usd_per_hour, where the number came from)`, or None when we have never
+        been billed for that shape -- and then the caller multiplies the
+        per-card rate, which is the honest second-best.
+    """
+    gpu = gpu_by_name(gpu_name)
+    if gpu is None:
+        return None
+    return BILLED_POD_RATES.get((gpu.name, cards))
+
+# ---------------------------------------------------------------------------
 # DDPSRUN-AWS-PRICES. What AWS charges for the cards a user may CHOOSE.
 #
 # WHY THIS TABLE EXISTS, AND WHY IT IS NOT THE ONE ABOVE. `GPUS` above is what we

@@ -162,6 +162,7 @@ Store one value so your jobs can ask for it by name. It is kept in a Kubernetes 
 |---|---|---|
 | `name` | yes | the environment variable name your script reads, e.g. HF_TOKEN |
 | `--from-file PATH` |  | read the value from this file. Use - for stdin, which is also the default when this is omitted. |
+| `--expires-at WHEN` |  | when this value stops working, ISO-8601 (e.g. 2026-09-10T02:27:00Z). Worth sending for a TEMPORARY credential -- a federation token, an assumed-role session. `validate` then refuses a job that asks for it after that time, so the expiry is found before a GPU is rented instead of an hour into the run. |
 
 ## ddpsrun secret-rm
 

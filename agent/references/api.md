@@ -84,6 +84,7 @@ What that runtime costs: the hours above times the rate below.
 
 | field | required | description |
 |---|---|---|
+| `basis` |  | Whose figure the total is. `measured` -- our own throughput table answered the hours. `user-supplied` -- it could not, and your `expected_hours` was multiplied by a published rate, so the arithmetic is ours and the uncertainty is yours. Empty when there is no total at all. |
 | `high` |  |  |
 | `low` |  |  |
 
@@ -257,9 +258,10 @@ A submit request plus the facts needed to judge it.
 | `args` |  | Arguments. With RunPod these REPLACE the image's CMD, which is how a one-line workload is expressed today. |
 | `capacity_type` |  | How the machine is bought. YOU decide this, not the server. `on-demand` costs more and is not taken away; `spot` is cheaper and can be reclaimed mid-run. Call /v1/estimate first — it answers with a recommendation and the reason. Required: leaving it out is refused rather than guessed, because a wrong value here is invisible until the job has already run somewhere you did not intend. |
 | `command` |  | Entry point override. Leave unset to keep the image's own. |
+| `continue_from` |  | The job id of a previous run of yours whose result path this job should reuse, e.g. "job-3e1e34cb042c". Use it to continue a multi-iteration run: without it every submit writes to a fresh prefix and the resume step finds nothing. Must be a job of YOURS in the same namespace; anything else is refused. |
 | `cpus` |  | CPU request, e.g. "4". |
 | `env` |  | Non-secret configuration, passed to the container verbatim. |
-| `expected_hours` |  | Your own guess at the runtime. Recorded, not yet acted on. |
+| `expected_hours` |  | Your own guess at the runtime. Recorded, and used for the cost line when our own time model cannot answer -- then the estimate labels the figure `user-supplied`, because it is your number and not ours. |
 | `gpu` |  | Omit for a CPU-only job. |
 | `image` | yes | Container image to run. |
 | `memory` |  | Memory request, e.g. "16Gi". |
@@ -411,6 +413,7 @@ The body of `PUT /v1/secrets/{name}`: one value, and nothing else.
 
 | field | required | description |
 |---|---|---|
+| `expires_at` |  | When this value stops working, as an ISO-8601 timestamp (e.g. "2026-09-10T02:27:00Z"). Optional, and only worth sending for a TEMPORARY credential -- a federation token, an assumed-role session. It is stored beside the value and `validate` refuses a job that asks for a name whose date has passed, so an expiry is found before a GPU is rented instead of an hour into the run. |
 | `value` | yes | The secret. Sent once, stored in a Kubernetes Secret in your namespace, and never returned by any route: `GET /v1/secrets` answers names only. Max 64 KiB. |
 
 ### SecretPutResponse
@@ -420,6 +423,7 @@ What `PUT /v1/secrets/{name}` answers. No value, by construction.
 | field | required | description |
 |---|---|---|
 | `created` | yes | True when this was the first value registered in this namespace, false when a name was added to or replaced in the existing set. Says which of 'I added one' and 'I overwrote one' happened. |
+| `expires_at` |  | The expiry you sent, echoed so you can see it was stored. |
 | `name` | yes | The name you can now put in `secrets`. |
 | `namespace` | yes | Where it was stored. Only jobs in this namespace can use it. |
 

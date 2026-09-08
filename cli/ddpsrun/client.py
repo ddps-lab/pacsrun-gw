@@ -146,7 +146,8 @@ class Client:
         """
         return self._call("GET", "/v1/secrets").json()
 
-    def put_secret(self, name: str, value: str) -> dict[str, Any]:
+    def put_secret(self, name: str, value: str,
+                   expires_at: str | None = None) -> dict[str, Any]:
         """Store one value under `name`, for this caller's own namespace.
 
         DDPSRUN-USER-SECRET. The one call in this file that carries a secret.
@@ -158,6 +159,8 @@ class Client:
         Args:
             name: the environment variable name, e.g. `HF_TOKEN`.
             value: the secret, already read from a file or stdin by `cli.py`.
+            expires_at: when it stops working, ISO-8601. Omitted for a value
+                that does not expire. DDPSRUN-SECRET-EXPIRY.
 
         Returns:
             `{name, namespace, created}`.
@@ -168,8 +171,11 @@ class Client:
                 502 when the cluster refused. The server's own message says
                 which.
         """
+        body: dict[str, Any] = {"value": value}
+        if expires_at:
+            body["expires_at"] = expires_at
         return self._call(
-            "PUT", f"/v1/secrets/{quote(name)}", json_body={"value": value}
+            "PUT", f"/v1/secrets/{quote(name)}", json_body=body
         ).json()
 
     def delete_secret(self, name: str) -> None:

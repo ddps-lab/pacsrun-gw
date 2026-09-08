@@ -96,6 +96,13 @@ def test_a_partly_filled_machine_carries_its_own_waste():
 
 
 def test_runpod_multiplies_by_the_card_count_because_that_is_measured():
+    """★ 2026-09-09 에 답이 $6.36 에서 $6.388 로 바뀌었다. 곱셈이 틀린 것이 아니다.
+
+    이 테스트가 지키는 사실은 "카드 수를 곱한다" 이고 그것은 그대로다. 다만 4장
+    A100 은 실제 청구서를 들고 있는 유일한 모양이라(DDPSRUN-BILLED-RATE) 그 값이
+    답이 된다. 곱셈이 여전히 옳다는 것은 두 값이 0.4% 안에서 같다는 것으로 확인하고,
+    곱셈 자체는 청구서가 없는 모양(8장)에서 시험한다.
+    """
     """이 테스트는 2026-09-08 에 반대로 뒤집혔다. 근거가 생겼기 때문이다.
 
     옛 판은 "one-card pod 로 낸 값을 곱하는 것은 미실측" 이라며 4장 구성을
@@ -108,9 +115,12 @@ def test_runpod_multiplies_by_the_card_count_because_that_is_measured():
     published price 라 답할 수 있다 -- 그 둘은 다른 질문이다.
     """
     rate = e.hourly_rate("A100-80GB", 4, 1, ["runpod"], "on-demand")
-    assert rate.usd_per_hour_low == 6.36
-    assert "per card-hour" in rate.basis
-    assert "4 cards" in rate.basis
+    assert rate.usd_per_hour_low == 6.388, "청구서를 들고 있으면 그것이 답이다"
+    assert abs(rate.usd_per_hour_low - 4 * 1.59) / rate.usd_per_hour_low < 0.005, (
+        "그리고 곱셈은 0.4% 안에서 같은 답을 낸다 -- 카드당 과금이라는 사실은 유효하다")
+    eight = e.hourly_rate("A100-80GB", 8, 1, ["runpod"], "on-demand")
+    assert eight.usd_per_hour_low == round(1.59 * 8, 4), "청구서가 없는 모양은 곱셈"
+    assert "per card-hour" in eight.basis
 
 
 def test_runpod_one_card_is_unchanged():
@@ -121,7 +131,8 @@ def test_runpod_one_card_is_unchanged():
 def test_runpod_multiplies_pods_and_cards_together():
     """2 pods x 4 cards = 8 카드분. pod 마다 자기 machine 을 빌린다."""
     rate = e.hourly_rate("A100-80GB", 4, 2, ["runpod"], "on-demand")
-    assert rate.usd_per_hour_low == round(1.59 * 8, 4)
+    # 청구서는 pod 하나에 대한 것이므로 pod 수만 곱한다.
+    assert rate.usd_per_hour_low == round(6.388 * 2, 4)
 
 
 def test_a_card_with_no_measurement_still_answers_a_rate():
@@ -323,3 +334,68 @@ def test_rows_whose_spot_beats_their_own_on_demand_are_flagged_not_dropped():
         if row.vendor != "aws" or row.usd_per_hour is None or row.spot_high is None:
             continue
         assert row.spot_high <= row.usd_per_hour * 1.001, row
+
+
+# ---------------------------------------------- 2026-09-09 결정 2번
+# 비용은 산술로, 시간 모델은 측정한 모양의 job 에만.
+
+
+def test_the_billed_rate_beats_the_multiplication_when_we_have_the_invoice():
+    """DDPSRUN-BILLED-RATE. 청구서를 들고 있으면 그것을 인용한다.
+
+    곱셈(4 x $1.59 = $6.36)도 옳다 — RunPod 은 카드당 과금이고 그것은 실측이다.
+    다만 **유도한 값과 청구서는 표준이 다르다.** baseline-c 의 네 장은
+    `myself.currentSpendPerHr` 로 $6.388/hr 였다(2026-09-07). 차이는 0.4% 이고,
+    그래서 지금 넣는 것이 맞다 — 두 값이 아직 일치하니 곱셈이 옳다는 것을 읽는
+    사람이 볼 수 있고, 나중에 list price 와 청구가 갈라지면 답은 청구 쪽으로 남는다.
+    """
+    four = e.hourly_rate("A100-80GB", 4, 1, ["runpod"], "on-demand")
+    assert four.usd_per_hour_low == 6.388
+    assert "BILLED" in four.basis
+    assert "currentSpendPerHr" in four.basis, "어느 청구서인지 문장에 있다"
+    # 곱셈은 0.4% 안에서 같은 답을 낸다.
+    assert abs(4 * 1.59 - 6.388) / 6.388 < 0.005
+
+
+def test_a_pod_shape_we_have_never_been_billed_for_still_multiplies():
+    eight = e.hourly_rate("A100-80GB", 8, 1, ["runpod"], "on-demand")
+    assert eight.usd_per_hour_low == round(1.59 * 8, 4)
+    assert "per card-hour" in eight.basis, "청구서가 없으면 정직한 차선이 곱셈이다"
+
+
+def test_two_pods_of_a_billed_shape_multiply_the_pod_rate():
+    """청구서는 pod 하나에 대한 것이므로 pod 수만 곱한다."""
+    two = e.hourly_rate("A100-80GB", 4, 2, ["runpod"], "on-demand")
+    assert two.usd_per_hour_low == round(6.388 * 2, 4)
+
+
+def test_expected_hours_gives_a_cost_when_our_time_model_cannot():
+    """★ 이것이 없던 동안 21시간 4장 job 을 비용 없이 결정하게 했다."""
+    result = e.estimate(gpu_name="A100-80GB", cap=12288, pairs=5000, epochs=1,
+                        row_tokens=None, mitigations_on=True, vendors=["runpod"],
+                        gpu_count=4, expected_hours=21.0)
+    assert result.duration.confidence == "unknown", "시간은 여전히 unknown 이 정답이다"
+    assert result.rate.usd_per_hour_low == 6.388
+    assert result.cost_low_usd == round(21.0 * 6.388, 2)
+    assert result.cost_basis == "user-supplied", (
+        "누구의 숫자인지가 응답에 있다 — 산술은 우리 것이고 불확실성은 사용자 것이다")
+    assert any("YOUR 21 hours" in w for w in result.warnings)
+
+
+def test_without_expected_hours_the_cost_stays_absent():
+    result = e.estimate(gpu_name="A100-80GB", cap=12288, pairs=5000, epochs=1,
+                        row_tokens=None, mitigations_on=True, vendors=["runpod"],
+                        gpu_count=4)
+    assert result.cost_low_usd is None
+    assert result.cost_basis == "", "비용이 없으면 basis 도 비어 있다"
+
+
+def test_a_measured_job_is_labelled_measured_and_ignores_expected_hours():
+    """시간 모델이 답할 수 있으면 사용자의 추측이 그것을 덮지 않는다."""
+    # aiops-exp1 이 실측한 조합: A100-80GB, cap 12288, 응답 5,600 토큰.
+    result = e.estimate(gpu_name="A100-80GB", cap=12288, pairs=5000, epochs=1,
+                        row_tokens=5600, mitigations_on=True, vendors=["runpod"],
+                        expected_hours=999.0)
+    assert result.duration.confidence != "unknown"
+    assert result.cost_basis == "measured"
+    assert result.cost_low_usd is not None and result.cost_low_usd < 999.0

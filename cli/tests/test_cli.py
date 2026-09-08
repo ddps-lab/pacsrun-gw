@@ -83,9 +83,10 @@ class FakeClient:
     def secrets(self):
         return self.secrets_result
 
-    def put_secret(self, name, value):
-        self.put_secrets.append((name, value))
-        return {"name": name, "namespace": "lab-alice", "created": True}
+    def put_secret(self, name, value, expires_at=None):
+        self.put_secrets.append((name, value, expires_at))
+        return {"name": name, "namespace": "lab-alice", "created": True,
+                "expires_at": expires_at}
 
     def delete_secret(self, name):
         self.deleted_secrets.append(name)
@@ -713,7 +714,7 @@ def test_the_value_is_read_from_a_file_and_never_from_argv(fake, tmp_path, capsy
     token = tmp_path / "t.txt"
     token.write_text("hf_abc123\n")          # echo 와 모든 편집기가 붙이는 개행
     assert run(["secret-set", "HF_TOKEN", "--from-file", str(token)]) == 0
-    assert fake.put_secrets == [("HF_TOKEN", "hf_abc123")], "끝의 개행은 떼고 보낸다"
+    assert fake.put_secrets == [("HF_TOKEN", "hf_abc123", None)], "끝의 개행은 떼고 보낸다"
     out = capsys.readouterr().out
     assert "hf_abc123" not in out, "성공 문구가 값을 되풀이하면 그것도 사본이다"
     assert "--secret HF_TOKEN" in out
@@ -727,7 +728,7 @@ def test_the_value_can_come_from_stdin(fake, monkeypatch):
     import io as _io
     monkeypatch.setattr(cli.sys, "stdin", _io.StringIO("rpa_xyz\n"))
     assert run(["secret-set", "RUNPOD_KEY"]) == 0
-    assert fake.put_secrets == [("RUNPOD_KEY", "rpa_xyz")]
+    assert fake.put_secrets == [("RUNPOD_KEY", "rpa_xyz", None)]
 
 
 def test_an_empty_value_stores_nothing(fake, monkeypatch):
@@ -753,3 +754,15 @@ def test_removing_one_names_what_it_means(fake, capsys):
     assert run(["secret-rm", "HF_TOKEN"]) == 0
     assert fake.deleted_secrets == ["HF_TOKEN"]
     assert "refused" in capsys.readouterr().out
+
+
+def test_an_expiry_travels_and_is_read_back(fake, tmp_path, capsys):
+    """DDPSRUN-SECRET-EXPIRY. 임시 자격증명이 정상이라 날짜가 있어야 한다."""
+    token = tmp_path / "t.txt"
+    token.write_text("tok\n")
+    assert run(["secret-set", "JUDGE_AWS_SESSION_TOKEN", "--from-file", str(token),
+                "--expires-at", "2026-09-10T02:27:00Z"]) == 0
+    assert fake.put_secrets == [("JUDGE_AWS_SESSION_TOKEN", "tok", "2026-09-10T02:27:00Z")]
+    out = capsys.readouterr().out
+    assert "stops working at 2026-09-10T02:27:00Z" in out
+    assert "tok" not in out, "성공 문구가 값을 되풀이하지 않는다"

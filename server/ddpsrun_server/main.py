@@ -55,6 +55,7 @@ from . import measurements
 from . import notify
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
+from . import secret_expiry
 from .k8s import Cluster, ClusterError, NotFound
 from . import estimate as estimator
 from . import metrics as metrics_reader
@@ -641,6 +642,10 @@ def _estimate_for(body: JudgementRequest) -> estimator.Estimate:
         mitigations_on=all(validator.mitigations_from(body.env, body.script)),
         resumable=body.training.resumable,
         vocab=body.training.vocab,
+        # The caller's own hours, used ONLY for the cost line and only when our
+        # time model has already said `unknown`. It never becomes the duration:
+        # a figure we did not measure must not be reported as ours.
+        expected_hours=body.expected_hours,
         # DDPSRUN-AWS-PRICES. These three reach the PRICE, not the runtime. The
         # throughput table was measured on one-card pods on RunPod, so neither
         # the count nor the vendor can change what we claim about step time --
@@ -740,7 +745,8 @@ def estimate_route(body: JudgementRequest, principal: PrincipalDep) -> EstimateR
             high=result.duration.high_hours,
             confidence=result.duration.confidence,
         ),
-        cost_usd=CostRange(low=result.cost_low_usd, high=result.cost_high_usd),
+        cost_usd=CostRange(low=result.cost_low_usd, high=result.cost_high_usd,
+                           basis=result.cost_basis),
         rate=RateView(
             usd_per_hour_low=result.rate.usd_per_hour_low,
             usd_per_hour_high=result.rate.usd_per_hour_high,
@@ -808,12 +814,14 @@ def validate_route(body: JudgementRequest, request: Request,
         # names a secret, so validate stays a no-cluster-call route otherwise.
         known_secrets={
             **request.app.state.settings.secret_bindings,
-            **{
-                n: "registered in this namespace"
-                for n in (_own_secret_names(request, principal.namespace)
-                          if body.secrets else [])
-            },
+            **(_own_secret_names(request, principal.namespace)
+               if body.secrets else {}),
         },
+        # DDPSRUN-SECRET-EXPIRY. Only the namespace's own registrations carry a
+        # date; an operator binding points at a Secret whose lifetime is the
+        # operator's business and this server is not told about it.
+        secret_expiries=(_own_secret_names(request, principal.namespace)
+                         if body.secrets else {}),
     )
     return ValidateResponse(
         ok=result.ok,
@@ -907,12 +915,51 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
 
     Raises:
         HTTPException: 400 when the body names an unknown secret or the CRD
-            refuses it; 502 when kube-apiserver could not be reached.
+            refuses it; 404 when `continue_from` names a job that is not this
+            caller's; 502 when kube-apiserver could not be reached.
     """
     settings: Settings = request.app.state.settings
     cluster: Cluster = request.app.state.cluster
 
     job_id = naming.new_job_id()
+
+    # DDPSRUN-CONTINUE-FROM. Chain this job onto a previous one's result path.
+    #
+    # WHY THE LOOKUP IS HERE AND NOT IN `to_pacsjob`. That function is pure --
+    # no cluster calls -- and this needs one, because the only place the
+    # previous job's `spec.resultPath` exists is the previous job. It also
+    # needs the ownership check, and `require_owner` answers 404 rather than
+    # 403 on purpose: a 403 would confirm that a job with that id exists and
+    # belongs to somebody.
+    #
+    # A JOB WITH NO resultPath IS REFUSED RATHER THAN INHERITED FROM. That is
+    # what a job submitted before this server wrote the field looks like, and
+    # copying an empty string would give the new job no destination at all --
+    # a 21-hour run whose results have nowhere to go, discovered at the end.
+    inherited_result_path = None
+    if body.continue_from:
+        try:
+            previous = require_owner(
+                cluster.get_job(principal.namespace,
+                                resolve_object_name(body.continue_from)),
+                principal)
+        except NotFound as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=(f"continue_from names {body.continue_from!r}, which is not a job of "
+                        f"yours in {principal.namespace}."),
+            ) from exc
+        except ClusterError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        inherited_result_path = ((previous.get("spec") or {}).get("resultPath") or "").strip()
+        if not inherited_result_path:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"{body.continue_from} has no spec.resultPath, so there is nothing to "
+                        f"continue from. A job applied with kubectl before this server wrote "
+                        f"that field looks like this; submit without continue_from and this "
+                        f"job gets a path of its own."),
+            )
 
     # THE CALLER DECIDES THIS, and a submit that does not is refused rather than
     # guessed. The server used to fill it from its own estimate, which let a
@@ -941,7 +988,8 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
             if body.secrets else frozenset()
         )
         obj = to_pacsjob(body, principal, settings, job_id, capacity_type,
-                         own_secrets=own)
+                         own_secrets=own,
+                         inherited_result_path=inherited_result_path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1022,6 +1070,8 @@ def secrets_route(
     # kind can be changed from here.
     own = _own_secret_names(request, namespace)
     names = sorted(set(bindings) | set(own))
+    expired = [f"{n} (expired {when})" for n, when in sorted(own.items())
+               if when and secret_expiry.is_past(when)]
     if names:
         note = ""
     else:
@@ -1033,11 +1083,20 @@ def secrets_route(
             "job instead (DDPSRUN_SECRET_BINDINGS). Values are never returned "
             "by this API."
         )
-    return SecretsResponse(names=names, own=own, note=note)
+    if expired:
+        # DDPSRUN-SECRET-EXPIRY. Said in the note rather than by hiding the name:
+        # the name still works as far as this API is concerned (the value is
+        # still there and still injectable), and what has stopped working is the
+        # credential inside it. Hiding it would make `validate`'s refusal look
+        # like a typo.
+        note = ((note + " ") if note else "") + (
+            "PAST ITS DATE: " + ", ".join(expired) + ". A job asking for one of "
+            "these is refused by `validate`. Re-store it with `ddpsrun secret-set`.")
+    return SecretsResponse(names=names, own=sorted(own), note=note)
 
 
-def _own_secret_names(request: Request, namespace: str) -> list[str]:
-    """The names this namespace registered, or an empty list when it cannot say.
+def _own_secret_names(request: Request, namespace: str) -> dict[str, str | None]:
+    """What this namespace registered, name -> expiry, or empty when it cannot say.
 
     WHY A 403 IS SWALLOWED HERE AND NOWHERE ELSE. Registering values is opt-in
     per namespace: the `ddpsrun-gw-secrets` RoleBinding is a separate onboarding
@@ -1049,9 +1108,9 @@ def _own_secret_names(request: Request, namespace: str) -> list[str]:
     route does not swallow it: there, the 403 IS the answer.
     """
     try:
-        return request.app.state.cluster.user_secret_names(namespace)
+        return request.app.state.cluster.user_secrets(namespace)
     except ClusterError:
-        return []
+        return {}
 
 
 @app.put("/v1/secrets/{name}", response_model=SecretPutResponse)
@@ -1150,11 +1209,21 @@ def put_secret(
             ),
         )
 
+    # DDPSRUN-SECRET-EXPIRY. Checked here so a typo in the date is a 400 now
+    # rather than a name that quietly never expires.
+    if body.expires_at is not None and not secret_expiry.parse(body.expires_at):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"expires_at must be an ISO-8601 timestamp, e.g. "
+                    f"2026-09-10T02:27:00Z. Got {body.expires_at!r}."),
+        )
     try:
-        created = request.app.state.cluster.put_user_secret(namespace, name, body.value)
+        created = request.app.state.cluster.put_user_secret(
+            namespace, name, body.value, expires_at=body.expires_at)
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return SecretPutResponse(name=name, namespace=namespace, created=created)
+    return SecretPutResponse(name=name, namespace=namespace, created=created,
+                             expires_at=body.expires_at)
 
 
 @app.delete("/v1/secrets/{name}", status_code=204)

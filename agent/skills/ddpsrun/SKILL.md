@@ -26,9 +26,37 @@ ddpsrun secrets     # which names `secrets:` accepts on THIS deployment
 request's `secrets: ["GITHUB_PAT"]` asks the server to open its own vault under
 that name; the server refuses a name it does not hold, and the value never
 travels through you or through the request. `ddpsrun secrets` prints the names
-that work. If the one their repository needs is not there, say so and tell them
-an operator has to store it in the cluster — do not put the value in `env`,
-where it would sit in the job spec and in every log and backup of it.
+that work, marking which the deployment holds and which this namespace
+registered itself.
+
+### ★ If a name they need is missing, THEY type the value. You never see it.
+
+`ddpsrun secret-set <NAME>` stores a value in their own namespace. Give them the
+command to run and stop there:
+
+```bash
+ddpsrun secret-set HF_TOKEN --from-file /path/to/token.txt
+# or, typed straight in and never written to disk:
+ddpsrun secret-set HF_TOKEN     # reads stdin, Ctrl-D to finish
+```
+
+**NEVER ASK THEM TO PASTE IT TO YOU, and never put it in a command you run.** A
+secret in this conversation is in the transcript; a secret in a command line is
+in their shell history, in `ps` output for every other user on that machine, and
+in any terminal recording. That is three copies nobody meant to make, in places
+nobody thinks to clear — and rotating a credential is a great deal more work
+than typing it once. The command above has no argument for the value for exactly
+this reason.
+
+**For a TEMPORARY credential, ask them to add `--expires-at`.** A federation
+token lasts 36 hours; without the date, the only way to learn it has run out is
+a job that fails at the call that needs it, hours in, on a rented machine — which
+is what happened on 2026-09-08. With it, `validate` refuses the submit and the
+GPU is never rented. `ddpsrun secrets` also marks a name as past its date.
+
+If the value belongs to the whole lab rather than one namespace, say so and tell
+them an operator stores it in the cluster instead. Either way, **do not put it in
+`env`** — that sits in the job spec, and in every log and backup of it.
 
 If `ddpsrun` is missing, `pip install ddpsrun`. If it says `not logged in`, tell the
 user to run `ddpsrun login --server <url>` and stop — you must not ask for their token.
