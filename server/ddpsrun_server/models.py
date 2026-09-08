@@ -1087,17 +1087,42 @@ def vram_gb_for(request: JudgementRequest) -> int | None:
     Args:
         request: the judgement request.
 
+    ★ IT LOOKED IN THE WRONG TABLE, fixed 2026-09-08. A named GPU was resolved
+    through `measurements.gpu_by_name`, which knows only the cards we have
+    RENTED -- two of them. `catalogue.CHOOSABLE` knows the printed memory of all
+    fourteen a request may name.
+
+    WHAT THAT COST, and it was silent. `validate.check_memory` opens with
+    `if cap is None or vram_gb is None: return []`, so asking for one of the
+    twelve unrented cards BY NAME skipped both memory checks -- the
+    `PYTORCH_CUDA_ALLOC_CONF` one and the TRL-patch one -- while asking for the
+    same card by `vram_gb` ran them. Two of validate's checks turned themselves
+    off depending on which of two equivalent ways you named a GPU, and nothing
+    said so. Measured with `gpu: {name: "L4"}` and `cap: 12288`: two findings
+    instead of four.
+
+    Both tables spell `vram_gb` the same way -- "the number printed on the
+    card" -- so this changes no number for the two cards that are in both. It
+    only stops the other twelve answering None.
+
     Returns:
         The floor in GB, or None for a CPU-only job. A request by model name is
-        resolved to that model's memory.
+        resolved to that model's printed memory.
     """
+    from . import catalogue
     from .measurements import gpu_by_name
 
     if request.gpu is None:
         return None
     if request.gpu.vram_gb:
         return request.gpu.vram_gb
-    gpu = gpu_by_name(request.gpu.name or "")
+    name = request.gpu.name or ""
+    choice = catalogue.choice_for(name)
+    if choice is not None:
+        return choice.vram_gb
+    # A name the catalogue does not know still reaches here. `check_gpu_is_buyable`
+    # is what refuses it; this only declines to invent a memory figure for it.
+    gpu = gpu_by_name(name)
     return gpu.vram_gb if gpu else None
 
 

@@ -428,3 +428,65 @@ def test_the_script_is_never_written_into_the_spec_as_its_own_field():
     copy that the operator does not read and that could disagree with the first."""
     spec = _submitted(script="python train.py")
     assert "script" not in spec
+
+
+def test_a_named_gpu_resolves_its_memory_from_the_choosable_list():
+    """★ IT LOOKED IN THE WRONG TABLE, and two checks turned themselves off.
+
+    `vram_gb_for` resolved a named GPU through `measurements.gpu_by_name`, which
+    knows only the cards we have RENTED -- two of them. So the other twelve
+    answered None, and `validate.check_memory` opens with
+    `if cap is None or vram_gb is None: return []`.
+
+    The consequence was silent and absurd: asking for an L4 BY NAME skipped the
+    PYTORCH_CUDA_ALLOC_CONF check and the TRL-patch check, while asking for the
+    same card by `vram_gb: 24` ran them. Two of validate's checks depended on
+    which of two equivalent spellings you used.
+    """
+    from ddpsrun_server.models import JudgementRequest, vram_gb_for
+
+    def asked(**gpu):
+        return vram_gb_for(JudgementRequest(name="x", image="i",
+                                            capacity_type="spot", gpu=gpu))
+
+    # All fourteen choosable cards resolve, not just the two rented ones.
+    assert asked(name="L4") == 24
+    assert asked(name="H100") == 80
+    assert asked(name="B300") == 288
+    # The two that are in both tables are unchanged: both spell `vram_gb` as
+    # "the number printed on the card".
+    assert asked(name="L40S") == 48
+    assert asked(name="A100-80GB") == 80
+    # An explicit floor still wins over any name.
+    assert asked(vram_gb=40) == 40
+    # And a name nothing knows still declines to invent a figure --
+    # `check_gpu_is_buyable` is what refuses it.
+    assert asked(name="NoSuchCard") is None
+    assert vram_gb_for(JudgementRequest(name="x", image="i",
+                                        capacity_type="spot")) is None
+
+
+def test_the_memory_checks_run_for_a_named_gpu_too():
+    """The behaviour the fix above exists for, asserted through validate rather
+    than through the helper: the same card named two ways gets the same checks."""
+    from ddpsrun_server import estimate as estimator
+    from ddpsrun_server import validate as validator
+    from ddpsrun_server.models import JudgementRequest, cap_from, vram_gb_for
+
+    def codes(**gpu):
+        request = JudgementRequest(name="x", image="i", capacity_type="spot",
+                                    gpu=gpu, script="python train.py\n",
+                                    training={"cap": 12288})
+        result = validator.validate(
+            env={}, script=request.script, cap=cap_from(request),
+            vram_gb=vram_gb_for(request),
+            job_estimate=estimator.estimate(gpu_name="L4", cap=12288, pairs=None,
+                                            epochs=None, row_tokens=None),
+            gpu_name="L4", gpu_count=1, capacity_type="spot")
+        return {f.code for f in result.findings}
+
+    by_name = codes(name="L4")
+    by_memory = codes(vram_gb=24)
+    assert "alloc-conf-missing" in by_name
+    assert "trl-patch-missing" in by_name
+    assert by_name == by_memory
