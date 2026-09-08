@@ -28,6 +28,21 @@ jobs:
           set -uo pipefail
           fail=0
           # AWS 계정번호 12자리. 자리표시자 <ACCOUNT_ID> 를 쓴다.
+          # OUR OWN job id PLACEHOLDER IS NOT AN AWS ACCOUNT NUMBER, and the account
+          # pattern cannot tell them apart: `\b[0-9]{12}\b` matches the twelve zeros
+          # in `job-000000000000`, which is what a test writes for "an id that does
+          # not exist". CI went red on 2026-09-09 for four commits over exactly
+          # that, and the history scan meant it would have stayed red forever --
+          # the string is in commits already pushed.
+          #
+          # THE FILTER BLANKS THE TOKEN AND RE-CHECKS THE LINE, rather than dropping
+          # the whole line. A line that carries a job id AND a real account number
+          # still fails, which a `grep -v job-` would have let through. The token
+          # is only ever `job-` plus twelve hex, so nothing else can match it -- and
+          # a REAL account number after a dash, which is how our bucket name carries
+          # one (`pacsrun-results-<account>-us-west-2`), is untouched.
+          strip_our_own_ids() { sed -E 's/job-[0-9a-f]{12}//g'; }
+
           check() {
             local name="$1" pat="$2"
             local hits
@@ -40,7 +55,8 @@ jobs:
             # 것을 2026-09-04 에 실증했다. -a 는 무엇이든 텍스트로 읽으므로 압축된 것은 여전히
             # 못 보지만, 압축되지 않은 binary 는 본다.
             hits=$(grep -ranE --exclude-dir=.git --exclude-dir=.venv \
-                     --exclude-dir=node_modules -e "$pat" . | grep -v '^Binary file' || true)
+                     --exclude-dir=node_modules -e "$pat" . | grep -v '^Binary file' \
+                     | strip_our_own_ids | grep -aE -e "$pat" || true)
             if [ -n "$hits" ]; then
               echo "::error::$name 이(가) 섞여 있습니다. 자리표시자로 바꾸십시오."
               echo "$hits"
@@ -55,7 +71,7 @@ jobs:
             local hits
             hits=$(git rev-list --all | while read -r c; do
                      git grep -InE -e "$pat" "$c" -- 2>/dev/null || true
-                   done)
+                   done | strip_our_own_ids | grep -aE -e "$pat" || true)
             if [ -n "$hits" ]; then
               echo "::error::$name 이(가) git 이력에 있습니다. 트리에서 지워도 남습니다."
               echo "$hits" | head -20
