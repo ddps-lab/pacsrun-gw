@@ -580,6 +580,113 @@ def check_secrets_as_literals(env: dict[str, str]) -> list[Finding]:
     ]
 
 
+def check_secret_names(secrets: list[str], known: dict[str, object]) -> list[Finding]:
+    """Are the names in `secrets` ones this deployment actually holds.
+
+    DDPSRUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` is a word that opens the
+    server's vault; submit refuses a word the vault does not have. Until
+    2026-09-08 validate did not look at these AT ALL, so a wrong name passed
+    with `Nothing blocking. EXIT=0` and the only way to learn the right one was
+    to try a submit and read the refusal — which is exactly backwards for a
+    tool whose promise is "check it before it costs anything".
+
+    Args:
+        secrets: the names the caller asked for.
+        known: the deployment's bindings, `Settings.secret_bindings`.
+
+    Returns:
+        One ERROR naming the unknown words and listing what does exist. An
+        error, not a warning: the submit WILL be refused, so this is a
+        certainty rather than a risk.
+    """
+    if not secrets:
+        return []
+    missing = [name for name in secrets if name not in known]
+    if not missing:
+        return []
+    available = ", ".join(sorted(known)) or "(none is stored for this deployment)"
+    return [
+        Finding(
+            ERROR, "secret-name-unknown",
+            f"{', '.join(missing)} is not a secret this deployment holds, so the "
+            f"submit would be refused. Stored names: {available}.",
+            "run `ddpsrun secrets` for the list. If the one you need is not "
+            "there, an operator has to store it — the value never travels "
+            "through this API, so nobody can add it from here.",
+        )
+    ]
+
+
+# The three variables PACSrun injects for the result upload. A job that needs a
+# DIFFERENT AWS account for its own work collides with them.
+_RESULT_CREDENTIAL_VARS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
+
+
+def check_aws_credential_collision(env: dict[str, str], secrets: list[str],
+                                   script: str | None) -> list[Finding]:
+    """Does this job want a second AWS identity in the same three variables.
+
+    DDPSRUN-AWS-COLLISION. PACSrun hands the container credentials for writing
+    results as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
+    A job that also calls another AWS account — Bedrock for an LLM judge, say —
+    reaches for the same three names, and boto3 reads the environment BEFORE
+    any profile, so `AWS_PROFILE` is ignored in silence. Whichever identity
+    wins, the other half of the job fails: either the judge is refused, or the
+    results cannot be collected at the end of a run that already cost money.
+
+    This was learned the hard way (2026-09-08): the fact appeared in no
+    document, and getting it wrong shows up an hour into a 21-hour job.
+
+    Args:
+        env, secrets: what the job asks to have set.
+        script: its text, when supplied.
+
+    Returns:
+        A WARNING when a second identity is visible, with the pattern that
+        works. Not an error: a job MAY legitimately override these — for
+        instance when it does not need the result upload at all.
+    """
+    asked = {name.upper() for name in list(env) + list(secrets)}
+    # A judge-shaped second identity: any AWS credential name that is NOT one
+    # of the three, e.g. JUDGE_AWS_ACCESS_KEY_ID.
+    second = sorted(
+        name for name in asked
+        if "AWS" in name and ("ACCESS_KEY" in name or "SECRET_ACCESS" in name)
+        and name not in _RESULT_CREDENTIAL_VARS
+    )
+    overwrites = sorted(name for name in asked if name in _RESULT_CREDENTIAL_VARS)
+    in_script = bool(script) and any(
+        f"export {var}" in script for var in _RESULT_CREDENTIAL_VARS
+    )
+
+    if not second and not overwrites and not in_script:
+        return []
+
+    what = []
+    if overwrites:
+        what.append(f"{', '.join(overwrites)} in the job's own variables")
+    if in_script:
+        what.append("an `export` of them inside the script")
+    if second:
+        what.append(f"a second identity in {', '.join(second)}")
+
+    return [
+        Finding(
+            WARNING, "aws-credential-collision",
+            "this job carries " + "; ".join(what) + ". PACSrun injects the "
+            "result-upload credentials as AWS_ACCESS_KEY_ID, "
+            "AWS_SECRET_ACCESS_KEY and AWS_SESSION_TOKEN, and boto3 reads the "
+            "environment before any profile — so AWS_PROFILE will not separate "
+            "them and whichever wins breaks the other half of the run.",
+            "keep the second identity under its own names and pass it "
+            "explicitly where it is used: "
+            "boto3.session.Session(aws_access_key_id=os.environ['JUDGE_AWS_ACCESS_KEY_ID'], "
+            "...). Do not overwrite the three: results are collected at the END "
+            "of the run, so a broken upload costs the whole job.",
+        )
+    ]
+
+
 # What no check here can see, because it would need the user's repository.
 NOT_CHECKED = (
     "whether the paths in your script match your repository's real layout. Our "
@@ -608,6 +715,8 @@ def validate(
     regions: list[str] | None = None,
     vendors: list[str] | None = None,
     placement_mode: str | None = None,
+    secrets: list[str] | None = None,
+    known_secrets: dict[str, object] | None = None,
 ) -> Validation:
     """Run every check and sort what comes back.
 
@@ -622,6 +731,11 @@ def validate(
         placement_mode: "ordered", "cheapest" or "compare", or None for the
             default. Both are needed together: whether naming a price-only
             vendor is sensible depends entirely on the mode.
+        secrets: the vault words the job asks for.
+        known_secrets: what the deployment holds (`Settings.secret_bindings`).
+            Both are needed together, and passing secrets without this would
+            make every name look unknown — so a caller that cannot supply the
+            bindings passes neither and the check simply does not run.
 
     Returns:
         A `Validation`. `ok` is False when any finding is an error.
@@ -630,9 +744,16 @@ def validate(
 
     findings: list[Finding] = []
     findings += check_vendors_can_run(vendors or [], placement_mode)
+    # vendors GOES IN, and until 2026-09-08 it did not: the check judged every
+    # ask against AWS's catalogue, so `vendors: ["runpod"]` left an AWS-shaped
+    # warning standing. A warning that survives the fix it asks for teaches a
+    # reader to ignore warnings.
     findings += check_gpu_is_buyable(gpu_name, gpu_count, capacity_type, parallelism,
-                                         regions)
+                                         regions, vendors or [])
     findings += check_secrets_as_literals(env)
+    if known_secrets is not None:
+        findings += check_secret_names(secrets or [], known_secrets)
+    findings += check_aws_credential_collision(env, secrets or [], script)
     findings += check_memory(cap, vram_gb, alloc_on, patch_on)
     findings += check_caps(script, env)
     findings += check_adapter_paths(script)
