@@ -353,3 +353,78 @@ def test_the_default_service_account_is_the_one_the_role_trusts(monkeypatch):
     # say so, which is why this is a default and not a constant.
     monkeypatch.setenv("DDPSRUN_SERVICE_ACCOUNT", "some-other-sa")
     assert Settings.from_env().service_account == "some-other-sa"
+
+
+# ------------------------------------------------- DDPSRUN-SCRIPTS: it has to RUN
+
+
+def _submitted(**kwargs):
+    """Turn a submit body into the PacsJob the server would create."""
+    from ddpsrun_server import naming
+    from ddpsrun_server.auth import Principal
+    from ddpsrun_server.config import Settings
+    from ddpsrun_server.models import JudgementRequest, to_pacsjob
+
+    settings = Settings.from_env({"DDPSRUN_RESULT_BUCKET": "b",
+                                  "DDPSRUN_TOKENS_PATH": "t"})
+    request = JudgementRequest(name="x", image="i", capacity_type="spot", **kwargs)
+    return to_pacsjob(request, Principal(user="u", namespace="default", team="d"),
+                      settings, naming.new_job_id(), "spot")["spec"]
+
+
+def test_a_script_with_nothing_else_is_what_runs():
+    """★ THE TRAP THIS CLOSES, and the agent skill walked straight into it.
+
+    `script` was a VALIDATE-ONLY field: four checks read the text and the submit
+    path threw it away. So `ddpsrun submit --script run.sh` created a job with no
+    command and no args -- the operator then refuses to build the driver pod
+    ("nothing to run") AFTER the job has been accepted.
+
+    agent/skills/ddpsrun/SKILL.md said: step 1 write a run.sh, step 3 validate it
+    with --script, step 4 submit. Nothing said the script had to reach `submit`
+    too. An agent following it wrote a script, checked it, submitted it, and the
+    script never ran.
+    """
+    spec = _submitted(script="python train.py --epochs 4")
+    assert spec["args"] == ["bash", "-lc", "python train.py --epochs 4"]
+    assert "command" not in spec
+
+
+def test_the_shape_is_the_one_the_scripts_route_reads_back():
+    """['bash','-lc',text] is not an arbitrary choice: it is what the screen sends
+    and the only shape GET /v1/scripts recognises. A job submitted with --script
+    therefore appears on the Scripts screen, which it would not if this wrapped
+    the text any other way."""
+    spec = _submitted(script="echo hi")
+    args = spec["args"]
+    assert len(args) == 3 and args[0] == "bash" and args[1] == "-lc"
+
+
+def test_an_explicit_args_still_wins_over_the_script():
+    """Deliberate: some jobs fetch their script inside the container, so a caller
+    who named `args` meant it. The script is then only CHECKED."""
+    spec = _submitted(script="python train.py", args=["bash", "-lc", "echo other"])
+    assert spec["args"] == ["bash", "-lc", "echo other"]
+
+
+def test_an_explicit_command_still_wins_too():
+    """Same reasoning, and it must not end up with BOTH -- a command and a
+    script-derived args on one job would run the command and silently ignore the
+    script, which is the confusing half of what was wrong before."""
+    spec = _submitted(script="python train.py", command=["/entry.sh"])
+    assert spec["command"] == ["/entry.sh"]
+    assert "args" not in spec
+
+
+def test_no_script_and_no_command_still_carries_neither():
+    """The image's own entrypoint. Unchanged, and the operator refuses it -- which
+    is correct, because a job with nothing to run is a mistake and not a default."""
+    spec = _submitted()
+    assert "args" not in spec and "command" not in spec
+
+
+def test_the_script_is_never_written_into_the_spec_as_its_own_field():
+    """It goes in as `args` and nowhere else. A `spec.script` would be a second
+    copy that the operator does not read and that could disagree with the first."""
+    spec = _submitted(script="python train.py")
+    assert "script" not in spec
