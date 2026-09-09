@@ -44,6 +44,9 @@ class FakeClient:
                                "own": ["HF_TOKEN"], "note": ""}
         self.put_secrets: list[tuple[str, str]] = []
         self.deleted_secrets: list[str] = []
+        self.execed: list[tuple[str, str, int]] = []
+        self.exec_result = {"output": "Tue Sep 10 00:00:00 UTC 2026\n",
+                            "exit_code": 0, "note": ""}
 
     def estimate(self, body):
         return self.estimate_result
@@ -93,6 +96,13 @@ class FakeClient:
 
     def schema(self):
         return {"properties": {"name": {}}}
+
+    # DDPSRUN-SHELL. Absent until 2026-09-10, which is exactly why the dispatch
+    # bug below survived every release: with no double for this call, no test
+    # could reach cmd_shell at all.
+    def exec_in_job(self, job, line, slot=0):
+        self.execed.append((job, line, slot))
+        return self.exec_result
 
 
 @pytest.fixture
@@ -781,3 +791,70 @@ def test_without_it_the_field_is_absent(fake):
                 "--capacity-type", "on-demand"]) == 0
     assert "continue_from" not in fake.submitted, (
         "안 준 것을 None 으로 보내면 서버가 그 분기를 타게 된다")
+
+
+# ------------------------------------------------------------------------ shell
+#
+# DDPSRUN-SHELL DISPATCH. `shell` had never once run. `add_subparsers(dest=...)`
+# and the `shell` subparser's own REMAINDER positional were BOTH called
+# `command`, so argparse wrote the shell line over the subcommand name:
+#
+#   ddpsrun shell job-x                 args.command = []             -> main()
+#     printed the top-level help and returned 2, which is what a user pasted
+#     on 2026-09-10 asking why the command did nothing.
+#   ddpsrun shell job-x -- nvidia-smi   args.command = ['nvidia-smi'] -> main()
+#     died on COMMANDS[['nvidia-smi']], "TypeError: unhashable type: 'list'".
+#
+# The parser keeps `command` for the shell line, because cmd_shell reads it;
+# the subcommand moved to `subcommand`.
+
+
+def test_the_subcommand_name_survives_the_shell_positional():
+    parsed = args_for(["shell", "job-x"])
+    assert parsed.subcommand == "shell", "이것이 [] 로 덮이면 main 이 help 를 찍는다"
+    assert parsed.command == [], "명령을 안 준 형태는 프롬프트를 뜻한다"
+    parsed = args_for(["shell", "job-x", "--", "nvidia-smi", "-L"])
+    assert parsed.subcommand == "shell"
+    assert parsed.command == ["nvidia-smi", "-L"]
+
+
+def test_shell_with_a_command_runs_it_once_and_returns_its_exit_code(fake, capsys):
+    assert run(["shell", "job-a8acdef80a07", "--", "date"]) == 0
+    assert fake.execed == [("job-a8acdef80a07", "date", 0)]
+    assert "Sep 10" in capsys.readouterr().out
+
+
+def test_shell_relays_the_workload_exit_code_rather_than_its_own(fake):
+    fake.exec_result = {"output": "boom\n", "exit_code": 3, "note": ""}
+    assert run(["shell", "job-a8acdef80a07", "--", "false"]) == 3, (
+        "ssh 처럼 원격의 exit code 가 그대로 나와야 한다")
+
+
+def test_a_command_still_running_at_the_timeout_is_not_reported_as_success(fake):
+    fake.exec_result = {"output": "", "exit_code": None, "note": "still running"}
+    assert run(["shell", "job-a8acdef80a07", "--", "sleep", "999"]) == 1, (
+        "exit_code None 을 0 으로 읽으면 안 끝난 명령이 성공으로 보인다")
+
+
+def test_the_slot_flag_reaches_the_client(fake):
+    """★ BEFORE the job id. argparse.REMAINDER consumes everything after the
+    positional, so this is the only order that can work."""
+    assert run(["shell", "--slot", "2", "job-a8acdef80a07", "--", "hostname"]) == 0
+    assert fake.execed[0][2] == 2
+
+
+def test_a_flag_written_after_the_job_id_is_refused_not_obeyed_silently(fake, capsys):
+    """그 순서로 쓰면 REMAINDER 가 삼켜서 slot 0 에서 돌았다 -- 요청과 다른 pod 다."""
+    assert run(["shell", "job-a8acdef80a07", "--slot", "2", "--", "hostname"]) == 2
+    assert fake.execed == [], "잘못된 pod 에서 아무것도 실행하지 않는다"
+    err = capsys.readouterr().err
+    assert "options go BEFORE the job id" in err
+    assert "shape: ddpsrun shell [--slot N] <job> -- <command>" in err
+    assert "you wrote: shell job-a8acdef80a07 --slot 2 -- hostname" in err, (
+        "무엇을 썼는지 되돌려 보여 준다 -- 고친 명령을 만들어 주지는 않는다")
+
+
+def test_every_other_subcommand_still_dispatches(fake):
+    """dest 를 바꾼 것이 나머지를 깨지 않았다는 확인."""
+    assert run(["status", "job-a8acdef80a07"]) == 0
+    assert run(["secrets"]) == 0

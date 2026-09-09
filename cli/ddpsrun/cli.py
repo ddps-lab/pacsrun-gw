@@ -225,7 +225,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--version", action="version", version=f"ddpsrun {__version__}",
         help="print the installed version and exit",
     )
-    sub = parser.add_subparsers(dest="command", metavar="<command>")
+    # ★ THE dest IS `subcommand`, NOT `command`, AND THAT IS NOT COSMETIC. The
+    # `shell` subparser has its own positional called `command` -- the shell line
+    # to run -- and argparse writes both into the SAME namespace. With both named
+    # `command` the subparser's REMAINDER overwrote the subcommand name, so
+    # `ddpsrun shell job-x` set args.command to [] and main() printed the
+    # top-level help, while `ddpsrun shell job-x -- nvidia-smi` set it to
+    # ['nvidia-smi'] and main() died on `COMMANDS[['nvidia-smi']]` with
+    # "TypeError: unhashable type: 'list'". Both forms, every version: `shell`
+    # had never once dispatched. Found 2026-09-10 from a user's paste of the
+    # help text where a command should have run.
+    sub = parser.add_subparsers(dest="subcommand", metavar="<command>")
 
     def add_json_flag(target: argparse.ArgumentParser) -> None:
         """`--json` goes on each subcommand that has something to print.
@@ -248,7 +258,25 @@ def build_parser() -> argparse.ArgumentParser:
         "supports that, and prompts otherwise so it stays out of shell history.",
     )
 
-    cancel = sub.add_parser("cancel", help="stop a job and take it off the list")
+    # ★ THE COMMAND IS `delete` AND `cancel` IS THE OLD SPELLING. It was called
+    # cancel and that name described an intention rather than the action: there
+    # is no cancelled state to move a job into, because the CRD's only stop is
+    # deleting the PacsJob (config/deploy/rbac.yaml, and the phase enum in
+    # api/v1alpha1/pacsjob_types.go carries Pending / Starting / Running /
+    # Recovering / Succeeded / Failed / Compared and nothing else). A person
+    # who reads "cancel" expects the job to still be listed afterwards, and on
+    # 2026-09-09 one asked why a cancelled job showed no cancelled state. The
+    # alias stays because scripts and every document written before today say
+    # `cancel`, and breaking those to rename a verb is not a trade worth making.
+    cancel = sub.add_parser(
+        "delete", aliases=["cancel"],
+        help="delete a job -- it stops and disappears from the list",
+        description="Deletes the PacsJob. That is the only stop the CRD offers: "
+        "PACSrun watches for the object going away and gives back whatever the "
+        "job had rented. There is no cancelled state to look at afterwards, "
+        "because there is no object left to carry one. Files already written to "
+        "the job's result path are NOT deleted.",
+    )
     cancel.add_argument("job_id", help="the id `submit` printed")
     cancel.add_argument(
         "--yes", "-y", action="store_true",
@@ -808,8 +836,36 @@ def cmd_shell(args: argparse.Namespace) -> int:
         code = answer.get("exit_code")
         return 1 if code is None else int(code)
 
+    # ★ A FLAG AFTER THE JOB ID IS SWALLOWED, so refuse it rather than run the
+    # wrong thing quietly. argparse.REMAINDER starts consuming at the token
+    # right after the `job` positional, so
+    #
+    #   ddpsrun shell job-x --slot 2 -- hostname
+    #
+    # parses as slot=0 with the command line "--slot 2 -- hostname": the user
+    # asked for pod 2 and would have got pod 0, with no message. Found
+    # 2026-09-10 while writing the first test that ever reached this function.
+    # The separator is the tell: argparse consumes a `--` that immediately
+    # follows the job id, so a `--` still sitting in the remainder -- or a
+    # remainder that begins with a dash -- means options were written late.
+    raw = list(args.command or [])
+    if raw and (raw[0].startswith("-") or "--" in raw):
+        # THE SHAPE, NOT A REBUILT LINE. A first draft printed a corrected
+        # command and got it wrong: `--slot` had already been swallowed, so it
+        # echoed the default slot and left the 2 in the workload's line
+        # ("--slot 0 job-x -- 2 hostname"). Suggesting a wrong command is worse
+        # than suggesting none, so this states the rule and the shape and lets
+        # the reader place their own flags.
+        print("error: options go BEFORE the job id. Everything after the job id "
+              "is sent to the workload as-is, so a flag written there became "
+              "part of the command line instead.", file=sys.stderr)
+        print("       shape: ddpsrun shell [--slot N] <job> -- <command>",
+              file=sys.stderr)
+        print(f"       you wrote: shell {args.job} " + " ".join(raw),
+              file=sys.stderr)
+        return EXIT_USAGE
     # argparse.REMAINDER keeps the "--" separator itself; drop it.
-    words = [w for w in (args.command or []) if w != "--"] if args.command else []
+    words = [w for w in raw if w != "--"]
     if words:
         return run_once(" ".join(words))
 
@@ -935,8 +991,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def cmd_cancel(args: argparse.Namespace) -> int:
-    """Stop a job and take it off the list.
+def cmd_delete(args: argparse.Namespace) -> int:
+    """Delete a job. It stops, and it disappears.
 
     DDPSRUN-CANCEL. A job can sit in Pending forever with nothing to do about
     it: on 2026-09-02 one asked for an L40S on spot, which RunPod refuses before
@@ -944,15 +1000,24 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     retried that same failure every eleven minutes. Until this existed the only
     way to stop it was kubectl, which is the thing this tool exists to remove.
 
-    Asks first unless --yes is given. Cancelling is not undoable and a job id is
+    Asks first unless --yes is given. The delete is not undoable and a job id is
     twelve hex characters, which is easy enough to mistype.
+
+    THE PROMPT SAYS `delete`, NOT `cancel`, since 2026-09-10. The old wording
+    let a reader expect the job to survive in some cancelled state; what
+    actually happens is that the object is removed and the row is gone. What
+    survives is the result path in S3, which the prompt now says out loud so
+    nobody deletes a job expecting to lose its output, or keeps one expecting
+    to protect it.
 
     Returns:
         0 when the job is gone, 1 when the server refused, 2 when the user said
         no at the prompt.
     """
     if not args.yes:
-        answer = input(f"cancel {args.job_id}? this cannot be undone [y/N] ").strip().lower()
+        answer = input(
+            f"delete {args.job_id}? it stops and disappears from the list; "
+            f"files already in its result path stay [y/N] ").strip().lower()
         if answer not in ("y", "yes"):
             print("left alone")
             return EXIT_USAGE
@@ -1072,7 +1137,9 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 COMMANDS = {
     "login": cmd_login,
-    "cancel": cmd_cancel,
+    "delete": cmd_delete,
+    # The old spelling, kept as an alias -- see the comment on the parser.
+    "cancel": cmd_delete,
     "logout": cmd_logout,
     "explain": cmd_explain,
     "schema": cmd_schema,
@@ -1101,12 +1168,12 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = build_parser()
     args = parser.parse_args(argv)
-    if not args.command:
+    if not args.subcommand:
         parser.print_help()
         return EXIT_USAGE
 
     try:
-        return COMMANDS[args.command](args)
+        return COMMANDS[args.subcommand](args)
     except SystemExit as exc:
         # `build_submit_body` and `client_from_config` raise SystemExit with a
         # one-line message already printed, because a traceback for "you forgot

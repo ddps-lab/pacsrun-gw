@@ -15,7 +15,7 @@ ddpsrun <command> [options]
 | command | what it does |
 |---|---|
 | `ddpsrun login` | sign in and store the result |
-| `ddpsrun cancel` | stop a job and take it off the list |
+| `ddpsrun delete` | delete a job -- it stops and disappears from the list |
 | `ddpsrun logout` | delete the stored token |
 | `ddpsrun explain` | what this tool is and how to use it (asks the server) |
 | `ddpsrun schema` | the exact shape of a submit request (asks the server) |
@@ -38,7 +38,18 @@ ddpsrun <command> [options]
 | `--server SERVER` | yes | the gateway URL, e.g. https://run.example |
 | `--token TOKEN` |  | skip the browser and use this token. For CI and scripts, which have nobody to sign in. Omitting it opens a browser when the server supports that, and prompts otherwise so it stays out of shell history. |
 
+## ddpsrun delete
+
+Deletes the PacsJob. That is the only stop the CRD offers: PACSrun watches for the object going away and gives back whatever the job had rented. There is no cancelled state to look at afterwards, because there is no object left to carry one. Files already written to the job's result path are NOT deleted.
+
+| argument | required | what it does |
+|---|---|---|
+| `job_id` | yes | the id `submit` printed |
+| `--yes`, `-y` |  | skip the confirmation. For scripts, which have nobody to answer it. |
+
 ## ddpsrun cancel
+
+Deletes the PacsJob. That is the only stop the CRD offers: PACSrun watches for the object going away and gives back whatever the job had rented. There is no cancelled state to look at afterwards, because there is no object left to carry one. Files already written to the job's result path are NOT deleted.
 
 | argument | required | what it does |
 |---|---|---|
