@@ -403,6 +403,31 @@ check(emailInToken(fakeToken({ email: "\uc5f0\uad6c\uc6d0@example.ac.kr" })) ===
       "a non-ASCII address survives the base64 decode");
 
 // ---------------------------------------------------------------------------------------------
+// DDPSRUN-UI-STALE-PANELS. A source check, not a behaviour one: drawMetrics returns early on a
+// 404 without touching its panels, so the reset has to happen in drawDetail. On 2026-09-09
+// `c-iter2-base` -- a job with no container, whose own facts row read "GPU: not yet known" --
+// showed "360 samples, 09-04 16:39 ~ 09-04 22:39" under it, four days of another job's readings
+// left behind by the previous render.
+const detail = SRC.slice(SRC.indexOf("async function drawDetail"),
+                         SRC.indexOf("const fact = (k, v) =>"));
+
+check(detail.includes('$("d-gpu-panel").hidden = true'),
+      "drawDetail hides the GPU panel on open, so a job with no container cannot show the " +
+      "previous job's samples");
+
+check(detail.includes('$("d-progress-panel").hidden = true'),
+      "and the Progress panel with it -- the same render left a progress bar behind too");
+
+check(detail.indexOf('$("d-gpu-panel").hidden = true') < detail.indexOf("drawMetrics(jobId, job)"),
+      "and it happens BEFORE drawMetrics is asked, because that function's catch cannot");
+
+// The reset must NOT be inside the poll: it runs every 5 seconds, and hiding there would blank
+// a running job's chart on one transient 502.
+const perOpen = detail.slice(0, detail.indexOf("poll.every("));
+check(perOpen.includes('$("d-gpu-panel").hidden = true'),
+      "the reset is once per open, not once per poll");
+
+// ---------------------------------------------------------------------------------------------
 console.log();
 if (failures.length) {
   console.log(`FAILED (${failures.length}):`);

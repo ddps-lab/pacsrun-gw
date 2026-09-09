@@ -452,6 +452,32 @@ async function drawDetail(jobId, ns = "") {
   $("d-log").textContent = "Waiting for output.";
   $("d-id").textContent = jobId;
 
+  /* DDPSRUN-UI-STALE-PANELS. Hide the two panels drawMetrics owns before asking
+     about THIS job, because drawMetrics cannot hide them itself on the path that
+     matters: `/v1/jobs/<id>/metrics` answers 404 for a job with no container,
+     and its `catch { return; }` leaves the screen exactly as the PREVIOUS job
+     left it.
+
+     WHAT THAT LOOKED LIKE, found 2026-09-09. `c-iter2-base` has never started a
+     container -- its placement cannot be filled, `kubectl get pods` in its
+     namespace is empty -- and its own facts row correctly read
+     "GPU: not yet known". The GPU panel under it read "360 samples, 09-04 16:39
+     ~ 09-04 22:39", which is a six-hour window belonging to a job that ran four
+     days earlier and was the last one looked at. A Progress bar from that job
+     sat there too.
+
+     IT IS NOT A LEAK, and that is worth saying because the shape resembles one:
+     the numbers came from the previous render in this browser, so they had
+     already passed DDPSRUN-OWNER-GATE for whoever is looking. The defect is
+     that they were labelled as a different job's.
+
+     WHY HERE AND NOT IN THE `catch`. This runs once per open; the catch runs on
+     every 5-second poll, and hiding there would blank a running job's chart on
+     one transient 502. Resetting on open is what fixes navigating between jobs,
+     which is the only way the stale render was reachable. */
+  $("d-gpu-panel").hidden = true;
+  $("d-progress-panel").hidden = true;
+
   // Once per open, not per poll — see the panel's comment in index.html.
   drawArtifacts(jobId);
   $("d-files-refresh").onclick = () => drawArtifacts(jobId);
