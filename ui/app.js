@@ -667,7 +667,15 @@ async function drawMetrics(jobId, job) {
     // terminal job leads with peak and names the final reading for what it is.
     const headline = done
       ? fact("Peak memory", `${peak.memory_used_mib} / ${peak.memory_total_mib} MiB (${peak.memory_percent.toFixed(0)}%)`) +
-        fact("Utilisation at peak", peak.utilization_percent + "%") +
+        // "Peak utilisation" IS NOT the utilisation inside `peak`, and printing
+        // that one was a defect. `peak` is the highest-MEMORY sample, and on
+        // job-66b46719b854 that single sample fell between steps and read 0%,
+        // under a label ("Utilisation at peak") a reader reasonably takes to
+        // mean the highest utilisation. The card's real numbers were 100% peak
+        // and 84.6% mean. Both are now shown and neither is derived from the
+        // memory peak. Reported 2026-09-10 by a user who knew the run had been
+        // busy and saw 0%.
+        fact("Peak utilisation", (m.peak_utilization_percent == null ? "-" : m.peak_utilization_percent + "%")) +
         fact("Average utilisation", (m.avg_utilization_percent == null ? "-" : m.avg_utilization_percent + "%")) +
         fact("Last reading (run ended)", `${last.utilization_percent}%, ${last.memory_used_mib} MiB`)
       : fact("Utilisation", last.utilization_percent + "%") +
@@ -1663,17 +1671,27 @@ $("d-again").onclick = () => {
 /* DDPSRUN-CANCEL. A job can sit in Pending forever with nothing to do about it,
    and until this existed the only way out was kubectl — the thing this service
    exists so that nobody needs. Deleting the PacsJob is the only stop the CRD
-   offers, so the row goes away rather than staying with a "cancelled" state. */
+   offers, so the row goes away rather than staying with a "cancelled" state.
+
+   THE BUTTON SAYS "Delete job" SINCE 2026-09-10, and it used to say "Cancel
+   job". The old word described an intention and set the wrong expectation: a
+   person who cancels expects the job to still be listed, and on 2026-09-09 one
+   asked why a cancelled job showed no cancelled state. It has none because the
+   object is gone. The confirm names what survives — the result path — because
+   that is the part people are actually afraid of losing. */
 $("d-cancel").onclick = async () => {
   const jobId = $("d-id").textContent.trim();
   if (!jobId) return;
   // A browser confirm() is the one prompt available here, and this cannot be
   // undone. Naming the job in the question matters: the id is twelve hex
   // characters and the screen is often open on the wrong one.
-  if (!window.confirm(`Cancel ${$("d-name").textContent}? This cannot be undone.`)) return;
+  if (!window.confirm(
+        `Delete ${$("d-name").textContent}?\n\n` +
+        `It stops and disappears from the list — there is no cancelled state to ` +
+        `look at afterwards. Files already written to its result path stay.`)) return;
 
   $("d-cancel").disabled = true;
-  $("d-cancel").textContent = "Cancelling...";
+  $("d-cancel").textContent = "Deleting...";
   try {
     await call(`/v1/jobs/${jobId}` + nsQuery(), { method: "DELETE" });
     poll.stop();
@@ -1682,7 +1700,7 @@ $("d-cancel").onclick = async () => {
     $("d-message").innerHTML = note("err", err.message);
   } finally {
     $("d-cancel").disabled = false;
-    $("d-cancel").textContent = "Cancel job";
+    $("d-cancel").textContent = "Delete job";
   }
 };
 

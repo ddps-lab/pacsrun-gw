@@ -1488,6 +1488,12 @@ class CardMetricsView(BaseModel):
         description="The reading with the most memory in use on THIS card.",
     )
     avg_utilization_percent: float | None = None
+    peak_utilization_percent: float | None = Field(
+        default=None,
+        description="The HIGHEST utilisation on this card, which is not the "
+        "utilisation inside `peak` -- that one is chosen by memory and can be a "
+        "sample taken between steps.",
+    )
 
 
 class MetricsResponse(BaseModel):
@@ -1512,6 +1518,15 @@ class MetricsResponse(BaseModel):
     avg_utilization_percent: float | None = Field(
         default=None,
         description="Mean utilisation over the window's samples.",
+    )
+    peak_utilization_percent: float | None = Field(
+        default=None,
+        description="The HIGHEST utilisation in the window. It is NOT "
+        "`peak_gpu.utilization_percent`: that sample is chosen by memory, and on "
+        "job-66b46719b854 (four A100s, 785 samples) the highest-memory sample "
+        "happened to fall between steps and read 0 -- against a real maximum of "
+        "100 and a mean of 84.6. Reporting the first as the peak told a reader "
+        "the GPU had been idle for a run that was not.",
     )
     cards: list[CardMetricsView] = Field(
         default_factory=list,

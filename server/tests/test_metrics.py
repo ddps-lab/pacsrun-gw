@@ -198,3 +198,40 @@ def test_the_index_of_a_per_card_line_is_not_read_as_utilisation():
     reading = m.scan(["PACSRUN_GPU_CARD=3,99,44950,81920,63,366.04"], 3600)
     assert reading.cards[0].gpu_index == 3
     assert reading.cards[0].latest.utilization_percent == 99
+
+
+def test_the_peak_utilisation_is_not_read_off_the_highest_memory_sample():
+    """★ THE 0% A FINISHED RUN REPORTED. job-66b46719b854 rented four A100s and
+    printed 785 readings per card. Its single highest-memory sample, 77,631 MiB,
+    happened to fall between steps and read utilisation 0 -- while the card's
+    real maximum was 100 and its mean 84.6. The screen labelled that sample's
+    utilisation "Utilisation at peak", so a run that had been busy for six hours
+    was reported as idle. `peak` stays memory-chosen, because memory is what
+    kills runs; the utilisation peak is now its own number.
+    """
+    # Three readings shaped like that run: busy, busier, and one fat quiet one.
+    lines = [
+        "PACSRUN_GPU=100,60000,81920,70,300",
+        "PACSRUN_GPU=90,70000,81920,71,310",
+        "PACSRUN_GPU=0,77631,81920,32,62",     # the memory peak, between steps
+    ]
+    reading = m.scan(lines, 3600)
+    assert reading.peak_gpu.memory_used_mib == 77631, "peak 은 여전히 메모리로 고른다"
+    assert reading.peak_gpu.utilization_percent == 0
+    assert reading.peak_utilization_percent == 100, (
+        "이 값이 화면의 'Peak utilisation' 이고, 위의 0 이 아니다")
+    assert reading.avg_utilization_percent == round((100 + 90 + 0) / 3, 1)
+
+
+def test_every_card_carries_its_own_utilisation_peak():
+    lines = [
+        "PACSRUN_GPU_CARD=0,100,60000,81920,70,300",
+        "PACSRUN_GPU_CARD=1,40,60000,81920,70,300",
+        "PACSRUN_GPU_CARD=0,0,77000,81920,32,62",
+        "PACSRUN_GPU_CARD=1,0,77000,81920,32,62",
+    ]
+    cards = m.scan(lines, 3600).cards
+    assert [c.gpu_index for c in cards] == [0, 1]
+    assert [c.peak_utilization_percent for c in cards] == [100, 40]
+    # And the single-card fields still describe card 0, unchanged.
+    assert m.scan(lines, 3600).peak_utilization_percent == 100

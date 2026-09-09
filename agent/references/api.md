@@ -76,6 +76,7 @@ One GPU card's readings, for a job that rents several.
 | `gpu_index` | yes |  |
 | `latest` |  |  |
 | `peak` |  | The reading with the most memory in use on THIS card. |
+| `peak_utilization_percent` |  | The HIGHEST utilisation on this card, which is not the utilisation inside `peak` -- that one is chosen by memory and can be a sample taken between steps. |
 | `series` |  |  |
 
 ### CostRange
@@ -321,6 +322,7 @@ What /v1/jobs/{id}/metrics returns.
 | `latest_gpu` |  |  |
 | `note` |  | What is missing and why, in plain words. Empty when nothing is. |
 | `peak_gpu` |  | The reading with the most memory in use. The headline for a finished job, whose latest_gpu is the idle card just before teardown (0%, 0 MiB) and says nothing about the run itself. |
+| `peak_utilization_percent` |  | The HIGHEST utilisation in the window. It is NOT `peak_gpu.utilization_percent`: that sample is chosen by memory, and on job-66b46719b854 (four A100s, 785 samples) the highest-memory sample happened to fall between steps and read 0 -- against a real maximum of 100 and a mean of 84.6. Reporting the first as the peak told a reader the GPU had been idle for a run that was not. |
 | `progress` |  |  |
 | `window_seconds` | yes | How far back the log was read. Older readings are still in the log; ask for a bigger window to see them. |
 

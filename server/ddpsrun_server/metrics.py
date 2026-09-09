@@ -169,6 +169,15 @@ class CardMetrics:
         peak: the reading with the most memory in use — what a post-mortem
             asks for, since a finished job's LAST reading is the idle card.
         avg_utilization_percent: mean utilisation over the window.
+        peak_utilization_percent: the HIGHEST utilisation in the window, which
+            is a different reading from `peak` and had to become its own field.
+            `peak` is chosen by MEMORY, and the screen used to label its
+            utilisation "Utilisation at peak" — so a run whose single
+            highest-memory sample happened to fall between steps was reported
+            as 0%. Measured on job-66b46719b854 (2026-09-09, four A100s,
+            785 samples per card): its 77,631 MiB sample read utilisation 0,
+            while the card's real maximum was 100 and its mean 84.6. A reader
+            given "0%" concludes the GPU was idle for a run that was not.
     """
 
     gpu_index: int
@@ -176,6 +185,7 @@ class CardMetrics:
     latest: GpuSample | None = None
     peak: GpuSample | None = None
     avg_utilization_percent: float | None = None
+    peak_utilization_percent: float | None = None
 
 
 @dataclass
@@ -204,6 +214,10 @@ class Metrics:
     # 0 MiB), which answers nothing about the run itself.
     peak_gpu: GpuSample | None = None
     avg_utilization_percent: float | None = None
+    # The highest utilisation seen, which peak_gpu's own utilisation is NOT --
+    # see CardMetrics.peak_utilization_percent for the run that made the
+    # difference visible.
+    peak_utilization_percent: float | None = None
     # ONE ENTRY PER CARD, lowest index first. A job renting four A100s used to
     # arrive here as one series — the watcher's `head -1` — and the screen drew
     # card 0 alone (baseline-c, 2026-09-08). The three fields above still
@@ -417,6 +431,7 @@ def scan(lines: object, window_seconds: int) -> Metrics:
             avg_utilization_percent=round(
                 sum(r.utilization_percent for r in readings) / len(readings), 1
             ),
+            peak_utilization_percent=max(r.utilization_percent for r in readings),
         )
         for index, readings in sorted(per_card.items())
         if readings
@@ -434,5 +449,6 @@ def scan(lines: object, window_seconds: int) -> Metrics:
         note=note,
         peak_gpu=first.peak if first else None,
         avg_utilization_percent=first.avg_utilization_percent if first else None,
+        peak_utilization_percent=first.peak_utilization_percent if first else None,
         cards=cards,
     )
