@@ -775,12 +775,17 @@ def judgement_body(**overrides):
 
 
 def test_estimate_reproduces_a_job_we_actually_ran(client, cluster):
-    # bank-exp2v2: 556 steps, 6.54 hours, $6.47.
+    # bank-exp2v2: 556 steps, 6.54 hours, $6.47 at the $0.99/hour we were
+    # charged. RunPod's L40S list price is $1.09 since at least 2026-09-04, so
+    # the same job prices about 10% higher now -- the hours are the measured
+    # ones and only the rate moved. See the note on test_estimate.py's
+    # test_a_job_we_have_run_before_is_priced_close_to_what_it_cost.
     result = as_alice(client, "POST", "/v1/estimate", json=judgement_body()).json()
     assert result["steps"] == 556
     assert result["hours"]["confidence"] == "measured"
     assert result["hours"]["low"] < 6.54 < result["hours"]["high"]
-    assert result["cost_usd"]["low"] < 6.47 < result["cost_usd"]["high"]
+    assert result["cost_usd"]["low"] == round(result["hours"]["low"] * 1.09, 2)
+    assert result["cost_usd"]["low"] / 6.47 - 1 < 0.11
     # And it submitted nothing.
     assert cluster.created == []
 
@@ -1342,7 +1347,12 @@ def test_the_price_table_answers_without_a_token(client):
     answer = client.get("/v1/prices")
     assert answer.status_code == 200
     body = answer.json()
-    assert len(body["rows"]) == 610
+    # 610 aws+gcp rows read from the SkyPilot catalogue, plus the 105 RunPod rows
+    # added 2026-09-09 from that vendor's own catalog endpoint.
+    assert len(body["rows"]) == 715
+    assert len([r for r in body["rows"] if r["vendor"] == "runpod"]) == 105
+    # RunPod contributes no region: it publishes one price per GPU type with no
+    # location dimension, so `regions` is still the 22 AWS ones.
     assert len(body["regions"]) == 22
     assert body["default_region"] == "us-west-2"
 
@@ -1362,12 +1372,17 @@ def test_the_price_table_filters(client):
 
 
 def test_the_price_table_says_which_basis_each_row_is(client):
-    """AWS prices a whole machine, GCP prices the cards alone. A screen that
-    sorted the two together would put GCP on top whenever it is not cheaper."""
+    """AWS and RunPod price the whole unit that runs a pod, GCP prices the cards
+    alone. A screen that sorted the two bases together would put GCP on top
+    whenever it is not cheaper."""
     body = client.get("/v1/prices").json()
     bases = {(r["vendor"], r["basis"]) for r in body["rows"]}
-    assert bases == {("aws", "machine"), ("gcp", "accelerator")}
-    assert "whole machine" in body["note"] or "price a whole machine" in body["note"]
+    assert bases == {("aws", "machine"), ("gcp", "accelerator"),
+                     ("runpod", "machine")}
+    assert "whole unit that runs a pod" in body["note"]
+    # And the note has to name BOTH read dates, because the runpod rows come
+    # from a different source on a different day.
+    assert "2026-09-08" in body["note"] and "2026-09-09" in body["note"]
 
 
 def test_regions_reach_the_estimate_through_the_route(client):

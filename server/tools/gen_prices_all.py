@@ -8,9 +8,14 @@ generated, so it also cannot be hand-edited into disagreeing with the catalogue.
 ★ TWO PRICE BASES, AND THEY ARE NOT COMPARABLE. This is the reason for the
 `basis` column rather than one number per row:
 
-  machine       AWS. `Price` is the whole machine, GPUs included, and
-                `InstanceType` names it. Dividing by the seats a pod takes gives
-                a real per-pod-hour figure.
+  machine       AWS and RunPod. `usd_per_hour` is the whole unit that runs a
+                pod, GPUs included, and `instance` names it. On AWS that is the
+                EC2 machine and `Price` states it directly; dividing by the
+                seats a pod takes gives a real per-pod-hour figure. On RunPod a
+                machine IS a pod (decider.go:686), and the vendor publishes a
+                per-GPU price, so runpod_rows() multiplies it by the card count
+                to reach the same kind of number -- see that function for the
+                invoice that measures the multiplication.
   accelerator   GCP. GPU rows carry an EMPTY InstanceType, because on GCP a GPU
                 is an accelerator ATTACHED to a machine type and the catalogue
                 prices the two separately. So $0.7192 for an L4 in
@@ -21,12 +26,19 @@ Putting those in one column would make GCP look cheapest whenever it is not, whi
 is the confident-wrong-number failure this service refuses. So `basis` travels
 with every row, and anything that RANKS rows may only rank within one basis.
 
+THREE VENDORS, TWO SOURCES, TWO READ DATES. aws and gcp are read out of the
+SkyPilot catalogue in ~/.sky/catalogs/v8; runpod is not in that tree at all and
+is read from RunPod's own catalog endpoint, the same one PACSrun's decider calls.
+The header line the generator writes carries both dates, and every consumer that
+prints "priced on" has to name the one that belongs to the rows it showed.
+
 Run: python gen_prices_all.py > .../ddpsrun_server/prices.csv
 """
 import os
 import pathlib
 import collections
 import csv
+import json
 import re
 import sys
 
@@ -34,6 +46,42 @@ AWS = os.path.expanduser("~/.sky/catalogs/v8/aws/vms.csv")
 GCP = os.path.expanduser("~/.sky/catalogs/v8/gcp/vms.csv")
 READ_ON = "2026-09-08"
 MIN_GIB = 16.0
+
+# ★ THE THIRD SOURCE IS NOT THE SkyPilot CATALOGUE. AWS and GCP come out of
+# ~/.sky/catalogs/v8, which SkyPilot fetches; RunPod is not in that tree at all
+# (checked 2026-09-09: v8 holds aws, gcp and common). Its prices come from the
+# ONE endpoint PACSrun's own decider reads, so the table cannot disagree with
+# what the cluster will be charged (pkg/decider/runpod/catalog.go:6). Refresh
+# the snapshot with the RunPod API key that is already in the cluster:
+#
+#   KEY=$(kubectl get secret pacsrun-runpod -n pacsrun-system \
+#           -o jsonpath='{.data.RUNPOD_API_KEY}' | base64 -d)
+#   mkdir -p ~/.sky/catalogs/v8/runpod
+#   curl -sS -H "Authorization: Bearer $KEY" -H "Accept: application/json" \
+#     "https://api.runpod.io/v2/catalog/gpus?include=AVAILABILITY&cloud=SECURE&product=POD" \
+#     -o ~/.sky/catalogs/v8/runpod/catalog-gpus-secure.json
+#   unset KEY
+#
+# The response carries no credential, but it is a 20 KB vendor dump and this
+# repository is PUBLIC, so it stays out of git exactly as the two vms.csv do.
+RUNPOD = os.path.expanduser("~/.sky/catalogs/v8/runpod/catalog-gpus-secure.json")
+RUNPOD_READ_ON = "2026-09-09"
+
+# ★ THE CLUSTER'S OWN REFUSALS, READ OFF THE RUNNING ConfigMap RATHER THAN
+# INVENTED, and a named-model ask does not escape them: decider.go:415-421 says
+# so in as many words -- "THE BOUND APPLIES TO A NAMED MODEL TOO ... naming
+# MI300X outright is a decline, not an override". A row for a card the cluster
+# refuses would therefore be a price for something no ask can buy.
+#
+# Read on 2026-09-09 from `kubectl get configmap pacsrun-catalog-policy -n
+# pacsrun-system`: vendorGpuDenySubstrings is the single fragment MIG (the rest
+# of that value is a commented-out Blackwell block, and parseSet drops "#"
+# lines -- internal/pacs/policy.go:492) and vendorMinGpuMemoryGB is 16. Both
+# equal PACSrun's shipped defaults (builtinDenySubstrings,
+# builtinMinGPUMemoryGB -- pkg/decider/runpod/decider.go:487-488), so this
+# table matches a cluster that sets neither key as well as this one.
+RUNPOD_DENY = ("MIG",)
+RUNPOD_MIN_MEMORY_GB = 16
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from ddpsrun_server.catalogue import CHOOSABLE            # noqa: E402
@@ -121,10 +169,160 @@ def gcp_rows():
                f"{spots[-1]:.4f}" if spots else "", zones]
 
 
+def matches_model(runpod_name: str, asked: str) -> bool:
+    """Would PACSrun's RunPod decider treat this catalog entry as `asked`?
+
+    A PORT OF matchesModel (pkg/decider/runpod/decider.go:661-669) and it has to
+    stay one. Every RunPod row below claims "an ask spelled X reaches this card",
+    and that function is the only thing in the system that decides whether it
+    does -- the name compared is the USER's own word out of
+    spec.resources.gpus.name, against RunPod's own short label, with no third
+    vocabulary in between.
+
+    THE RULE: upper-cased equal, or the RunPod label is the asked name followed
+    by a space and a variant. The trailing space is the entire reason "L4" does
+    not swallow "L40S".
+
+        asked        RunPod label     verdict
+        L40S         L40S             match, equal
+        A100         A100 SXM         match, a variant of the same family
+        L4           L40S             NO match, and the space is why
+        A100-80GB    A100 SXM         NO match. That spelling is AWS's, not a
+                                      family name, so the RunPod path declines it
+        RTXPRO6000   RTX PRO 6000     NO match. AWS writes this one without
+                                      spaces and our catalogue follows AWS
+
+    Args:
+        runpod_name: the `name` field of a catalog entry.
+        asked: the card as our catalogue spells it (catalogue.CHOOSABLE).
+
+    Returns:
+        True when the decider would call them the same GPU model.
+    """
+    a = (runpod_name or "").strip().upper()
+    b = (asked or "").strip().upper()
+    if not a or not b:
+        return False
+    return a == b or a.startswith(b + " ")
+
+
+def runpod_rows():
+    """Every (card, RunPod GPU type, GPU count) Secure Cloud will sell us.
+
+    ★ THE PUBLISHED PRICE IS PER GPU AND THIS FUNCTION MULTIPLIES IT. RunPod
+    states one `price.secure` per GPU TYPE with no location dimension at all
+    (catalog.go:8-9), and PACSrun prices a pod as `price.secure * gpusPerPod`
+    (decider.go:774). So `usd_per_hour` here is the WHOLE POD, which is why
+    these rows carry basis "machine" beside AWS's: for this vendor a machine IS
+    a pod (decider.go:686), and the number means the same thing in both.
+
+    THE MULTIPLICATION IS MEASURED, WHICH IS WHY IT IS ALLOWED HERE. baseline-c
+    rented 4 x A100 SXM on 2026-09-04 at $1.59 per GPU-hour, so the arithmetic
+    predicts $6.36/hour; RunPod's own `myself.currentSpendPerHr` read 6.388 on
+    2026-09-07, which is 0.44% above the prediction, the remainder being the
+    pod's disk. The invoice side is in .claude/memory/facts/cost-ledger.md.
+
+    WHY THE FILTERS ARE PACSrun's, COPIED NOT CHOSEN. A price for a card the
+    cluster refuses to buy is worse than no row, so the six tests below are the
+    ones the decider itself applies: Secure and a real price and maxCount
+    (sellableFor, decider.go:618-631), NVIDIA (isCUDA, decider.go:462), and the
+    cluster bound's VRAM floor and deny fragments (vendorBound.allows,
+    decider.go:573-589). The MIG partitions are the visible casualty -- "PRO
+    6000 MIG 48GB" is on Secure Cloud at $1.09 with maxCount 16 as of
+    2026-09-09, and no ask can reach it.
+
+    WHY SPOT AND REGION ARE EMPTY. RunPod sells no spot at all, so `main` flags
+    every row `no_spot`: an empty spot column that means "this vendor has none"
+    must not be read as "we did not look". And the price has no region, so
+    `region` is empty for the same reason GCP's `instance` is -- the vendor does
+    not price that dimension.
+
+    WHY BOTH VARIANTS OF A FAMILY SURVIVE while aws_rows() collapses to the
+    cheapest instance per key. AWS's key is (card, count, region) and the region
+    separates two rows; RunPod has no region, so the GPU type IS the row. They
+    are also not interchangeable: read 2026-09-09, an ask for "H100" reaches
+    H100 PCIe at $2.89/GPU, H100 NVL at $3.19 and H100 SXM at $3.49 -- a 21%
+    spread over interconnect, and the caller may want to see which one it got.
+
+    Returns:
+        (rows, unreachable). `rows` is a list of the 10 columns `main` writes,
+        `flags` excluded. `unreachable` is one (card, near-misses) pair per
+        CHOOSABLE card RunPod will not sell under our spelling, where the second
+        element holds RunPod's own labels for the same silicon when there are
+        any -- the RTXPRO6000 case. Returned rather than printed so this stays a
+        pure function, and returned rather than yielded because a generator
+        cannot hand back a second value.
+    """
+    with open(RUNPOD) as handle:
+        catalog = json.load(handle)["gpus"]
+
+    deny = tuple(f.strip().upper() for f in RUNPOD_DENY if f.strip())
+    sellable = []
+    for entry in catalog:
+        price = float((entry.get("price") or {}).get("secure") or 0)
+        cap = int((entry.get("maxCount") or {}).get("secure") or 0)
+        name = entry.get("name") or ""
+        ident = entry.get("id") or ""
+        if not entry.get("secure") or price <= 0 or cap < 1:
+            continue
+        if (entry.get("manufacturer") or "").strip().upper() != "NVIDIA":
+            continue
+        if int(entry.get("memory") or 0) < RUNPOD_MIN_MEMORY_GB:
+            continue
+        # The deny fragments are matched against BOTH the id and the short name,
+        # case-insensitively, exactly as vendorBound.allows does (decider.go:577).
+        if any(f in f"{ident} {name}".upper() for f in deny):
+            continue
+        sellable.append(entry)
+
+    rows = []
+    unreachable = []
+    for card in sorted(CARDS):
+        hits = [e for e in sellable if matches_model(e["name"], card)]
+        if not hits:
+            # A NEAR MISS IS THE CASE WORTH NAMING: RunPod has the silicon and
+            # our spelling cannot reach it. Two tests, because the two real
+            # instances of this fail in opposite directions and one rule catches
+            # only one of them:
+            #
+            #   RTXPRO6000   our name is RunPod's with the spaces taken out, so
+            #                comparing space-stripped finds 'RTX PRO 6000'.
+            #   A100-80GB    our name is RunPod's family name plus AWS's memory
+            #                suffix, so space-stripping finds nothing and the
+            #                leading model run (A100) is what matches 'A100 SXM'.
+            #
+            # Both print RunPod's own label and its stated VRAM, so the reader
+            # decides whether it is the same card rather than trusting the test.
+            flat = card.replace(" ", "").upper()
+            lead = re.match(r"[A-Za-z0-9]+", card)
+            lead = lead.group(0).upper() if lead else ""
+            near = sorted(
+                f"{e['name']!r} ({e['memory']} GB)" for e in sellable
+                if flat in e["name"].replace(" ", "").upper()
+                or (lead and e["name"].replace(" ", "").upper().startswith(lead)))
+            unreachable.append((card, near))
+            continue
+        for entry in sorted(hits, key=lambda e: e["name"]):
+            per_gpu = float(entry["price"]["secure"])
+            cap = int(entry["maxCount"]["secure"])
+            # dataCenters is the ONLY place location appears in this response,
+            # and since 2026-09-09 it lists only the data centers that can sell
+            # the type right now -- the 2026-08-10 snapshot listed all 31 with
+            # NONE for most, this one lists 5 for A100 SXM and all 5 have stock.
+            # So this count is a STOCK reading and it goes stale in minutes,
+            # which the `zones` docstring in measurements.py says out loud.
+            seen_in = len(entry.get("dataCenters") or [])
+            for count in range(1, cap + 1):
+                rows.append(["runpod", "machine", card, count, "", entry["id"],
+                             f"{per_gpu * count:.4f}", "", "", seen_in])
+    return rows, unreachable
+
+
 def main():
     out = csv.writer(sys.stdout)
-    out.writerow(["# generated by tools/gen_prices_all.py from ~/.sky/catalogs/v8 "
-                  f"on {READ_ON}. Do not hand-edit."])
+    out.writerow([f"# generated by tools/gen_prices_all.py. aws and gcp rows from "
+                  f"~/.sky/catalogs/v8 on {READ_ON}; runpod rows from RunPod's own "
+                  f"catalog API on {RUNPOD_READ_ON}. Do not hand-edit."])
     out.writerow(["vendor", "basis", "card", "gpus", "region", "instance",
                   "usd_per_hour", "spot_low", "spot_high", "zones", "flags"])
     # ★ THE RATIO CHECK, AND WHAT IT FOUND TWICE.
@@ -148,9 +346,14 @@ def main():
     # on-demand rate under pressure, and p4d.24xlarge does exactly that.
     n = collections.Counter()
     inverted = collections.Counter()
-    for row in list(aws_rows()) + list(gcp_rows()):
+    runpod, unreachable = runpod_rows()
+    for row in list(aws_rows()) + list(gcp_rows()) + runpod:
         vendor, _basis, _card, _count, _region, _inst, od, _lo, hi = row[:9]
-        flags = ""
+        # `no_spot` is a STATEMENT, not a missing value. RunPod sells no spot at
+        # all, and without the flag a reader has to guess whether the two empty
+        # spot columns mean "none exists" or "we never looked" -- the same
+        # distinction `unknown` carries everywhere else in this service.
+        flags = "no_spot" if vendor == "runpod" else ""
         if od and hi and float(hi) > float(od) * 1.001:
             flags = "spot_above_ondemand"
             inverted[vendor] += 1
@@ -159,6 +362,15 @@ def main():
     for vendor, count in sorted(n.items()):
         print(f"# {vendor} {count} rows, {inverted[vendor]} flagged "
               f"spot_above_ondemand", file=sys.stderr)
+    # ★ WHAT RUNPOD WILL NOT SELL UNDER OUR SPELLING, printed because a card
+    # silently absent from 105 rows is indistinguishable from one RunPod does
+    # not stock. A near miss on the right is the interesting line: it means
+    # RunPod HAS the card and the name in catalogue.CHOOSABLE cannot reach it.
+    for card, near in unreachable:
+        print(f"# runpod sells no card matching {card!r}"
+              + (f" -- but it sells {', '.join(near)}, which matchesModel does "
+                 f"not accept for that spelling" if near else ""),
+              file=sys.stderr)
 
 
 if __name__ == "__main__":

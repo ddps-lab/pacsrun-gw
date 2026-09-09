@@ -101,11 +101,34 @@ CHOOSABLE: tuple[Choice, ...] = (
     Choice("RTX PRO 4500", 32),
     Choice("V100-32GB", 32),
     Choice("L40S", 48),
-    Choice("RTXPRO6000", 96),
-    Choice("A100", 40, "AWS sells it only as a whole 8-GPU machine. RunPod sells "
-                       "it singly, but RunPod does not sell spot."),
-    Choice("A100-80GB", 80, "AWS sells it only as a whole 8-GPU machine. RunPod "
-                            "sells it singly, but RunPod does not sell spot."),
+    # ★ ONE SPELLING CANNOT REACH BOTH VENDORS, and this is the card where that
+    # shows. AWS writes it without spaces (134 rows in vms.csv) and this
+    # catalogue follows AWS because the AWS decider compares AcceleratorName
+    # with an exact match. RunPod writes the same card "RTX PRO 6000", and its
+    # decider takes a family name plus a variant, which this spelling is not --
+    # so no name offered here reaches it on that vendor. AWS's own list is
+    # inconsistent about it: the 4500 IS spelled with spaces and does reach both.
+    Choice("RTXPRO6000", 96, "AWS spells this card without spaces and RunPod "
+                             "spells it 'RTX PRO 6000', so this name reaches AWS "
+                             "only. RunPod sells it at $2.09 per card-hour "
+                             "(read 2026-09-09) but no name here asks for it."),
+    # ★ THESE TWO NAMES DO NOT REACH THE SAME VENDORS, corrected 2026-09-09.
+    # Both notes used to say "RunPod sells it singly", which was true of the
+    # CARD and false of the NAME `A100-80GB`: RunPod's decider matches a family
+    # name plus a variant (decider.go:661), so "A100" reaches its "A100 PCIe"
+    # and "A100 SXM" while "A100-80GB" -- AWS's spelling, the family plus AWS's
+    # memory suffix -- matches neither. baseline-c asked for `A100` and that is
+    # why it ran. The VRAM is the other way round from what the names suggest:
+    # AWS's A100 rows are the 40 GB p4d, RunPod's A100s are both 80 GB.
+    Choice("A100", 40, "AWS sells it only as a whole 8-GPU machine, and AWS's is "
+                       "the 40 GB card. RunPod sells it singly and RunPod's are "
+                       "80 GB ($1.59 per card-hour, read 2026-09-09), but RunPod "
+                       "does not sell spot."),
+    Choice("A100-80GB", 80, "AWS sells it only as a whole 8-GPU machine. This "
+                            "spelling reaches AWS only -- RunPod's 80 GB A100s "
+                            "are named 'A100 PCIe' and 'A100 SXM', which the "
+                            "RunPod path does not match to this name. Ask for "
+                            "'A100' to reach them."),
     Choice("H100", 80),
     Choice("H200", 141),
     Choice("B200", 180),

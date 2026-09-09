@@ -127,8 +127,11 @@ BEFORE YOU SUBMIT
   that fail separately: how many hours needs a measurement of ours, one hour's
   price is published. So "cost_usd": null next to a real "rate" means we know
   what an hour costs and not how many hours -- and the rate belongs to a vendor,
-  because the one card both vendors supply is $0.99/hour on RunPod and
-  $1.8610/hour on AWS. Send "vendors" if you care which.
+  because eight cards are priced on both and RunPod is cheaper on every one of
+  them: an L40S is $1.09/pod-hour there against $1.8610/machine-hour on AWS, an
+  H100 $2.89 against $6.88. For the A100, H200, B200 and B300, AWS sells no
+  single-card machine at all and RunPod builds a one-card pod. Send "vendors" if
+  you care which, and read GET /v1/prices?vendor=runpod for that vendor's rows.
 
 WHAT IS NOT BUILT YET
   No upload endpoint, so your command must fetch its own code and data. What

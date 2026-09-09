@@ -677,15 +677,23 @@ def prices_route(
     there was no way to ask for another region either. Both halves are fixed
     together, because a price you can look at and not request is not much use.
 
-    THE TWO BASES ARE NOT COMPARABLE and the answer says so per row. AWS rows
-    price a whole machine; GCP rows price the accelerator alone, because a GPU
-    there attaches to a machine type the catalogue prices separately. Sorting the
-    two together would put GCP on top whenever it is not actually cheaper.
+    THE TWO BASES ARE NOT COMPARABLE and the answer says so per row. AWS and
+    RunPod rows price a whole unit that runs a pod; GCP rows price the
+    accelerator alone, because a GPU there attaches to a machine type the
+    catalogue prices separately. Sorting the two together would put GCP on top
+    whenever it is not actually cheaper.
+
+    THREE VENDORS SINCE 2026-09-09, AND TWO SOURCES. aws and gcp come out of the
+    SkyPilot catalogue; runpod's 105 rows come from RunPod's own catalog endpoint,
+    the one PACSrun's decider calls, so they were read on a different day and
+    `note` names both dates. RunPod rows carry no region (that vendor publishes
+    one price per GPU type with no location dimension) and no spot price (it
+    sells none, which the `no_spot` flag states rather than leaving to guesswork).
 
     Args:
         card: filter to one card, as the catalogue spells it.
-        vendor: 'aws' or 'gcp'.
-        region: one region.
+        vendor: 'aws', 'gcp' or 'runpod'.
+        region: one region. Matches no RunPod row, by the reason above.
 
     Returns:
         Every matching row, the AWS region list, and which region an ask that
@@ -713,14 +721,19 @@ def prices_route(
         default_region=measurements.DEFAULT_AWS_REGION,
         priced_on=measurements.AWS_PRICED_ON,
         note=(
-            f"Read from the SkyPilot catalogue on {measurements.AWS_PRICED_ON}. "
-            f"On-demand is published per region and moves rarely; spot is per "
-            f"zone and moves continuously, so it is given as the range across "
-            f"the zones in that one snapshot. An ask that names no region gets "
-            f"{measurements.DEFAULT_AWS_REGION} and nothing else, so name a "
-            f"region in placement.regions to reach any other row here. AWS rows "
-            f"price a whole machine; GCP rows price the cards alone and the VM "
-            f"they attach to is extra."
+            f"aws and gcp rows were read from the SkyPilot catalogue on "
+            f"{measurements.AWS_PRICED_ON}; runpod rows from RunPod's own catalog "
+            f"API on {measurements.RUNPOD_PRICED_ON}. On-demand is published per "
+            f"region and moves rarely; spot is per zone and moves continuously, so "
+            f"it is given as the range across the zones in that one snapshot. An "
+            f"ask that names no region gets {measurements.DEFAULT_AWS_REGION} and "
+            f"nothing else, so name a region in placement.regions to reach any "
+            f"other AWS row here. AWS and RunPod rows price the whole unit that "
+            f"runs a pod; GCP rows price the cards alone and the VM they attach to "
+            f"is extra. A RunPod row has no region because that vendor publishes "
+            f"one price per GPU type with no location dimension, and no spot price "
+            f"because it sells no spot -- its `zones` is instead how many data "
+            f"centers had stock at the moment of the snapshot, which goes stale."
         ),
     )
 

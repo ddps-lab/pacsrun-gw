@@ -768,10 +768,32 @@ def _unfillable_remedy(card: str, gpu_count: int, pods: int,
                        f"{per_pod * need} and lets {article} {smallest}-card "
                        f"machine through")
     parts = [x for x in (by_count, by_pods) if x]
-    tail = ("" if aws_only else
-            " Or submit on-demand, which keeps RunPod as a candidate: RunPod "
-            "sells some cards singly, though we hold no table of its machine "
-            "sizes and cannot promise it fits.")
+    # ★ THE RUNPOD HALF USED TO BE A HEDGE AND IS NOW AN ANSWER. Until
+    # 2026-09-09 this sentence read "RunPod sells some cards singly, though we
+    # hold no table of its machine sizes and cannot promise it fits" -- a remedy
+    # that told the reader to try something and could not say what would happen.
+    # prices.csv now carries 105 RunPod rows read from the endpoint PACSrun's
+    # own decider calls, so the pod and its price can be named, and so can the
+    # two ways RunPod fails: a count it will not build, or a NAME its catalogue
+    # has no entry for (`A100-80GB` and `RTXPRO6000` are both that second case).
+    tail = ""
+    if not aws_only:
+        pod = measurements.runpod_cheapest(card, per_pod)
+        rp_counts = measurements.runpod_counts(card)
+        if pod is not None:
+            tail = (f" Or submit on-demand, which keeps RunPod as a candidate -- "
+                    f"and RunPod DOES fill this shape: one {pod.instance} pod of "
+                    f"{pod.gpus} card(s) at ${pod.usd_per_hour:.2f} per pod-hour, "
+                    f"its published price read on {measurements.RUNPOD_PRICED_ON}.")
+        elif rp_counts:
+            tail = (f" On-demand would keep RunPod as a candidate but not help "
+                    f"here: RunPod attaches at most {max(rp_counts)} of this card "
+                    f"to one pod.")
+        else:
+            tail = (f" On-demand would keep RunPod as a candidate but not help "
+                    f"here: nothing in RunPod's catalogue matches the name "
+                    f"{card!r} (read {measurements.RUNPOD_PRICED_ON}), so that "
+                    f"vendor cannot answer this ask under any count.")
     if not parts:
         return f"No count fits this card on AWS.{tail}"
     joined = ", or ".join(parts)
@@ -840,10 +862,12 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
         parallelism: how many pods, because the ceiling is per JOB not per pod.
         regions: `["aws/us-west-2", ...]`. The sizes on offer differ by region.
         vendors: the vendor names the job named. Empty means no restriction, so
-            AWS is a candidate. When AWS is NOT among them, the AWS size check
-            is skipped rather than softened -- we hold no table of RunPod's
-            machine sizes, and inventing a verdict from a table we do not have
-            would be worse than saying nothing.
+            both AWS and RunPod are candidates. When AWS is NOT among them the
+            AWS size check is skipped rather than softened, because an AWS row
+            proves nothing about a RunPod purchase -- and since 2026-09-09 the
+            RunPod side is not silence either: prices.csv carries that vendor's
+            own machine sizes, so `_runpod_capacity` answers the same question
+            against the same evidence PACSrun's decider will use.
 
     Returns:
         Findings. Nothing when no GPU was asked for.
@@ -886,9 +910,10 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
             choice.name, gpu_count, pods, aws_regions):
         sizes = ", ".join(str(n) for n in counts)
         ceiling = max(1, gpu_count) * pods
-        # RunPod is only a candidate on on-demand, and we have no table of its
-        # machine sizes -- so the severity says how much room is left, and the
-        # remedy never claims RunPod WILL fill it.
+        # RunPod is only a candidate on on-demand, so the severity says how
+        # much room is left: on spot there is no other vendor and this is an
+        # ERROR, otherwise RunPod may still answer and the remedy now says
+        # whether it does, out of that vendor's own rows.
         aws_only = capacity_type == "spot"
         where = ", ".join(aws_regions) if aws_regions else measurements.AWS_PRICE_REGION
         findings.append(Finding(
@@ -906,6 +931,56 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
               f"Pending and retry rather than fail."
             + (f" {choice.note}" if choice.note else ""),
             _unfillable_remedy(choice.name, gpu_count, pods, counts, aws_only),
+        ))
+
+    # ★ DDPSRUN-RUNPOD-CAPACITY, new on 2026-09-09 and only possible now. This
+    # asks RunPod the question the AWS block above asks AWS -- "can this vendor
+    # be sold this shape at all" -- and until prices.csv carried RunPod rows
+    # there was nothing to ask it with. It matters for the same reason: an ask
+    # no vendor can fill is not refused, it sits in Pending and retries, which
+    # is the 2026-09-02 L40S incident this whole function exists for.
+    #
+    # THE TWO WAYS RUNPOD REFUSES, and they need opposite fixes:
+    #   the count  it will not attach that many cards to one pod (an L4 caps at
+    #              9, an RTX A4500 at 4). Over the cap the pod-create call
+    #              returns the same HTTP 400 body as out-of-stock, so PACSrun
+    #              records a capacity failure and retries forever.
+    #   the NAME   its catalogue has no entry matching the spelling. `A100-80GB`
+    #              and `RTXPRO6000` are both this case, and neither is a typo --
+    #              they are AWS's spellings, which is what this catalogue
+    #              follows, and RunPod writes the same silicon as "A100 SXM" and
+    #              "RTX PRO 6000". `choice.note` carries the reachable spelling.
+    #
+    # SPOT IS EXCLUDED FIRST because RunPod is not a candidate there at all, and
+    # the two findings below already say so; adding a second refusal for the same
+    # job would be noise.
+    runpod_is_candidate = (not vendors or "runpod" in vendors) and capacity_type != "spot"
+    if runpod_is_candidate and measurements.runpod_cheapest(
+            choice.name, gpu_count) is None:
+        rp_counts = measurements.runpod_counts(choice.name)
+        # RunPod ALONE means Pending forever; with AWS still in the list the
+        # solve has somewhere else to land, so this is information, not a fault.
+        rp_alone = bool(vendors) and "aws" not in vendors
+        if rp_counts:
+            what = (f"RunPod sells the {choice.name} but attaches at most "
+                    f"{max(rp_counts)} of them to one pod, and this ask wants "
+                    f"{max(1, gpu_count)} per pod. Over that cap RunPod answers the "
+                    f"pod-create call with the same HTTP 400 body as out-of-stock, so "
+                    f"PACSrun records a capacity failure and retries.")
+            fix = f"Set gpu.count to {max(rp_counts)} or below"
+        else:
+            what = (f"nothing in RunPod's Secure Cloud catalogue matches the name "
+                    f"{choice.name!r} (read {measurements.RUNPOD_PRICED_ON}). Its "
+                    f"decider matches a family name plus a variant "
+                    f"(pkg/decider/runpod/decider.go:661), so the names it can answer "
+                    f"are {', '.join(measurements.RUNPOD_CARDS)}.")
+            fix = "Ask for one of those names"
+        findings.append(Finding(
+            ERROR if rp_alone else INFO, "runpod-cannot-fill",
+            what + (f" {choice.note}" if choice.note else ""),
+            fix + ("." if rp_alone else
+                   ", or leave this as it is -- AWS is still a candidate and the "
+                   "solve can land there instead."),
         ))
 
     if capacity_type == "spot" and vendors and "aws" not in vendors:

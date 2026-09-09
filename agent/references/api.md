@@ -340,17 +340,17 @@ One row of the catalogue's price table.
 
 | field | required | description |
 |---|---|---|
-| `basis` | yes | WHAT THE PRICE COVERS, and the two values must not be compared. 'machine' (AWS) is the whole instance including its GPUs, and `instance` names it. 'accelerator' (GCP) is the cards ALONE -- a GPU on GCP attaches to a machine type and the catalogue prices the two separately, so the VM is extra and the catalogue does not say which VM. |
+| `basis` | yes | WHAT THE PRICE COVERS, and the two values must not be compared. 'machine' (AWS, RunPod) is the whole unit that runs a pod, GPUs included, and `instance` names it -- an EC2 instance type on AWS, a RunPod GPU type id on RunPod, where a machine IS a pod. RunPod publishes a per-GPU price and this column is that price times `gpus`. 'accelerator' (GCP) is the cards ALONE -- a GPU on GCP attaches to a machine type and the catalogue prices the two separately, so the VM is extra and the catalogue does not say which VM. |
 | `card` | yes |  |
-| `flags` |  | 'spot_above_ondemand' when this row's spot price exceeds its own on-demand price. 38 GCP rows do, consistently and with both zones of a region agreeing, which is the catalogue's own content. No AWS row does. Nothing ranks a flagged row. |
+| `flags` |  | 'spot_above_ondemand' when this row's spot price exceeds its own on-demand price. 38 GCP rows do, consistently and with both zones of a region agreeing, which is the catalogue's own content. No AWS row does. 'no_spot' on every RunPod row, which is a statement that the vendor sells none rather than a missing value. Nothing ranks a flagged row. |
 | `gpus` | yes | How many of that card this row covers. |
-| `instance` | yes | Machine type. Empty on every GCP row. |
-| `region` | yes |  |
-| `spot_high` |  | Spot is per zone and moves, so it is a range across the zones in one snapshot, not a number. |
+| `instance` | yes | Machine type. Empty on every GCP row. On a RunPod row it is that vendor's GPU type id, e.g. 'NVIDIA A100 80GB PCIe'. |
+| `region` | yes | The region. EMPTY ON EVERY RUNPOD ROW, and not for want of looking: that vendor publishes one price per GPU type with no location dimension at all, so there is no per-region price to state. |
+| `spot_high` |  | Spot is per zone and moves, so it is a range across the zones in one snapshot, not a number. Both spot fields are null on every RunPod row because that vendor sells no spot -- see the no_spot flag. |
 | `spot_low` |  |  |
 | `usd_per_hour` |  | On-demand. Null when the catalogue publishes none: AWS sells some of the newest cards through Capacity Blocks instead. |
-| `vendor` | yes | 'aws' or 'gcp'. |
-| `zones` | yes | How many zones carried this row. |
+| `vendor` | yes | 'aws', 'gcp' or 'runpod'. aws and runpod rows can both price a job, because those are the two vendors PACSrun can price AND rent; gcp rows are here to be looked at and nothing ranks them against the other two -- see `basis`. |
+| `zones` | yes | How many places carried this row, and it means two things. AWS and GCP: how many availability zones offer it, which moves rarely. RunPod: how many data centers reported SELLABLE STOCK at the moment of the snapshot, which is volatile and can be 0 for a card whose price is published. Do not read a RunPod zones as availability now. |
 
 ### PricesResponse
 
@@ -360,8 +360,8 @@ What GET /v1/prices returns.
 |---|---|---|
 | `default_region` | yes | Where an ask that names NO region actually buys: the operator's one AWS default. Not a preference -- PACSrun gives an unqualified AWS ask exactly one region (PACSRUN-AWS-ONE-REGION). |
 | `note` | yes |  |
-| `priced_on` | yes | When the catalogue was read. |
-| `regions` | yes | Every AWS region here, which is also the list `placement.regions` accepts as 'aws/<region>'. |
+| `priced_on` | yes | When the SkyPilot catalogue was read, which dates the aws and gcp rows. RunPod rows come from that vendor's own API on a different day and `note` gives both dates. |
+| `regions` | yes | Every AWS region here, which is also the list `placement.regions` accepts as 'aws/<region>'. RunPod contributes none: a RunPod row has no region, and `placement.regions: ['runpod']` names the VENDOR rather than a place. |
 | `rows` | yes |  |
 
 ### ProgressView
@@ -389,7 +389,7 @@ What one hour of this job's machines costs.
 | `machines` |  | How many machines the job rents. The rate is for all of them, so 4 pods of one L40S is 4 x $1.8610 = $7.4440/hour. |
 | `usd_per_hour_high` |  |  |
 | `usd_per_hour_low` |  | The whole job's hourly rate at the cheapest end. Equal to the high end for on-demand, which is published per region; lower for spot, which is per availability zone and moves. |
-| `vendor` |  | Which vendor this price belongs to: 'aws', 'runpod', or empty when neither could be priced. It matters: the one card both can supply costs $0.99/hour on RunPod and $1.8610/hour on AWS. |
+| `vendor` |  | Which vendor this price belongs to: 'aws', 'runpod', or empty when neither could be priced. It matters, and since 2026-09-09 it matters for eight cards rather than one: an L40S is $1.09/pod-hour on RunPod against $1.8610/machine-hour on AWS, an H100 is $2.89 against $6.88, and for the A100, H200, B200 and B300 AWS will not sell a single card at all while RunPod builds a one-card pod. |
 
 ### ScriptView
 

@@ -227,9 +227,33 @@ def billed_pod_rate(gpu_name: str, cards: int) -> tuple[float, str] | None:
 # wrong. So `estimate.py` still answers `unknown` for hours on the other twelve
 # cards, and answers a real number for the RATE.
 #
-# WHAT THIS TABLE DOES NOT COVER. RunPod, whose prices come from `GPUS` above and
-# exist for two cards only; and every region other than us-west-2, which is the
-# only region PACSrun's AWS route has ever bought in.
+# WHAT THIS TABLE DOES NOT COVER. Every region other than us-west-2, which is
+# the only region PACSrun's AWS route has ever bought in.
+#
+# ★ IT DOES COVER RUNPOD SINCE 2026-09-09, and it did not before. Until that day
+# the only RunPod prices in this service were the two cards in `GPUS` above --
+# the ones we had rented -- so `estimate` answered "RunPod cannot be priced: we
+# have never rented a <card>" for the other twelve and `validate` skipped its
+# capacity remedy saying "we hold no table of RunPod's machine sizes". Both were
+# true statements about a gap, and the gap is now filled: 105 rows over 8 of the
+# 14 choosable cards, read from the SAME endpoint PACSrun's decider reads
+# (pkg/decider/runpod/catalog.go:6), which is what makes them safe to quote --
+# the table cannot promise a card the cluster would refuse to buy.
+#
+# THE SIX CARDS WITH NO RUNPOD ROW, and the reason is the NAME in two of them:
+#   T4, T4g, A10G, V100-32GB   RunPod does not sell these at all on Secure Cloud.
+#   A100-80GB                  RunPod sells 80 GB A100s, but as "A100 PCIe" and
+#                              "A100 SXM"; matchesModel takes a family name plus
+#                              a variant, and this spelling is AWS's memory
+#                              suffix, so the RunPod path declines it. Ask for
+#                              `A100` -- RunPod's A100s ARE the 80 GB card.
+#   RTXPRO6000                 RunPod sells it as "RTX PRO 6000" ($2.09/GPU,
+#                              read 2026-09-09). AWS writes the same card
+#                              without spaces and this catalogue follows AWS, so
+#                              one spelling cannot reach both vendors.
+# Both are recorded in `catalogue.CHOOSABLE`'s note for those cards, which is
+# where a user reads them, and `tools/gen_prices_all.py` prints them on every
+# regeneration so a card silently missing from 105 rows stays visible.
 # ★ THE ROWS LIVE IN prices.csv, NOT IN THIS FILE, and 2026-09-08 is when that
 # changed. The first version of this table was us-west-2 only: 30 rows, small
 # enough to read here. All 22 AWS regions plus GCP is 610, and a 610-line literal
@@ -253,8 +277,14 @@ def billed_pod_rate(gpu_name: str, cards: int) -> tuple[float, str] | None:
 # preference, it is where an unqualified ask really buys, and pricing an
 # unqualified ask at the globally cheapest region would be a wrong number
 # dressed as a helpful one.
+# The file holds three vendors now, not one. The constant keeps its AWS name for
+# the same reason `AwsMachine` below does -- `validate` and the tests read it --
+# and `AWS_PRICED_ON` still dates the aws and gcp rows only. RunPod's rows come
+# from a different source on a different day, so they carry their own date and
+# anything printing "priced on" has to name the one belonging to the rows shown.
 AWS_PRICES_FILE = "prices.csv"
 AWS_PRICED_ON = "2026-09-08"
+RUNPOD_PRICED_ON = "2026-09-09"
 DEFAULT_AWS_REGION = "us-west-2"
 
 # Kept under the old name because `validate` and the tests read it, and it still
@@ -267,34 +297,55 @@ class PriceRow:
     """One (vendor, card, count, region) the catalogue prices.
 
     Attributes:
-        vendor: "aws" or "gcp". Only AWS rows are used to price a job, because
-            AWS is the vendor this service can both price and rent; GCP rows are
-            here so `/v1/prices` can show them, and nothing ranks the two
-            together -- see `basis`.
+        vendor: "aws", "gcp" or "runpod". AWS and RunPod rows are both used to
+            price a job, because those are the two vendors PACSrun can both
+            price and rent (`validate.py` calls them the two with an execution
+            path). GCP rows are here so `/v1/prices` can show them, and nothing
+            ranks them against the other two -- see `basis`.
         basis: WHAT THE PRICE COVERS, and the two values are not comparable.
-            "machine" (AWS) is the whole instance with its GPUs, and `instance`
-            names it. "accelerator" (GCP) is the cards ALONE: GCP GPU rows carry
-            an empty InstanceType because a GPU there is attached to a machine
-            type and the catalogue prices the two separately. So a GCP row is
-            not "what a job costs" -- the VM it hangs off is extra, and the
-            catalogue does not say which VM.
+            "machine" (AWS, RunPod) is the whole unit that runs a pod, GPUs
+            included, and `instance` names it -- an EC2 instance type on AWS, a
+            RunPod GPU type id ("NVIDIA A100 80GB PCIe") on RunPod, where a
+            machine IS a pod (pkg/decider/runpod/decider.go:686). RunPod
+            publishes a PER-GPU price and the generator multiplies it by `gpus`
+            to reach this column, which is measured rather than assumed:
+            baseline-c's 4 x A100 predicted $6.36/hour and RunPod billed
+            $6.388 (2026-09-07 `myself.currentSpendPerHr`), 0.44% apart.
+            "accelerator" (GCP) is the cards ALONE: GCP GPU rows carry an empty
+            InstanceType because a GPU there is attached to a machine type and
+            the catalogue prices the two separately. So a GCP row is not "what a
+            job costs" -- the VM it hangs off is extra, and the catalogue does
+            not say which VM.
         card: the catalogue's spelling, matching `catalogue.Choice.name`.
         gpus: how many of that card the row covers. AWS goes to 8; GCP to 16.
-        region: the region, e.g. "us-west-2".
+        region: the region, e.g. "us-west-2". EMPTY FOR EVERY RUNPOD ROW, and
+            not because we did not look: RunPod publishes one price per GPU type
+            with no location dimension at all (catalog.go:8-9), so there is no
+            per-region price to state. Location appears in that vendor's
+            response only as per-data-center stock, which is `zones` below.
         instance: the machine type. Empty for every GCP row, by the reason above.
         usd_per_hour: on-demand. None when the catalogue publishes none -- AWS
             sells some of the newest cards through Capacity Blocks instead.
         spot_low: cheapest zone's spot price in the same snapshot.
-        spot_high: dearest zone's.
-        zones: how many zones the row was seen in, so a single-zone card (B300)
-            is visibly less available than a four-zone one.
+        spot_high: dearest zone's. BOTH ARE EMPTY ON EVERY RUNPOD ROW because
+            that vendor sells no spot at all, which is what the `no_spot` flag
+            says out loud so the empty columns cannot be read as "unknown".
+        zones: how many places the row was seen in, and the meaning differs by
+            vendor. AWS and GCP: how many availability zones offer it, a
+            STRUCTURAL fact that moves rarely, so a single-zone card (B300) is
+            visibly less available than a four-zone one. RunPod: how many data
+            centers reported SELLABLE STOCK at the moment of the snapshot, which
+            is volatile -- it can be 0 for a card whose price is published (read
+            2026-09-09: B200 and H200 NVL were both priced with 0 data centers
+            listing stock). Do not treat a RunPod `zones` as availability now.
         flags: "spot_above_ondemand" when this row's spot price exceeds its own
             on-demand price. 38 GCP rows do, consistently and by 5-17%, with both
             zones of a region agreeing -- A100 x1 asia-northeast1 is Price
             1.70586 and SpotPrice 1.7915 in both -a and -c. That is the
             catalogue's own content, not a grouping mistake (an earlier draft of
             the generator DID have one, pairing a 1-card price with a 16-card
-            spot). Zero AWS rows are flagged. Nothing ranks a flagged row.
+            spot). Zero AWS rows are flagged. "no_spot" on all 105 RunPod rows.
+            Nothing ranks a flagged row.
     """
 
     vendor: str
@@ -355,6 +406,18 @@ AWS_MACHINES: tuple[PriceRow, ...] = tuple(
 # Every AWS region the catalogue prices, for `/v1/prices` and for telling a
 # caller which names `placement.regions` will accept.
 AWS_REGIONS: tuple[str, ...] = tuple(sorted({row.region for row in AWS_MACHINES}))
+
+# The RunPod half. Read on its own date, priced per pod, and carrying no region
+# -- so it is kept as a separate tuple rather than filtered at each call site,
+# exactly as AWS_MACHINES is.
+RUNPOD_MACHINES: tuple[PriceRow, ...] = tuple(
+    row for row in PRICE_ROWS if row.vendor == "runpod")
+
+# The cards RunPod will sell, as OUR catalogue spells them. Useful on its own:
+# the six choosable cards missing from this tuple are the ones a `vendors:
+# ["runpod"]` job cannot be filled for at any count, and naming them before
+# submitting is cheaper than a Pending that never resolves.
+RUNPOD_CARDS: tuple[str, ...] = tuple(sorted({row.card for row in RUNPOD_MACHINES}))
 
 
 # `AwsMachine` was the old name for a us-west-2-only row. Kept as an alias so a
@@ -553,6 +616,73 @@ INCIDENTS: dict[str, Incident] = {
         ),
     )
 }
+
+
+def runpod_machines_for(card: str) -> tuple[PriceRow, ...]:
+    """Every priced RunPod pod shape carrying this card, at any GPU count.
+
+    NO REGION ARGUMENT, and that is the vendor's doing rather than a
+    simplification: RunPod publishes one price per GPU type with no location
+    dimension (pkg/decider/runpod/catalog.go:8-9), so there is nothing for a
+    region to select. `placement.regions` on a RunPod job names the VENDOR, not
+    a place -- baseline-c wrote `regions: ["runpod"]`.
+
+    Args:
+        card: the catalogue's spelling, e.g. "A100".
+
+    Returns:
+        The matching rows, one per (GPU type, GPU count). Empty when RunPod
+        sells no card of that name -- which for `A100-80GB` and `RTXPRO6000`
+        means the NAME, not the silicon; see `catalogue.CHOOSABLE`'s note.
+    """
+    key = (card or "").strip().lower()
+    return tuple(row for row in RUNPOD_MACHINES if row.card.lower() == key)
+
+
+def runpod_counts(card: str) -> tuple[int, ...]:
+    """How many of this card RunPod will attach to ONE pod.
+
+    Args:
+        card: the catalogue's spelling.
+
+    Returns:
+        The counts, ascending -- `(1, 2, 3, 4, 5, 6, 7, 8)` for an A100, whose
+        `maxCount.secure` is 8. Unlike AWS this is a continuous run from 1,
+        because RunPod builds a pod to order rather than selling fixed machine
+        sizes, and asking past the top is an HTTP 400 with the same body as "out
+        of stock" (DRIVER-IMPLEMENTATION-PLAN.md section 4 row 4), which is why
+        the generator stops at maxCount instead of letting the arithmetic run on.
+    """
+    return tuple(sorted({row.gpus for row in runpod_machines_for(card)}))
+
+
+def runpod_cheapest(card: str, gpus_per_pod: int) -> PriceRow | None:
+    """The RunPod pod this ask would be bought as, and what it costs per hour.
+
+    THE COUNT IS EXACT, NOT A CEILING, and that is the difference from
+    `aws_cheapest`. An AWS machine can seat several pods, so that function
+    divides; a RunPod pod is built with exactly the cards asked for and one pod
+    never holds two of ours, so the row whose `gpus` EQUALS the ask is the row.
+
+    CHEAPEST AMONG VARIANTS, because a family name reaches several GPU types and
+    we cannot know which the solve lands on. Read 2026-09-09, an "H100" ask
+    reaches H100 PCIe at $2.89/GPU, H100 NVL at $3.19 and H100 SXM at $3.49, and
+    PACSrun's RunPod path solves in cost mode (decider.go:352 sends "cost"), so
+    the cheapest is the honest single number -- the same choice `hourly_rate`
+    already makes between vendors.
+
+    Args:
+        card: the catalogue's spelling.
+        gpus_per_pod: `resources.gpus.count`. Under 1 is treated as 1.
+
+    Returns:
+        The cheapest row at that exact count, or None when RunPod sells no card
+        of that name or will not put that many in one pod.
+    """
+    per_pod = max(1, gpus_per_pod)
+    fits = [row for row in runpod_machines_for(card)
+            if row.gpus == per_pod and row.usd_per_hour is not None]
+    return min(fits, key=lambda row: row.usd_per_hour) if fits else None
 
 
 def gpu_by_name(name: str) -> Gpu | None:

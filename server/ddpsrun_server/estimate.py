@@ -45,6 +45,11 @@ from .measurements import (
     AWS_PRICE_REGION,
     billed_pod_rate,
     AWS_PRICED_ON,
+    RUNPOD_CARDS,
+    RUNPOD_PRICED_ON,
+    runpod_cheapest,
+    runpod_counts,
+    runpod_machines_for,
     DEFAULT_BATCH_SIZE,
     DEFAULT_GRAD_ACCUM,
     DPO_RESPONSES_PER_PAIR,
@@ -620,12 +625,13 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
                 "aws", count_machines))
 
     if "runpod" in asked:
-        gpu = gpu_by_name(gpu_name)
-        if gpu is None:
-            reasons.append(
-                f"RunPod cannot be priced: we have never rented a {gpu_name}, and "
-                f"RunPod's own price list is not read by this service")
-        elif capacity == "spot":
+        # SPOT IS CHECKED BEFORE THE CARD because it does not depend on the
+        # card: the decider refuses spot before it reads the catalogue at all,
+        # so "it does not sell spot" is the whole answer and the one the caller
+        # can act on. Until 2026-09-09 this branch came second and a spot ask
+        # for an unrented card was told "we have never rented a <card>", which
+        # sent the reader looking for the wrong fix.
+        if capacity == "spot":
             reasons.append(
                 "RunPod cannot be priced: it does not sell spot, so its decider "
                 "refuses before it reads any price")
@@ -654,14 +660,41 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
             #
             # AWS is NOT multiplied this way: it sells whole machines, so the
             # branch above reads machine prices out of the catalogue instead.
+            #
+            # ★ THREE SOURCES OF A RUNPOD RATE, TRIED IN THIS ORDER, and the
+            # order is an evidence ranking rather than a preference:
+            #
+            #   1. an INVOICE for exactly this pod shape (DDPSRUN-BILLED-RATE).
+            #      What the vendor actually charged, the pod's disk included.
+            #   2. RunPod's PUBLISHED price for that pod, out of prices.csv.
+            #      Read on RUNPOD_PRICED_ON from the same endpoint PACSrun's
+            #      decider calls, so it is the price this cluster gets quoted.
+            #   3. what we PAID for ONE card, from `GPUS`. Older than (2), and
+            #      kept because it covers a name the catalogue has no row for:
+            #      a `vramGB` ask is estimated on `gpu_by_vram`, which answers
+            #      "A100-80GB", and RunPod's NAME matching declines that
+            #      spelling while its VRAM matching accepts the card itself.
+            #
+            # (2) WAS ADDED 2026-09-09 AND IT MOVED TWO NUMBERS.
+            #   * `A100` x4 -- the exact shape baseline-c ran -- used to answer
+            #     `None`, "we have never rented a A100". The invoice is keyed
+            #     `A100-80GB` and the job asks for `A100`, so neither table
+            #     could be reached by the name the job actually carries. It is
+            #     now $6.36/hour, 0.44% under the $6.388 that was billed.
+            #   * an L40S was quoted $0.99 from 2026-08-30 while RunPod's list
+            #     price had moved to $1.09 -- read twice independently, at
+            #     2026-09-04 07:44Z (recorded in pacsjob-baseline-c.yaml's own
+            #     comment) and 2026-09-09 by the catalog API. A ten-day-old
+            #     price is a wrong number, which this module ranks below no
+            #     number at all, so the fresher published one wins. `GPUS` keeps
+            #     0.99 because `stats.job_cost` prices runs that ALREADY
+            #     happened, and those were charged 0.99.
             cards = per_pod * pods
-            shape = (f"{pods} x one {gpu.name}" if per_pod == 1 else
-                     f"{pods} pod(s) x {per_pod} x {gpu.name}")
-            # DDPSRUN-BILLED-RATE. An INVOICE for this exact pod shape beats the
-            # multiplication, because it is what the vendor charged rather than
-            # what its list price implies. Per POD and then x pods: the bill we
-            # hold is for one pod of `per_pod` cards.
+            shape = (f"{pods} x one {gpu_name}" if per_pod == 1 else
+                     f"{pods} pod(s) x {per_pod} x {gpu_name}")
             billed = billed_pod_rate(gpu_name, per_pod)
+            listed = runpod_cheapest(gpu_name, per_pod)
+            gpu = gpu_by_name(gpu_name)
             if billed is not None:
                 per_pod_rate, where = billed
                 lo = hi = round(per_pod_rate * pods, 4)
@@ -671,7 +704,29 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
                     f"which is what we were BILLED ({where}) -- not a list price and "
                     f"not derived. Vendor prices move.",
                     "runpod", pods))
-            else:
+            elif listed is not None:
+                lo = hi = round(listed.usd_per_hour * pods, 4)
+                # HOW MANY GPU TYPES ANSWER THIS NAME. A family name reaches
+                # several: read 2026-09-09, "H100" reaches H100 PCIe at
+                # $2.89/GPU, H100 NVL at $3.19 and H100 SXM at $3.49. The
+                # cheapest is quoted because PACSrun's RunPod path solves in
+                # cost mode (decider.go:352 sends "cost"), and the sentence says
+                # which one so the reader is not surprised by the interconnect.
+                variants = [row for row in runpod_machines_for(gpu_name)
+                            if row.gpus == listed.gpus]
+                options.append(Rate(
+                    lo, hi,
+                    f"RunPod {shape} on-demand at ${listed.usd_per_hour:.4f} per "
+                    f"pod-hour ({listed.instance} at "
+                    f"${listed.usd_per_hour / listed.gpus:.2f} per card-hour x "
+                    f"{listed.gpus}), which is RunPod's own published price read on "
+                    f"{RUNPOD_PRICED_ON}"
+                    + (f". {len(variants)} RunPod GPU types answer the name "
+                       f"{gpu_name!r} at this count and this is the cheapest"
+                       if len(variants) > 1 else "")
+                    + ". RunPod sells no spot. Vendor prices move.",
+                    "runpod", pods))
+            elif gpu is not None:
                 lo = hi = round(gpu.usd_per_hour * cards, 4)
                 options.append(Rate(
                     lo, hi,
@@ -683,6 +738,25 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
                        f"4 x A100 was billed 4 x $1.59 = $6.36/hr on 2026-09-04")
                     + ". Vendor prices move.",
                     "runpod", pods))
+            else:
+                # NAME THE MISS. "cannot be priced" on its own sends the reader
+                # to the wrong fix, and the two misses need opposite fixes: a
+                # count RunPod will not build in one pod, or a name its
+                # catalogue has no entry for at all.
+                counts = runpod_counts(gpu_name)
+                if counts:
+                    reasons.append(
+                        f"RunPod cannot be priced: it attaches at most "
+                        f"{max(counts)} {gpu_name} to one pod and this ask wants "
+                        f"{per_pod}. Asking for more comes back as the same HTTP "
+                        f"400 as out-of-stock, so PACSrun does not try")
+                else:
+                    reasons.append(
+                        f"RunPod cannot be priced: nothing in its Secure Cloud "
+                        f"catalogue (read {RUNPOD_PRICED_ON}) matches the name "
+                        f"{gpu_name!r}, and we have never rented one. The RunPod "
+                        f"path matches a family name plus a variant, so the names "
+                        f"it can answer are " + ", ".join(RUNPOD_CARDS))
 
     if not options:
         return Rate(None, None, " and ".join(reasons) + "." if reasons else

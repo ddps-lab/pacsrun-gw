@@ -36,15 +36,24 @@ def test_the_two_rented_cards_still_carry_what_we_actually_paid():
 
 def test_an_aws_job_is_no_longer_priced_at_runpods_rate():
     """CLAIM 2, with the number that made it a defect rather than a gap. The same
-    L40S job, same hours, differs by 88% between the two vendors."""
+    L40S job, same hours, differs by 71% between the two vendors.
+
+    ★ THE RUNPOD NUMBER MOVED ON 2026-09-09, from 0.99 to 1.09, and that is the
+    vendor's doing rather than ours. 0.99 is what we were charged on 2026-08-30
+    and `measurements.GPUS` still holds it, because `stats.job_cost` prices runs
+    that already happened. This assertion is about what a job would cost NOW, so
+    it reads the newer published price out of prices.csv -- read twice
+    independently at 2026-09-04 07:44Z (pacsjob-baseline-c.yaml's own comment)
+    and 2026-09-09 (the catalog API). The gap was 88% at 0.99.
+    """
     on_aws = e.hourly_rate("L40S", 1, 1, ["aws"], "on-demand")
     on_runpod = e.hourly_rate("L40S", 1, 1, ["runpod"], "on-demand")
     assert on_aws.usd_per_hour_low == 1.861
-    assert on_runpod.usd_per_hour_low == 0.99
+    assert on_runpod.usd_per_hour_low == 1.09
     assert on_aws.vendor == "aws" and on_runpod.vendor == "runpod"
-    # 1.861 / 0.99 = 1.88. Quoting the RunPod number for an AWS job understated
-    # it by 47% (0.99 is 53% of 1.861).
-    assert round(on_runpod.usd_per_hour_low / on_aws.usd_per_hour_low, 2) == 0.53
+    # 1.861 / 1.09 = 1.71. Quoting the RunPod number for an AWS job understates
+    # it by 41% (1.09 is 59% of 1.861).
+    assert round(on_runpod.usd_per_hour_low / on_aws.usd_per_hour_low, 2) == 0.59
 
 
 def test_an_unrestricted_ask_takes_the_cheaper_and_names_the_other():
@@ -52,7 +61,7 @@ def test_an_unrestricted_ask_takes_the_cheaper_and_names_the_other():
     solve lands on. Quoting one of two candidates silently is how the 47%
     happened, so the other one is in the sentence."""
     rate = e.hourly_rate("L40S", 1, 1, None, "on-demand")
-    assert rate.usd_per_hour_low == 0.99
+    assert rate.usd_per_hour_low == 1.09
     assert "g6e.xlarge" in rate.basis
     assert "1.8610" in rate.basis
 
@@ -399,3 +408,199 @@ def test_a_measured_job_is_labelled_measured_and_ignores_expected_hours():
     assert result.duration.confidence != "unknown"
     assert result.cost_basis == "measured"
     assert result.cost_low_usd is not None and result.cost_low_usd < 999.0
+
+
+# --------------------------------------------------------------------------
+# DDPSRUN-RUNPOD-PRICES, added 2026-09-09.
+#
+# WHAT WAS WRONG BEFORE. The table above is AWS and GCP only, and the only
+# RunPod prices in the service were the two cards in `measurements.GPUS` -- the
+# ones we had rented. Two consequences, both measured on the code as it stood:
+#
+#   * `hourly_rate("A100", 4, ...)` answered None, "we have never rented a
+#     A100". That is the EXACT shape baseline-c ran and holds an invoice for:
+#     the invoice is keyed `A100-80GB` and the job asks for `A100`, so no table
+#     could be reached by the name the job actually carries.
+#   * `validate` skipped its RunPod capacity remedy saying "we hold no table of
+#     RunPod's machine sizes", so a `vendors: ["runpod"]` ask that vendor cannot
+#     fill was submitted, sat in Pending and retried -- the 2026-09-02 incident.
+#
+# The rows come from the SAME endpoint PACSrun's decider calls
+# (pkg/decider/runpod/catalog.go:6) and are filtered by that decider's own six
+# tests, which is what makes them safe to quote: the table cannot offer a price
+# for something the cluster would refuse to buy.
+# --------------------------------------------------------------------------
+
+
+def test_runpod_rows_price_a_whole_pod_and_are_linear_in_the_card_count():
+    """RunPod publishes per GPU; a row is that price x the cards in the pod.
+
+    The linearity is the vendor's billing rule, not an assumption: PACSrun
+    computes `price.secure * gpusPerPod` (decider.go:774) and RunPod's own
+    `myself.currentSpendPerHr` read 6.388 against a predicted 4 x 1.59 = 6.36.
+    """
+    for card in m.RUNPOD_CARDS:
+        rows = m.runpod_machines_for(card)
+        by_type: dict[str, list] = {}
+        for row in rows:
+            by_type.setdefault(row.instance, []).append(row)
+        for instance, group in by_type.items():
+            one = min(group, key=lambda r: r.gpus)
+            assert one.gpus == 1, f"{instance} has no single-card row"
+            for row in group:
+                assert row.usd_per_hour == round(one.usd_per_hour * row.gpus, 4), (
+                    f"{instance} x{row.gpus} is not linear")
+
+
+def test_runpod_rows_carry_no_region_no_spot_and_say_so():
+    """Three empty columns that are STATEMENTS, not gaps: RunPod publishes one
+    price per GPU type with no location dimension and sells no spot at all."""
+    assert m.RUNPOD_MACHINES, "the runpod half of the table is missing"
+    for row in m.RUNPOD_MACHINES:
+        assert row.basis == "machine"
+        assert row.region == ""
+        assert row.spot_low is None and row.spot_high is None
+        assert row.flags == "no_spot", (
+            "an empty spot column must not be readable as 'we did not look'")
+        assert row.instance.startswith("NVIDIA "), (
+            "instance is RunPod's own GPU type id, which the pod-create call wants")
+
+
+def test_four_a100s_price_at_what_runpod_billed_us():
+    """The one row in this table with an invoice to check it against."""
+    pod = m.runpod_cheapest("A100", 4)
+    assert pod.usd_per_hour == 6.36
+    # RunPod billed 6.388 for that pod on 2026-09-07. 0.44% apart.
+    assert abs(pod.usd_per_hour - 6.388) / 6.388 < 0.005
+
+
+def test_a_family_name_reaches_several_gpu_types_and_the_cheapest_is_quoted():
+    """"H100" is not one card on RunPod. PACSrun solves this vendor in cost mode
+    (decider.go:352 sends "cost"), so the cheapest is the honest single number
+    and the sentence names which type it belongs to."""
+    types = {row.instance for row in m.runpod_machines_for("H100")}
+    assert len(types) == 3, f"expected PCIe, NVL and SXM, got {types}"
+    cheapest = m.runpod_cheapest("H100", 1)
+    assert cheapest.usd_per_hour == 2.89
+    assert "PCIe" in cheapest.instance
+    rate = e.hourly_rate("H100", 8, 1, ["runpod"], "on-demand")
+    assert rate.usd_per_hour_low == round(2.89 * 8, 4)
+    assert "3 RunPod GPU types answer the name 'H100'" in rate.basis
+
+
+def test_runpod_is_never_offered_more_cards_than_it_will_attach_to_one_pod():
+    """Over `maxCount.secure` the pod-create call returns the same HTTP 400 body
+    as out-of-stock, so PACSrun records a capacity failure and retries forever.
+    An L4 caps at 9 and the table stops there."""
+    assert m.runpod_counts("L4") == (1, 2, 3, 4, 5, 6, 7, 8, 9)
+    assert m.runpod_cheapest("L4", 10) is None
+    over = e.hourly_rate("L4", 10, 1, ["runpod"], "on-demand")
+    assert over.usd_per_hour_low is None
+    assert "at most 9 L4 to one pod" in over.basis
+
+
+def test_the_six_names_runpod_cannot_sell_have_no_rows_and_two_are_the_name():
+    """A card missing from the table is a fact about the NAME half the time.
+
+    T4, T4g, A10G and V100-32GB: RunPod's Secure Cloud does not sell them.
+    A100-80GB and RTXPRO6000: RunPod sells the SILICON and this spelling cannot
+    reach it, because `matchesModel` takes a family name plus a variant and both
+    of these are AWS's spellings (decider.go:661). The catalogue note says so,
+    which is where a user reads it.
+    """
+    missing = [c.name for c in catalogue.CHOOSABLE
+               if not m.runpod_machines_for(c.name)]
+    assert missing == ["T4", "T4g", "A10G", "V100-32GB", "RTXPRO6000",
+                       "A100-80GB"]
+    assert "A100" in m.RUNPOD_CARDS, "the family name IS reachable"
+    for name, reachable in (("A100-80GB", "'A100'"), ("RTXPRO6000", "RTX PRO 6000")):
+        note = catalogue.choice_for(name).note
+        assert reachable in note, f"{name}'s note must name what RunPod calls it"
+
+
+def test_an_invoice_still_beats_the_published_price():
+    """The evidence order the RunPod branch follows: invoice, then RunPod's
+    published price, then what we paid for one card. A list price is what the
+    vendor SAYS; an invoice is what it charged."""
+    four = e.hourly_rate("A100-80GB", 4, 1, ["runpod"], "on-demand")
+    assert four.usd_per_hour_low == 6.388
+    assert "BILLED" in four.basis
+
+
+def test_the_published_price_beats_a_ten_day_old_measurement():
+    """`GPUS` holds the L40S at $0.99, charged 2026-08-30. RunPod's list price is
+    $1.09, read 2026-09-04 and again 2026-09-09. Quoting 0.99 today understates
+    by 9.2%, and a wrong number is what this module refuses -- so the fresher
+    published one wins. `GPUS` keeps 0.99 because `stats.job_cost` prices runs
+    that already happened, and those were charged 0.99."""
+    assert m.gpu_by_name("L40S").usd_per_hour == 0.99
+    assert m.runpod_cheapest("L40S", 1).usd_per_hour == 1.09
+    rate = e.hourly_rate("L40S", 1, 1, ["runpod"], "on-demand")
+    assert rate.usd_per_hour_low == 1.09
+    assert "published price read on" in rate.basis
+
+
+def test_a_name_runpod_declines_names_the_ones_it_answers():
+    """"cannot be priced" on its own sends the reader to the wrong fix."""
+    rate = e.hourly_rate("T4", 1, 1, ["runpod"], "on-demand")
+    assert rate.usd_per_hour_low is None
+    assert "matches the name 'T4'" in rate.basis
+    for name in m.RUNPOD_CARDS:
+        assert name in rate.basis, "the answerable names are in the sentence"
+
+
+def test_spot_is_answered_before_the_card_is_looked_up():
+    """RunPod's decider refuses spot before it reads the catalogue, so the card
+    is irrelevant and naming it would send the reader after the wrong fix. This
+    branch used to come second, and a spot ask for an unrented card was told
+    'we have never rented a <card>'."""
+    rate = e.hourly_rate("B200", 2, 1, ["runpod"], "spot")
+    assert rate.usd_per_hour_low is None
+    assert "does not sell spot" in rate.basis
+    assert "never rented" not in rate.basis
+
+
+def test_a_runpod_only_ask_that_cannot_be_filled_is_an_error_not_a_hint():
+    """DDPSRUN-RUNPOD-CAPACITY. RunPod alone and RunPod cannot answer means the
+    job sits in Pending and retries -- so it is an ERROR. With AWS still in the
+    list the solve has somewhere else to land, so the same fact is INFO."""
+    from ddpsrun_server import validate as v
+
+    alone = [f for f in v.check_gpu_is_buyable("A100-80GB", 4, "on-demand", 1,
+                                               None, ["runpod"])
+             if f.code == "runpod-cannot-fill"]
+    assert len(alone) == 1 and alone[0].level == "error"
+    assert "A100 PCIe" in alone[0].message, "it names what RunPod calls the card"
+
+    with_aws = [f for f in v.check_gpu_is_buyable("A100-80GB", 4, "on-demand", 1,
+                                                  None, None)
+                if f.code == "runpod-cannot-fill"]
+    assert len(with_aws) == 1 and with_aws[0].level == "info"
+
+    # A shape RunPod DOES fill says nothing at all.
+    fine = v.check_gpu_is_buyable("L40S", 4, "on-demand", 1, None, ["runpod"])
+    assert [f.code for f in fine] == []
+
+
+def test_the_unfillable_remedy_now_says_whether_runpod_fills_it():
+    """It used to read 'we hold no table of its machine sizes and cannot promise
+    it fits' -- a remedy that could not say what would happen."""
+    from ddpsrun_server import validate as v
+
+    # AWS sells the A100-80GB in 8-card machines only, so count 4 does not fit
+    # there; and RunPod cannot answer that NAME either, which the remedy says.
+    aws_gap = [f for f in v.check_gpu_is_buyable("A100-80GB", 4, "on-demand", 1,
+                                                 None, None)
+               if f.code == "gpu-count-unfillable"]
+    assert len(aws_gap) == 1
+    assert "nothing in RunPod's catalogue matches the name 'A100-80GB'" in aws_gap[0].fix
+    assert "cannot promise" not in aws_gap[0].fix
+
+    # The A100 count 4 is the same AWS gap, and here RunPod DOES fill it -- with
+    # the pod and its price named.
+    filled = [f for f in v.check_gpu_is_buyable("A100", 4, "on-demand", 1,
+                                                None, None)
+              if f.code == "gpu-count-unfillable"]
+    assert len(filled) == 1
+    assert "RunPod DOES fill this shape" in filled[0].fix
+    assert "$6.36 per pod-hour" in filled[0].fix

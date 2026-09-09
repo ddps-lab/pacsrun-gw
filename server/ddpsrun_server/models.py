@@ -1176,8 +1176,11 @@ class RateView(BaseModel):
     vendor: str = Field(
         default="",
         description="Which vendor this price belongs to: 'aws', 'runpod', or "
-        "empty when neither could be priced. It matters: the one card both can "
-        "supply costs $0.99/hour on RunPod and $1.8610/hour on AWS.",
+        "empty when neither could be priced. It matters, and since 2026-09-09 it "
+        "matters for eight cards rather than one: an L40S is $1.09/pod-hour on "
+        "RunPod against $1.8610/machine-hour on AWS, an H100 is $2.89 against "
+        "$6.88, and for the A100, H200, B200 and B300 AWS will not sell a single "
+        "card at all while RunPod builds a one-card pod.",
     )
     machines: int = Field(
         default=1,
@@ -1221,21 +1224,39 @@ class PriceView(BaseModel):
 
     DDPSRUN-PRICES. Until 2026-09-08 this service could only speak about
     us-west-2, so "what does an H100 cost in Seoul" had no answer anywhere in
-    it -- not in the estimate, not on the screen, not in the CLI.
+    it -- not in the estimate, not on the screen, not in the CLI. And until
+    2026-09-09 it could not speak about RunPod at all beyond the two cards we
+    had rented, so an `A100` ask -- the card baseline-c actually ran on that
+    vendor -- was answered `unknown` for cost.
     """
 
-    vendor: str = Field(description="'aws' or 'gcp'.")
+    vendor: str = Field(
+        description="'aws', 'gcp' or 'runpod'. aws and runpod rows can both "
+        "price a job, because those are the two vendors PACSrun can price AND "
+        "rent; gcp rows are here to be looked at and nothing ranks them against "
+        "the other two -- see `basis`."
+    )
     basis: str = Field(
         description="WHAT THE PRICE COVERS, and the two values must not be "
-        "compared. 'machine' (AWS) is the whole instance including its GPUs, and "
-        "`instance` names it. 'accelerator' (GCP) is the cards ALONE -- a GPU on "
+        "compared. 'machine' (AWS, RunPod) is the whole unit that runs a pod, "
+        "GPUs included, and `instance` names it -- an EC2 instance type on AWS, "
+        "a RunPod GPU type id on RunPod, where a machine IS a pod. RunPod "
+        "publishes a per-GPU price and this column is that price times `gpus`. "
+        "'accelerator' (GCP) is the cards ALONE -- a GPU on "
         "GCP attaches to a machine type and the catalogue prices the two "
         "separately, so the VM is extra and the catalogue does not say which VM."
     )
     card: str
     gpus: int = Field(description="How many of that card this row covers.")
-    region: str
-    instance: str = Field(description="Machine type. Empty on every GCP row.")
+    region: str = Field(
+        description="The region. EMPTY ON EVERY RUNPOD ROW, and not for want of "
+        "looking: that vendor publishes one price per GPU type with no location "
+        "dimension at all, so there is no per-region price to state."
+    )
+    instance: str = Field(
+        description="Machine type. Empty on every GCP row. On a RunPod row it is "
+        "that vendor's GPU type id, e.g. 'NVIDIA A100 80GB PCIe'."
+    )
     usd_per_hour: float | None = Field(
         default=None,
         description="On-demand. Null when the catalogue publishes none: AWS "
@@ -1245,15 +1266,24 @@ class PriceView(BaseModel):
     spot_high: float | None = Field(
         default=None,
         description="Spot is per zone and moves, so it is a range across the "
-        "zones in one snapshot, not a number.",
+        "zones in one snapshot, not a number. Both spot fields are null on every "
+        "RunPod row because that vendor sells no spot -- see the no_spot flag.",
     )
-    zones: int = Field(description="How many zones carried this row.")
+    zones: int = Field(
+        description="How many places carried this row, and it means two things. "
+        "AWS and GCP: how many availability zones offer it, which moves rarely. "
+        "RunPod: how many data centers reported SELLABLE STOCK at the moment of "
+        "the snapshot, which is volatile and can be 0 for a card whose price is "
+        "published. Do not read a RunPod zones as availability now."
+    )
     flags: str = Field(
         default="",
         description="'spot_above_ondemand' when this row's spot price exceeds "
         "its own on-demand price. 38 GCP rows do, consistently and with both "
         "zones of a region agreeing, which is the catalogue's own content. No "
-        "AWS row does. Nothing ranks a flagged row.",
+        "AWS row does. 'no_spot' on every RunPod row, which is a statement that "
+        "the vendor sells none rather than a missing value. Nothing ranks a "
+        "flagged row.",
     )
 
 
@@ -1263,14 +1293,20 @@ class PricesResponse(BaseModel):
     rows: list[PriceView]
     regions: list[str] = Field(
         description="Every AWS region here, which is also the list "
-        "`placement.regions` accepts as 'aws/<region>'."
+        "`placement.regions` accepts as 'aws/<region>'. RunPod contributes none: "
+        "a RunPod row has no region, and `placement.regions: ['runpod']` names "
+        "the VENDOR rather than a place."
     )
     default_region: str = Field(
         description="Where an ask that names NO region actually buys: the "
         "operator's one AWS default. Not a preference -- PACSrun gives an "
         "unqualified AWS ask exactly one region (PACSRUN-AWS-ONE-REGION)."
     )
-    priced_on: str = Field(description="When the catalogue was read.")
+    priced_on: str = Field(
+        description="When the SkyPilot catalogue was read, which dates the aws "
+        "and gcp rows. RunPod rows come from that vendor's own API on a different "
+        "day and `note` gives both dates."
+    )
     note: str
 class FindingView(BaseModel):
     """One thing worth saying about a job before it runs."""

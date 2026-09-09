@@ -9,6 +9,7 @@ market-exp2 mistake.
 import pytest
 
 from ddpsrun_server import estimate as e
+from ddpsrun_server import measurements as m
 from ddpsrun_server.measurements import THROUGHPUT
 
 
@@ -201,6 +202,16 @@ def test_an_unestimatable_job_is_not_bet_on_reclaimable_capacity():
 def test_a_job_we_have_run_before_is_priced_close_to_what_it_cost():
     # bank-exp2v2: 1,110 pairs, 4 epochs, ~4,100 tokens, L40S, and it took
     # 6.54 hours at $0.99/hour, so about $6.47.
+    #
+    # ★ THE HOURS ARE STILL THE MEASURED ONES AND THE PRICE IS NOT. RunPod raised
+    # the L40S from $0.99 to $1.09 (read 2026-09-04 and again 2026-09-09), and
+    # prices.csv carries the newer figure since 2026-09-09, so the same job now
+    # prices at about $7.11 rather than $6.47. Both numbers are right about
+    # different questions -- $6.47 is what it COST, $7.11 is what it would cost
+    # TODAY -- and an estimate exists to answer the second. So the assertion is
+    # written as hours x the current rate rather than a hard-coded total, which
+    # also means the next vendor price change does not turn this red.
+    rate = m.runpod_cheapest("L40S", 1).usd_per_hour
     result = e.estimate(
         gpu_name="L40S", cap=12288, pairs=1110, epochs=4, row_tokens=4100,
         mitigations_on=True,
@@ -208,7 +219,10 @@ def test_a_job_we_have_run_before_is_priced_close_to_what_it_cost():
     assert result.steps == 556
     assert result.duration.confidence == e.Confidence.MEASURED
     assert result.duration.low_hours < 6.54 < result.duration.high_hours
-    assert result.cost_low_usd < 6.47 < result.cost_high_usd
+    assert result.cost_low_usd == round(result.duration.low_hours * rate, 2)
+    assert result.cost_high_usd == round(result.duration.high_hours * rate, 2)
+    # And what it actually cost sits just under that band, by the price rise.
+    assert result.cost_low_usd / 6.47 - 1 < 0.11
 
 
 def test_a_long_job_is_warned_about_drift_and_about_credentials_expiring():
@@ -280,13 +294,19 @@ def test_a_missing_cap_still_lets_the_runtime_be_estimated():
 
 def test_the_cost_uses_the_gpu_the_job_asked_for_not_the_one_we_recommend():
     # Timing an L40S run and pricing it at A100 rates overstated a job by 57%.
-    # bank-exp2v2 cost $6.47 on an L40S at $0.99/hour.
+    # bank-exp2v2 cost $6.47 on an L40S at $0.99/hour, and today's L40S price is
+    # $1.09 -- see the note on test_a_job_we_have_run_before_is_priced_close_to_
+    # what_it_cost. What this test is about is the CARD, so it asserts the rate
+    # is the L40S one and not the recommended A100's, which is 46% dearer.
     result = e.estimate(
         gpu_name="L40S", cap=12288, pairs=1110, epochs=4, row_tokens=4100,
         mitigations_on=False,   # so the recommendation is 80 GB, not the L40S
     )
     assert result.gpu.recommended == "A100-80GB"
-    assert result.cost_low_usd < 6.47 < result.cost_high_usd
+    l40s = m.runpod_cheapest("L40S", 1).usd_per_hour
+    assert result.cost_low_usd == round(result.duration.low_hours * l40s, 2)
+    assert m.runpod_cheapest("A100", 1).usd_per_hour == 1.59, (
+        "pricing those hours on the recommended card instead would be 46% more")
 
 
 def test_a_disagreement_between_the_price_and_the_recommendation_is_said_out_loud():
