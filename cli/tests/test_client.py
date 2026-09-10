@@ -65,7 +65,9 @@ def test_shell_sends_the_command_and_waits_longer_than_the_server():
     result = client_with(session).exec_in_job("baseline-c", "nvidia-smi -L", slot=1)
     call = session.calls[0]
     assert call["url"] == "https://run.example/v1/jobs/baseline-c/exec"
-    assert call["json"] == {"command": "nvidia-smi -L", "slot": 1, "timeout_seconds": 20}
+    assert call["json"] == {"command": "nvidia-smi -L", "slot": 1, "timeout_seconds": 20,
+                            "session": False, "seq": 0}, (
+        "PACSRUN-SHELL-SESSION 이후에도 기본은 한 줄짜리 stateless 형태다")
     # The server may hold the request for its whole window, so the client's
     # read timeout must outlive it.
     assert call["timeout"] > 20
@@ -155,3 +157,15 @@ def test_a_submit_is_given_more_patience_than_a_read():
     read_session = FakeSession(FakeResponse(200, {}))
     client_with(read_session).status("job-a8acdef80a07")
     assert submit_session.calls[0]["timeout"] > read_session.calls[0]["timeout"]
+
+
+def test_shell_can_ask_for_the_persistent_session_and_carries_its_sequence():
+    """The prompt loop's shape: the same route, with `session` and the output
+    sequence the caller last saw. Without the sequence the caller would be handed
+    everything the shell has ever printed on every line."""
+    session = FakeSession(FakeResponse(200, {"output": "/workspace\n", "exit_code": 0,
+                                             "seq": 42, "lost": False, "note": ""}))
+    result = client_with(session).exec_in_job("baseline-c", "pwd", session=True, seq=7)
+    assert session.calls[0]["json"]["session"] is True
+    assert session.calls[0]["json"]["seq"] == 7
+    assert result["seq"] == 42, "the reply carries the next one back"

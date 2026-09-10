@@ -826,11 +826,26 @@ def cmd_shell(args: argparse.Namespace) -> int:
     pod onto the rented machine and returns the exit code like ssh. With a
     trailing `-- command` it runs once and exits with that code; without one
     it prompts, which FEELS like a slow shell and is honestly a request loop.
+
+    ★ THE PROMPT USES A SESSION AND THE ONE-SHOT FORM DOES NOT, since
+    2026-09-10. The prompt types into a shell that stays running in the driver
+    pod, so `cd`, an exported variable and an activated venv survive from one
+    line to the next -- which is what a person at a prompt assumes and what
+    every earlier version quietly did not do. A `-- command` invocation is a
+    script's shape and gets the stateless form: it wants no history and should
+    not leave a session behind for the idle timer to close.
     """
     client = client_from_config()
+    # The output sequence the session has already shown us. It is here rather
+    # than inside run_once because it has to survive between lines, which is the
+    # whole point.
+    state = {"seq": 0}
 
-    def run_once(line: str) -> int:
-        answer = client.exec_in_job(args.job, line, slot=args.slot)
+    def run_once(line: str, session: bool = False) -> int:
+        answer = client.exec_in_job(args.job, line, slot=args.slot,
+                                    session=session, seq=state["seq"])
+        if session:
+            state["seq"] = int(answer.get("seq", state["seq"]))
         output = answer.get("output") or ""
         if output:
             print(output, end="" if output.endswith("\n") else "\n")
@@ -873,7 +888,8 @@ def cmd_shell(args: argparse.Namespace) -> int:
         return run_once(" ".join(words))
 
     print(
-        f"one command per line, ~25s each; 'exit' or Ctrl-D leaves. Not a TTY.",
+        f"one command per line, ~25s each; 'exit' or Ctrl-D leaves. Not a TTY, "
+        f"but `cd` and exported variables DO survive between lines.",
         file=sys.stderr,
     )
     while True:
@@ -888,10 +904,29 @@ def cmd_shell(args: argparse.Namespace) -> int:
         if line in ("exit", "quit"):
             return EXIT_OK
         try:
-            code = run_once(line)
+            code = run_once(line, session=True)
             if code:
                 print(f"(exit {code})", file=sys.stderr)
         except ServerError as exc:
+            # A SESSION THAT IS GONE IS THE ONE ERROR WORTH ACTING ON. The
+            # server answers 409 when the driver pod has no session for this
+            # slot -- it timed out after ten minutes unread, or the workload
+            # restarted. Reopening is right there and only there: everywhere
+            # else a new shell would silently lose the `cd` the person is
+            # relying on, which is the failure this whole feature exists to
+            # end. The sequence resets with it, because the new shell's
+            # output starts from nothing.
+            if "open one first" in str(exc) or "no session" in str(exc):
+                state["seq"] = 0
+                print("(the session had closed; reopening — `cd` and variables "
+                      "from before are gone)", file=sys.stderr)
+                try:
+                    code = run_once(line, session=True)
+                    if code:
+                        print(f"(exit {code})", file=sys.stderr)
+                    continue
+                except ServerError as retry_exc:
+                    exc = retry_exc
             # One failed command must not end the session: say what the server
             # said and keep the prompt.
             print(f"error: {exc}", file=sys.stderr)

@@ -112,8 +112,11 @@ class FakeCluster:
         except KeyError:
             raise k8s.NotFound(name) from None
 
-    def exec_in_driver(self, namespace, job_name, slot, argv, timeout_seconds):
-        self.execs.append((namespace, job_name, slot, argv, timeout_seconds))
+    # `stdin` is part of the signature since PACSRUN-SHELL-SESSION and the double has to take
+    # it -- a double that cannot be called the way the route calls it is the third time this
+    # week a missing kwarg on a fake hid a real defect (the `json` import below).
+    def exec_in_driver(self, namespace, job_name, slot, argv, timeout_seconds, stdin=None):
+        self.execs.append((namespace, job_name, slot, argv, timeout_seconds, stdin))
         return self.exec_answer
 
     def recent_log_lines(self, namespace, job_name, since_seconds):
@@ -461,11 +464,91 @@ def test_exec_relays_one_command_and_the_exit_code(client, cluster):
     assert answer.status_code == 200
     assert answer.json()["output"].startswith("NVIDIA")
     assert answer.json()["exit_code"] == 0
-    namespace, job, slot, argv, _ = cluster.execs[0]
+    namespace, job, slot, argv, _, stdin = cluster.execs[0]
     assert (namespace, job, slot) == ("lab-alice", "hand-made", 0)
     # The user's line rides inside sh -lc, through the driver's shell relay.
     assert argv[:3] == ["python3", "/app/driver/aws/shell.py", "--"]
     assert argv[-2:] == ["-lc", "nvidia-smi -L"]
+    assert stdin is None, (
+        "★ 한 줄 형태는 stdin 채널을 열지 않는다 — 아무도 쓰지 않는 stdin 채널을 "
+        "기다리는 container runtime 이 있고, 이 형태는 EOF 를 보낼 방법이 없다")
+
+
+# ------------------------------------------------------------- PACSRUN-SHELL-SESSION
+
+
+def test_a_session_command_is_typed_into_a_shell_that_is_already_running(client, cluster):
+    """★ THE POINT OF THE SESSION, and the reason the flag exists: `cd` survives.
+
+    Without it every request is `sh -lc <line>` -- a fresh shell -- so
+    `cd /workspace` followed by `pwd` answers `/`. With it the line is typed into
+    the shell driver/common/shellsession.py is holding, and the reply carries the
+    sequence to resume the output from.
+    """
+    cluster.objects[("lab-alice", "running-job")] = {
+        "metadata": {"name": "running-job"}, "spec": {},
+        "status": {"phase": "Running"},
+    }
+    cluster.exec_answer = (r'{"output": "/workspace\n", "seq": 42, "lost": false}', 0)
+    answer = as_alice(client, "POST", "/v1/jobs/running-job/exec",
+                      json={"command": "cd /workspace && pwd", "session": True, "seq": 7})
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert body["output"] == "/workspace\n", "the JSON the client printed is unpacked, not echoed"
+    assert body["seq"] == 42, "and the new sequence comes back so the caller can resume"
+    assert body["lost"] is False
+
+    _, _, _, argv, _, stdin = cluster.execs[0]
+    assert argv[:3] == ["python3", "/app/driver/common/shellsession.py", "send"]
+    assert "--seq" in argv and argv[argv.index("--seq") + 1] == "7"
+    assert stdin == "cd /workspace && pwd", (
+        "★ the line goes on STDIN and not in the argv: an argv is visible in `ps` on the "
+        "driver pod and lands in the apiserver's audit log, and a typed line can carry "
+        "anything the person pasted")
+    assert "cd /workspace && pwd" not in " ".join(argv)
+
+
+def test_a_session_that_is_gone_answers_409_and_not_a_new_shell(client, cluster):
+    """A timed-out session must not be replaced silently: a new shell has lost the
+    `cd` the person is relying on and would answer as though nothing had happened."""
+    cluster.objects[("lab-alice", "running-job")] = {
+        "metadata": {"name": "running-job"}, "spec": {},
+        "status": {"phase": "Running"},
+    }
+    cluster.exec_answer = (
+        '{"error": "no session for this slot; open one first", "gone": true}', 1)
+    answer = as_alice(client, "POST", "/v1/jobs/running-job/exec",
+                      json={"command": "pwd", "session": True})
+    assert answer.status_code == 409
+    assert "open one first" in answer.json()["detail"]
+
+
+def test_dropped_output_is_reported_rather_than_leaving_a_hole(client, cluster):
+    cluster.objects[("lab-alice", "running-job")] = {
+        "metadata": {"name": "running-job"}, "spec": {},
+        "status": {"phase": "Running"},
+    }
+    cluster.exec_answer = (r'{"output": "tail\n", "seq": 900, "lost": true}', 0)
+    body = as_alice(client, "POST", "/v1/jobs/running-job/exec",
+                    json={"command": "cat big", "session": True, "seq": 1}).json()
+    assert body["lost"] is True
+    assert "dropped" in body["note"], (
+        "somebody reading a stack trace with an invisible gap in it would not know")
+
+
+def test_a_driver_that_does_not_answer_in_json_is_handed_back_verbatim(client, cluster):
+    """The client prints JSON on every path, so anything else means something ELSE
+    wrote to that stdout -- a traceback, or the exec itself failing. Inventing a
+    shape would hide it."""
+    cluster.objects[("lab-alice", "running-job")] = {
+        "metadata": {"name": "running-job"}, "spec": {},
+        "status": {"phase": "Running"},
+    }
+    cluster.exec_answer = ("Traceback (most recent call last):\n  ...\n", 1)
+    answer = as_alice(client, "POST", "/v1/jobs/running-job/exec",
+                      json={"command": "pwd", "session": True})
+    assert answer.status_code == 502
+    assert "did not answer in JSON" in answer.json()["detail"]
 
 
 def test_exec_refuses_a_finished_job_with_the_reason(client, cluster):

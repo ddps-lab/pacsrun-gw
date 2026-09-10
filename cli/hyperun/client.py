@@ -193,7 +193,8 @@ class Client:
         return self._call("GET", "/v1/stats").json()
 
     def exec_in_job(
-        self, job: str, command: str, slot: int = 0, timeout_seconds: int = 20
+        self, job: str, command: str, slot: int = 0, timeout_seconds: int = 20,
+        session: bool = False, seq: int = 0,
     ) -> dict[str, Any]:
         """Run one shell line inside a running job's workload container.
 
@@ -206,6 +207,13 @@ class Client:
             command: one shell line, run as `sh -lc <command>`.
             slot: which pod of a parallel job.
             timeout_seconds: server-side wait, capped at 25 by the server.
+            session: type the line into a shell ALREADY RUNNING in the driver
+                pod, so `cd` and exported variables survive to the next call.
+                False starts a fresh `sh -lc`, which is what a script wants.
+            seq: with `session`, the output sequence this caller last saw. The
+                reply carries the next one. It exists because the caller is a
+                different process on the server's side every time and cannot
+                hold a position in the output.
         """
         return self._call(
             "POST",
@@ -214,6 +222,8 @@ class Client:
                 "command": command,
                 "slot": slot,
                 "timeout_seconds": timeout_seconds,
+                "session": session,
+                "seq": seq,
             },
             # The server may hold the request for timeout_seconds before
             # answering; the read timeout has to outlive that on purpose.

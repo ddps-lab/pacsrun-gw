@@ -514,9 +514,28 @@ class ExecRequest(BaseModel):
         min_length=1,
         max_length=4000,
         description="Run as `sh -lc <command>` inside the workload container "
-        "on the rented machine, via the driver pod's shell relay.",
+        "on the rented machine, via the driver pod's shell relay. With `session` "
+        "set it is instead typed into a shell that is ALREADY RUNNING there, so "
+        "`cd` and exported variables survive to the next request.",
     )
     slot: int = Field(default=0, ge=0, le=255, description="Which pod of a parallel job.")
+    # PACSRUN-SHELL-SESSION. Absent means the one-shot form, byte for byte what this
+    # route did before -- a script wants no session, and an older CLI sends no flag.
+    session: bool = Field(
+        default=False,
+        description="Type the command into a PERSISTENT shell in the driver pod "
+        "instead of starting a fresh `sh -lc`. The session is opened on first use "
+        "and closed when the workload ends or after ten minutes unread. Without "
+        "it every command starts its own shell and `cd` is lost between them.",
+    )
+    seq: int = Field(
+        default=0,
+        ge=0,
+        description="With `session`: the output sequence this caller last saw. "
+        "The reply carries the new one. It exists because the caller is a "
+        "different process on every request and cannot hold a position in the "
+        "output; sending back the number is how it resumes.",
+    )
     timeout_seconds: int = Field(
         default=20,
         ge=1,
@@ -530,6 +549,17 @@ class ExecResponse(BaseModel):
     """What `POST /v1/jobs/{id}/exec` returns."""
 
     output: str = Field(description="stdout and stderr, in arrival order.")
+    seq: int = Field(
+        default=0,
+        description="With `session`: the output sequence to send back next time. "
+        "0 on the one-shot form, which keeps no position.",
+    )
+    lost: bool = Field(
+        default=False,
+        description="With `session`: True when output this caller had not read was "
+        "already dropped from the driver pod's buffer, which is bounded. Said out "
+        "loud rather than handing back a stack trace with an invisible hole in it.",
+    )
     exit_code: int | None = Field(
         default=None,
         description="The command's exit code, relayed from the workload "

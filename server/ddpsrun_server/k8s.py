@@ -552,6 +552,7 @@ class Cluster:
         slot: int,
         argv: list[str],
         timeout_seconds: int,
+        stdin: str | None = None,
     ) -> tuple[str, int | None]:
         """Run ONE command in a job's driver pod and return what it printed.
 
@@ -574,6 +575,20 @@ class Cluster:
                 label lookup the logs route uses.
             argv: the exact command vector to start in the driver pod.
             timeout_seconds: how long to wait for the command to finish.
+            stdin: text to hand the command, or None for the argv-only form.
+
+                ★ WHY THIS EXISTS AT ALL. It was added for PACSRUN-SHELL-SESSION,
+                where the thing being carried is a line somebody typed into a
+                debugging shell. An argv is visible in `ps` on the driver pod and
+                lands in the apiserver's audit log; a typed line can carry
+                anything the person pasted, including a token they meant to
+                `export`. stdin carries it to one process and no further.
+
+                The channel is opened only when this is not None, so the
+                one-shot `sh -lc` form is byte-for-byte the request it was
+                before -- a stdin channel nobody writes to makes some container
+                runtimes wait for EOF, and the one-command form has no way to
+                send one.
 
         Returns:
             (everything it printed, its exit code). The exit code is None when
@@ -599,7 +614,7 @@ class Cluster:
                 command=argv,
                 stdout=True,
                 stderr=True,
-                stdin=False,
+                stdin=stdin is not None,
                 tty=False,
                 _preload_content=False,
             )
@@ -607,6 +622,20 @@ class Cluster:
             if exc.status == 404:
                 raise NotFound(pod) from exc
             raise ClusterError(_api_message(exc)) from exc
+
+        if stdin is not None:
+            # ★ THERE IS NO WAY TO CLOSE STDIN ON THIS CHANNEL, and that decides the
+            # protocol on the other end. `WSClient` offers `write_stdin` and
+            # `close`, and nothing between: `close` ends the whole connection, and
+            # writing an empty payload is not an EOF, it is nothing. So the command
+            # being started MUST NOT read to EOF -- it would wait for one that never
+            # comes and every request would hit the timeout.
+            #
+            # `shellsession.py` therefore reads ONE LINE, and this appends the
+            # newline that ends it. The cost is that a pasted multi-line command
+            # arrives as its first line only; the CLI's prompt loop sends one line
+            # per request anyway, so nothing that exists today notices.
+            ws.write_stdin(stdin if stdin.endswith("\n") else stdin + "\n")
 
         ws.run_forever(timeout=timeout_seconds)
         output = (ws.read_stdout() or "") + (ws.read_stderr() or "")

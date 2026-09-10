@@ -38,6 +38,7 @@ Grep anchor: DDPSRUN-ROUTES
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -1800,12 +1801,33 @@ def exec_in_job(
             "so there is nothing to run a command in",
         )
 
-    # sh -lc, so the user writes one shell line ("cd /work && ls -la") rather
-    # than an argv. The line runs INSIDE the workload container; shell.py is
-    # the relay that carries it there and the exit code back.
-    argv = ["python3", "/app/driver/aws/shell.py", "--", "sh", "-lc", body.command]
+    # PACSRUN-SHELL-SESSION vs the one-shot form, and the difference is what the
+    # person sees between two commands.
+    #
+    #   without `session`   `sh -lc <line>` -- a FRESH shell every request, so a
+    #                       `cd` is gone by the next one. Byte for byte the
+    #                       request this route made before the flag existed, which
+    #                       is what a script wants and what an older CLI sends.
+    #   with `session`      the line is typed into a shell ALREADY RUNNING in the
+    #                       driver pod, so `cd`, exported variables and an
+    #                       activated venv survive. The holder is
+    #                       driver/common/shellsession.py; it is opened on first
+    #                       use and closed with the workload.
+    #
+    # THE LINE GOES ON STDIN IN THE SESSION FORM, never in the argv: an argv is
+    # visible in `ps` on the driver pod and lands in the apiserver's audit log,
+    # and a line typed into a debugging shell can carry anything the person
+    # pasted. `exec_in_driver` opens that channel only when stdin is not None.
+    stdin: str | None = None
+    if body.session:
+        argv = ["python3", "/app/driver/common/shellsession.py", "send",
+                "--slot", str(body.slot), "--seq", str(body.seq)]
+        stdin = body.command
+    else:
+        argv = ["python3", "/app/driver/aws/shell.py", "--", "sh", "-lc", body.command]
     try:
-        output, code = cluster.exec_in_driver(ns, name, body.slot, argv, body.timeout_seconds)
+        output, code = cluster.exec_in_driver(ns, name, body.slot, argv,
+                                              body.timeout_seconds, stdin=stdin)
     except NotFound as exc:
         raise HTTPException(
             status_code=404,
@@ -1814,12 +1836,45 @@ def exec_in_job(
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    # THE SESSION FORM ANSWERS IN JSON AND THE ONE-SHOT FORM DOES NOT, so the
+    # reply is unpacked here rather than handed through. `shellsession.py send`
+    # prints one object: the output since `seq`, the new sequence, and whether
+    # the driver pod's bounded buffer had already dropped anything this caller
+    # had not read. `exit_code` stays the CLIENT's, which is 0 when the verb
+    # worked -- a session has no per-line exit code, because the shell it types
+    # into is still running.
+    seq, lost, note = 0, False, ""
+    if body.session:
+        try:
+            answer = json.loads(output or "{}")
+        except json.JSONDecodeError:
+            # The client prints JSON on every path, so this means something else
+            # wrote to that stdout -- a python traceback, or the exec itself
+            # failing. Hand it back verbatim; inventing a shape would hide it.
+            answer = {"output": output, "error": "the driver pod did not answer in JSON"}
+        if answer.get("error"):
+            # `gone` means the session timed out or never existed. The CLI turns
+            # that into "reopening", which is the only case where starting a new
+            # shell is right -- the old one is provably not there any more.
+            raise HTTPException(
+                status_code=409 if answer.get("gone") else 502,
+                detail=str(answer["error"]),
+            )
+        output = answer.get("output", "")
+        seq = int(answer.get("seq", 0))
+        lost = bool(answer.get("lost", False))
+        if lost:
+            note = ("output older than what is shown was dropped from the driver "
+                    "pod's buffer before this request read it")
+
     return ExecResponse(
         output=output,
         exit_code=code,
+        seq=seq,
+        lost=lost,
         note=(
-            ""
-            if code is not None
+            note
+            if note or code is not None
             else f"still running when the {body.timeout_seconds}s window closed; "
             "the output shown is what had arrived by then"
         ),

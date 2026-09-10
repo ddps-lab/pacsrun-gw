@@ -100,8 +100,8 @@ class FakeClient:
     # DDPSRUN-SHELL. Absent until 2026-09-10, which is exactly why the dispatch
     # bug below survived every release: with no double for this call, no test
     # could reach cmd_shell at all.
-    def exec_in_job(self, job, line, slot=0):
-        self.execed.append((job, line, slot))
+    def exec_in_job(self, job, line, slot=0, session=False, seq=0):
+        self.execed.append((job, line, slot, session, seq))
         return self.exec_result
 
 
@@ -820,7 +820,8 @@ def test_the_subcommand_name_survives_the_shell_positional():
 
 def test_shell_with_a_command_runs_it_once_and_returns_its_exit_code(fake, capsys):
     assert run(["shell", "job-a8acdef80a07", "--", "date"]) == 0
-    assert fake.execed == [("job-a8acdef80a07", "date", 0)]
+    assert fake.execed == [("job-a8acdef80a07", "date", 0, False, 0)], (
+        "`-- command` 형태는 stateless 다 — script 는 남길 session 이 없다")
     assert "Sep 10" in capsys.readouterr().out
 
 
@@ -858,3 +859,62 @@ def test_every_other_subcommand_still_dispatches(fake):
     """dest 를 바꾼 것이 나머지를 깨지 않았다는 확인."""
     assert run(["status", "job-a8acdef80a07"]) == 0
     assert run(["secrets"]) == 0
+
+
+def test_the_prompt_uses_a_session_and_carries_the_sequence(fake, monkeypatch, capsys):
+    """★ WHY THE PROMPT DIFFERS FROM `-- command`. A person at a prompt assumes
+    `cd` sticks; a script does not want a session left behind for the idle timer.
+    So the prompt sends session=True and threads the sequence through, and the
+    one-shot form stays stateless."""
+    typed = iter(["cd /workspace", "pwd", "exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(typed))
+    fake.exec_result = {"output": "/workspace\n", "exit_code": 0, "seq": 11, "lost": False}
+
+    assert run(["shell", "job-a8acdef80a07"]) == 0
+    assert [(line, sess) for _job, line, _slot, sess, _seq in fake.execed] == [
+        ("cd /workspace", True), ("pwd", True)]
+    # The FIRST line starts at 0 and the second carries what the first returned.
+    assert [seq for *_rest, seq in fake.execed] == [0, 11]
+
+
+def test_a_session_that_closed_is_reopened_once_and_the_person_is_told(fake, monkeypatch,
+                                                                       capsys):
+    """The one case where starting a new shell is right: the old one is provably
+    gone (ten minutes unread, or the workload restarted). Everywhere else a new
+    shell silently loses the `cd`, which is the failure this feature exists to end
+    -- so the message says what was lost."""
+    typed = iter(["pwd", "exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(typed))
+
+    calls = {"n": 0}
+    original = fake.exec_in_job
+
+    def flaky(job, line, slot=0, session=False, seq=0):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise cli.ServerError("no session for this slot; open one first")
+        return original(job, line, slot=slot, session=session, seq=seq)
+
+    fake.exec_in_job = flaky
+    assert run(["shell", "job-a8acdef80a07"]) == 0
+    assert calls["n"] == 2, "it retried once rather than giving up or looping"
+    err = capsys.readouterr().err
+    assert "reopening" in err and "are gone" in err, (
+        "a silent reopen would let somebody keep typing paths relative to a cd that no "
+        "longer applies")
+
+
+def test_a_failure_that_is_not_a_lost_session_is_not_retried(fake, monkeypatch, capsys):
+    typed = iter(["pwd", "exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(typed))
+
+    calls = {"n": 0}
+
+    def always_bad(job, line, slot=0, session=False, seq=0):
+        calls["n"] += 1
+        raise cli.ServerError("the driver pod did not answer in JSON")
+
+    fake.exec_in_job = always_bad
+    assert run(["shell", "job-a8acdef80a07"]) == 0
+    assert calls["n"] == 1, "retrying an unrelated failure would double every bad command"
+    assert "did not answer in JSON" in capsys.readouterr().err
