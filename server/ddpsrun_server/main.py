@@ -883,12 +883,18 @@ def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     totals = stats_reader.summarise(principal.team, namespaces, jobs_by_namespace)
-    # The caller's own figure, admin bucket folded in for an operator — the
-    # reasoning lives on the response field (models.StatsResponse.caller_cost_usd).
+    # ★ THE CALLER'S OWN FIGURE IS NOW ONLY THEIR OWN. It used to fold the
+    # ownerless bucket in whenever the caller was an operator, on the reasoning
+    # that only an operator can apply a PacsJob with kubectl so those jobs are
+    # theirs. The reasoning holds for who APPLIED them and not for whose spend
+    # they are: this cluster's ownerless bucket is 35 jobs from the kubectl era
+    # in the `default` namespace, and folding them in made an operator's "My
+    # spend" read $105.18 when the jobs they had actually submitted came to
+    # $42.61. Asked about on 2026-09-10. The bucket is still its own row in the
+    # members table, under the name `kubectl`, so nothing is hidden -- it is
+    # just no longer attributed to whoever happens to be an operator today.
     caller_cost = sum(
-        m.cost_usd
-        for m in totals.members
-        if m.user == principal.user or (principal.admin and m.user == "admin")
+        m.cost_usd for m in totals.members if m.user == principal.user
     )
     return StatsResponse(
         team=totals.team,

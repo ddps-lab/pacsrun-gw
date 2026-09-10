@@ -37,6 +37,11 @@ from typing import Any, Iterable
 from .measurements import gpu_by_name
 from .naming import OWNER_LABEL
 
+# What the Member column says for a job with no owner label. NOT a person's
+# name and deliberately lowercase, so it cannot be mistaken for an account —
+# see the bucket comment in `summarise`.
+NO_OWNER = "kubectl"
+
 # Phases that mean the job is over. Anything else is still spending.
 TERMINAL_PHASES = {"Succeeded", "Failed", "Compared"}
 
@@ -202,11 +207,25 @@ def summarise(
 
     # A member is a PERSON, and the person is on the job itself: the
     # ddpsrun.io/owner label the server writes at submit time — the same value
-    # the jobs screen prints under "Submitted by". A job with no owner label
-    # was applied straight to the cluster with kubectl, which only an operator
-    # can do, so those group under "admin". The name used to be derived from
-    # the NAMESPACE instead, which put every kubectl-era job under a member
-    # called "default" — a namespace pretending to be a person (2026-09-07).
+    # the jobs screen prints under "Submitted by". A job with no owner label was
+    # applied straight to the cluster with kubectl, which only an operator can
+    # do.
+    #
+    # ★ THAT BUCKET IS CALLED `kubectl`, AND TWO EARLIER NAMES WERE WRONG for
+    # the same reason: they put something that is not a person in the Member
+    # column, and readers took it for one.
+    #
+    #   "default"   the NAMESPACE, until 2026-09-07. A namespace pretending to
+    #               be a person.
+    #   "admin"     a ROLE, until 2026-09-10. On this cluster that row read 36
+    #               jobs and $62.57 against the caller's own 3 jobs and $42.61,
+    #               and the caller asked why the only member was "admin" and
+    #               where their own spend had gone. It had not gone anywhere; it
+    #               was the second row, under something that looked like an
+    #               account.
+    #
+    # `kubectl` is what actually applied them — a fact about the job rather than
+    # a guess about who is answerable for it, and nobody reads it as a colleague.
     members: dict[str, MemberTotals] = {}
     # The same jobs, added up a second way: by WHO SOLD the machine. Same loop,
     # same hours, same prices — the two tables must never disagree about a job.
@@ -215,7 +234,7 @@ def summarise(
     for namespace in namespaces:
         for job in jobs_by_namespace.get(namespace, []):
             labels = ((job.get("metadata") or {}).get("labels")) or {}
-            owner = labels.get(OWNER_LABEL) or "admin"
+            owner = labels.get(OWNER_LABEL) or NO_OWNER
             member = members.setdefault(owner, MemberTotals(user=owner))
 
             sold_by = (((job.get("status") or {}).get("currentOffering")) or {}).get(

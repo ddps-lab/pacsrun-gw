@@ -929,11 +929,22 @@ def test_stats_add_up_every_namespace_of_the_team(client, cluster):
     assert sorted(m["user"] for m in result["members"]) == ["alice", "bob"]
 
 
-def test_an_operators_own_spend_includes_the_admin_bucket(client, cluster):
-    # Only an operator can apply a job with kubectl, and such a job has no
-    # owner label, so the "admin" bucket is the operator's own work. Their
-    # My spend card must not say $0.00 next to a team total they personally
-    # spent — which is exactly what it said on 2026-09-07.
+def test_an_ownerless_job_is_its_own_row_and_not_the_operators_spend(client, cluster):
+    """★ REVERSED ON 2026-09-10, and both directions were a real complaint.
+
+    2026-09-07: an operator's My spend read $0.00 next to a team total they had
+    personally spent, so the ownerless bucket was folded into their own figure.
+
+    2026-09-10: the same folding made an operator's My spend read the WHOLE team
+    total. This cluster's ownerless bucket is 35 jobs from the kubectl era in the
+    `default` namespace -- $62.57 -- against the $42.61 of jobs that operator had
+    actually submitted. "Only an operator can have applied them" is true about
+    who ran kubectl and says nothing about whose spend it is.
+
+    So the bucket keeps its own row, and it is no longer called `admin`: a role
+    in the Member column reads as an account, which is what made the reporter
+    ask why the only member was "admin" and where their own spend had gone.
+    """
     cluster.objects[("default", "hand-made")] = {
         "metadata": {"name": "hand-made"},
         "spec": {"parallelism": 1},
@@ -946,9 +957,12 @@ def test_an_operators_own_spend_includes_the_admin_bucket(client, cluster):
     }
     result = as_root(client, "GET", "/v1/stats").json()
     assert result["caller"] == "root"
-    assert [m["user"] for m in result["members"]] == ["admin"]
-    assert abs(result["caller_cost_usd"] - 2 * 0.99) < 0.01
-    # A non-operator's figure stays their own row alone.
+    assert [m["user"] for m in result["members"]] == ["kubectl"], (
+        "사람 이름이 아닌 것이 Member 칸에 사람처럼 앉아 있으면 안 된다")
+    assert abs(result["cost_usd"] - 2 * 0.99) < 0.01, "team 합계에는 들어간다"
+    assert result["caller_cost_usd"] == 0.0, (
+        "operator 가 kubectl 로 만든 것을 그 사람의 spend 로 세지 않는다")
+    # A non-operator's figure stays their own row alone, unchanged.
     assert as_alice(client, "GET", "/v1/stats").json()["caller_cost_usd"] == 0.0
 
 

@@ -200,11 +200,13 @@ def test_the_same_jobs_add_up_by_vendor_too():
     assert by["unknown"].jobs == 1 and by["unknown"].gpu_hours == 0.0
 
 
-def test_a_job_with_no_owner_label_belongs_to_admin():
+def test_a_job_with_no_owner_label_reports_under_kubectl():
     # Only an operator can apply a PacsJob with kubectl, and such a job has no
-    # ddpsrun.io/owner label — so it reports under "admin", the same word the
-    # jobs screen prints for it, never under a namespace pretending to be a
-    # person (the member list said "default" until 2026-09-07).
+    # ddpsrun.io/owner label. It reports under `kubectl` -- what applied it --
+    # and the Member column has now had two wrong names for the same reason,
+    # each of which a reader took for an account: "default", the NAMESPACE,
+    # until 2026-09-07, and "admin", a ROLE, until 2026-09-10. The row sorts
+    # first either way, which is what made it look like the only member.
     totals = stats.summarise(
         "ddps", ["default"],
         {"default": [
@@ -213,7 +215,7 @@ def test_a_job_with_no_owner_label_belongs_to_admin():
         ]},
         now=NOW,
     )
-    assert [m.user for m in totals.members] == ["admin", "alice"]
+    assert [m.user for m in totals.members] == ["alice", "kubectl"]
     assert totals.jobs == 2
 
 

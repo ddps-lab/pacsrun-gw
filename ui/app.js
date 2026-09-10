@@ -257,9 +257,9 @@ function drawHome() {
     const failToday = jobs.filter((j) => j.phase === "Failed" && isToday(j)).length;
 
     // caller_cost_usd is computed on the server (the screen decides nothing):
-    // the caller's own member row, plus the "admin" bucket when the caller IS
-    // an operator — kubectl jobs carry no owner label, and only an operator
-    // can have applied them, so they are the operator's own spend.
+    // the caller's own member row and nothing else. It used to fold in the
+    // ownerless bucket for an operator, which made "My spend" read the whole
+    // team total — see StatsResponse.caller_cost_usd.
     $("home-cards").innerHTML = [
       card("Active", running.length, running.length ? "run" : ""),
       card("Finished today", doneToday, doneToday ? "ok" : ""),
@@ -376,7 +376,10 @@ function jobsTable(jobs, columns) {
     // else, so a job with no owner was applied straight to the cluster with
     // kubectl — and only an operator can do that. Naming the operator tells
     // the reader who to ask about the job; "-" told them nothing.
-    user: (j) => esc(j.user || "admin"),
+    // No owner label means it was applied with kubectl, which only an operator
+    // can do. It used to say "admin", a role standing in for a person — see the
+    // bucket comment in stats.summarise.
+    user: (j) => esc(j.user || "kubectl"),
     status: (j) => badge(j.phase),
     created: (j) => `<span class="num dim">${esc(when(j.created_at))}</span>`,
     elapsed: elapsedCell,
@@ -528,7 +531,7 @@ async function drawDetail(jobId, ns = "") {
       fact("Restarts", job.recovery_count || "none"),
       // Same fallback as the list: no owner label means it was applied with
       // kubectl, which only an operator can do.
-      fact("Submitted by", job.user || "admin"),
+      fact("Submitted by", job.user || "kubectl"),
       fact("Result", job.result_path || "-"),
     ].join("");
 

@@ -456,7 +456,7 @@ What /v1/stats returns.
 | field | required | description |
 |---|---|---|
 | `caller` |  | The requesting token's own user name, so the screen can pick 'your' row out of members without guessing. Jobs applied with kubectl belong to the member 'admin', not to any caller. |
-| `caller_cost_usd` |  | What the CALLER has spent — the number Home's 'My spend' card shows, computed here because the screen makes no decisions. For most people it is their own member row. For an operator account (admin in the token file) it also folds in the 'admin' member: only an operator can apply a job with kubectl, so the label-less jobs in that bucket are the operator's own work — showing the operator $0.00 next to a team total they personally spent was the 2026-09-07 defect this field exists to end. |
+| `caller_cost_usd` |  | What the CALLER has spent — the number Home's 'My spend' card shows, computed here because the screen makes no decisions. It is their own member row and nothing else. It used to fold in the ownerless bucket for an operator account, on the reasoning that only an operator can apply a job with kubectl; that says who applied them, not whose spend they are, and on this cluster it made an operator's 'My spend' read the whole team total ($105.18) against the $42.61 they had actually submitted. The bucket is still its own row, named `kubectl`. |
 | `cost_usd` |  |  |
 | `gpu_hours` |  |  |
 | `jobs` |  |  |
