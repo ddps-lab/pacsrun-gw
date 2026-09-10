@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ddpsrun</title>
+<title>hyperun</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
@@ -88,7 +88,7 @@
     <label id="server-row"><span>Server</span>
       <input id="in-server" placeholder="https://....lambda-url.us-west-2.on.aws" autocomplete="off"></label>
     <label><span>Token</span>
-      <input id="in-token" type="password" placeholder="ddpsrun-..." autocomplete="off"></label>
+      <input id="in-token" type="password" placeholder="a token from your operator" autocomplete="off"></label>
     <button class="go" id="do-login">Sign in with a token</button>
   </div>
 
@@ -149,9 +149,9 @@
     <header><h2>Getting started</h2></header>
     <div class="facts">
       <div class="fact"><span class="k">Install the CLI</span>
-        <span class="v">pip install ddpsrun</span></div>
+        <span class="v">pip install hyperun</span></div>
       <div class="fact"><span class="k">Sign in from a terminal</span>
-        <span class="v">ddpsrun login</span></div>
+        <span class="v">hyperun login</span></div>
       <div class="fact"><span class="k">Use it from Claude Code</span>
         <span class="v">/plugin marketplace add ddps-lab/pacsrun-gw</span></div>
     </div>
@@ -244,7 +244,7 @@
     <div id="d-files">-</div>
   </div>
 
-  <!-- Shell: `ddpsrun shell`, install line included — never kubectl, because a
+  <!-- Shell: `hyperun shell`, install line included — never kubectl, because a
        researcher with kubectl would not need this product. The command goes to
        POST /v1/jobs/{id}/exec, which relays through the driver pod into the
        workload container on the rented machine. A terminal cannot run in this

@@ -22,7 +22,7 @@ import urllib.parse
 
 import pytest
 
-from ddpsrun import browser_login
+from hyperun import browser_login
 
 # Shaped like what `GET /v1/login-config` returns, with made-up identifiers.
 # The real pool id and client id stay out of the repo for the same reason the
@@ -265,7 +265,7 @@ def a_token_expiring_in(seconds: int) -> str:
 
 
 def test_a_token_with_time_left_is_not_touched(monkeypatch, tmp_path):
-    from ddpsrun import cli, config
+    from hyperun import cli, config
 
     called = {"n": 0}
     monkeypatch.setattr(cli.browser_login, "login_config",
@@ -276,7 +276,7 @@ def test_a_token_with_time_left_is_not_touched(monkeypatch, tmp_path):
 
 
 def test_an_expired_token_is_renewed_silently(monkeypatch, tmp_path):
-    from ddpsrun import cli, config
+    from hyperun import cli, config
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(cli.browser_login, "login_config", lambda s: CONFIG)
@@ -294,16 +294,16 @@ def test_an_expired_token_is_renewed_silently(monkeypatch, tmp_path):
 
 def test_a_static_token_is_never_refreshed(monkeypatch):
     """It has no exp and no refresh token. This must not crash on either."""
-    from ddpsrun import cli, config
+    from hyperun import cli, config
 
-    creds = config.Credentials("https://gw", "ddpsrun-static-abc", "")
+    creds = config.Credentials("https://gw", "hyperun-static-abc", "")
     assert cli.refreshed(creds) is creds
 
 
 def test_a_failed_renewal_returns_the_old_token_rather_than_raising(monkeypatch):
     """The request then fails on its own with the server's own 401, which says
     more than an error raised from in here would."""
-    from ddpsrun import cli, config
+    from hyperun import cli, config
 
     def boom(*a, **k):
         raise browser_login.LoginError("Cognito is down")

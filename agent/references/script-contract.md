@@ -44,7 +44,7 @@ python gen_openrca_tasks_fast.py --lora "/root/ab/$ADAPTER"
 ```
 
 **어긋나면 앞이 먼저 끝나고 그 다음에 뒤가 실패한다.** AIOps 는 학습만 31 시간이다.
-`ddpsrun validate --script run.sh` 가 `--out`/`--lora` 라는 **그 두 flag 이름일 때만**
+`hyperun validate --script run.sh` 가 `--out`/`--lora` 라는 **그 두 flag 이름일 때만**
 `adapter-path-mismatch` 로 잡는다(recipe 층, DDPSRUN-CHECK-TIERS). 다른 이름을 쓰는 짝은
 검사가 못 본다 — 그래서 이 규칙이 검사보다 먼저 있다.
 
@@ -141,7 +141,7 @@ echo probe | aws s3 cp - "$PACSRUN_RESULT_PATH.probe" \
   || { echo "결과 경로에 쓸 수 없다: $PACSRUN_RESULT_PATH"; exit 1; }
 ```
 
-`ddpsrun validate` 는 이것들을 대신 봐 주지 못합니다. **사용자의 저장소도, vendor 의 자격증명도
+`hyperun validate` 는 이것들을 대신 봐 주지 못합니다. **사용자의 저장소도, vendor 의 자격증명도
 서버에서는 보이지 않습니다.** 그래서 script 안에 두어야 합니다.
 
 ---
@@ -165,7 +165,7 @@ trap upload_everything EXIT
 ```
 
 `trap ... EXIT` 는 정상 종료에서도, 오류에서도, SIGTERM 에서도 실행된다. 없으면 20 시간째에
-죽었을 때 **돈은 다 쓰고 남는 것이 없다.** `ddpsrun validate` 가 `no-exit-trap` 으로 잡는다.
+죽었을 때 **돈은 다 쓰고 남는 것이 없다.** `hyperun validate` 가 `no-exit-trap` 으로 잡는다.
 
 **★ announce 를 trap 안에 두는 것이 왜 안전한가.** driver 는 workload 가 끝난 뒤에도 큐가
 빌 때까지 최대 600초 machine 을 잡고 기다린다(§13). 그래서 마지막 순간에 찍은 줄도 회수된다 —
@@ -267,8 +267,8 @@ PACSRUN_GPU=94,38200,45440,71,298
 거절됩니다.
 
 ```bash
-ddpsrun estimate ...          # 권고와 이유가 나온다
-ddpsrun submit ... --capacity-type on-demand
+hyperun estimate ...          # 권고와 이유가 나온다
+hyperun submit ... --capacity-type on-demand
 ```
 
 - `on-demand` 는 비싸고 뺏기지 않습니다.
@@ -282,7 +282,7 @@ ddpsrun submit ... --capacity-type on-demand
 GPU 크기, 구매 방식, 예상 시간을 **script 에도 skill 에도 적지 않는다.**
 
 ```bash
-ddpsrun estimate --gpu-vram 48 --pairs 1110 --epochs 4 --row-tokens 4100 --cap 12288
+hyperun estimate --gpu-vram 48 --pairs 1110 --epochs 4 --row-tokens 4100 --cap 12288
 ```
 
 그래야 로직이 한 곳에 있고 UI 도 CLI 도 agent 도 같은 답을 받는다. 여기에 숫자를 적어 두면
@@ -324,12 +324,12 @@ bash /root/run.sh
 
 | 방법 | 쓸 때 | 대가 |
 |---|---|---|
-| `--script run.sh` (본문을 args 에) | 한 파일, 256 KiB 미만. **기본값으로 이것을 쓴다** | 없음. job 이 자기가 실행한 것을 담고 있어서 `ddpsrun` 의 Scripts 화면, Submitted spec, 재제출이 다 된다 |
+| `--script run.sh` (본문을 args 에) | 한 파일, 256 KiB 미만. **기본값으로 이것을 쓴다** | 없음. job 이 자기가 실행한 것을 담고 있어서 `hyperun` 의 Scripts 화면, Submitted spec, 재제출이 다 된다 |
 | S3 부트스트랩 (위 302 바이트) | 스크립트가 상한을 넘거나, 파일이 여럿이거나, 사람이 job 을 다시 내지 않고 스크립트만 갈아 끼우고 싶을 때 | 실패 지점이 하나 늘어난다. **GPU 를 이미 빌린 뒤에** S3 를 못 읽어 죽을 수 있으므로, 규칙 5 의 도달성 검사에 그 객체도 넣는다. 그리고 job 객체만 봐서는 무엇이 돌았는지 알 수 없다 |
 | `git clone` (규칙 1) | 코드가 저장소에 있을 때 | 위와 같다. clone 이 학습 명령보다 앞에 있어야 한다 |
 
 **S3 를 쓰기로 했으면 사용자에게 업로드를 부탁한다.** agent 는 자기 손으로 그 객체를 올리지
-않는다 — `ddpsrun` 에 업로드 명령이 없고, 결과 prefix 는 서버가 job 마다 만들어 주는 것이라
+않는다 — `hyperun` 에 업로드 명령이 없고, 결과 prefix 는 서버가 job 마다 만들어 주는 것이라
 제출 전에는 그 주소가 존재하지도 않는다. 순서는: 사용자가 `aws s3 cp run.sh <경로>` 로 올리고,
 그 경로를 agent 에게 알려 주고, agent 는 위 부트스트랩을 `--script` 로 보낸다.
 
@@ -387,7 +387,7 @@ driver 가 파일을 가져오는 길만 vendor 마다 다르고, **script 는 �
 그동안 `aws s3 cp` 를 announce 와 함께 둔다** — 그러면 어느 경로에서도 산다(RunPod 에서는
 `aws s3 cp` 가 AccessDenied 로 조용히 실패하고 announce 가 일한다). 배포된 뒤에는 announce
 하나로 충분하고, `aws s3 cp` 는 12시간 뒤 만료되는 그 자격증명에 의존하는 부분이라 지우는 것이
-낫다. **어느 쪽인지는 `ddpsrun explain` 이 답한다** — 이 문서가 아니라 서버에 물어본다.
+낫다. **어느 쪽인지는 `hyperun explain` 이 답한다** — 이 문서가 아니라 서버에 물어본다.
 
 #### k3s 경로가 하는 검사 둘, script 가 알아야 하는 것
 
@@ -526,7 +526,7 @@ sat in `dist.init_process_group` with no error and no output."** 모든 rank 가
 rendezvous 를 기다리고, **카드는 busy 로 읽히고**(NCCL 의 대기는 도는 kernel 이다),
 3,600초 뒤 stall detector 가 exit 21 로 끝낼 때까지 과금된다.
 
-`ddpsrun validate --group-size N --group-mode distributed --script run.sh` 가 넷을 본다:
+`hyperun validate --group-size N --group-mode distributed --script run.sh` 가 넷을 본다:
 좌표를 하나도 안 읽으면 **error**(`group-coords-unread`), launcher 가 없으면 warning,
 `--nproc_per_node` 가 `--gpu-count` 와 다르면 error, `--nnodes` 가 group size 와 다르면 error.
 

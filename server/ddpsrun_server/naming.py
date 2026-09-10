@@ -54,7 +54,7 @@ DISPLAY_NAME_LABEL = "ddpsrun.io/name"
 #
 # WHY THIS EXISTS AS WELL AS THE LABEL. A label value may hold only
 # [A-Za-z0-9._-], so `label_value("은행 실험2")` is "2" — every Korean character
-# is stripped and what is left says nothing. `ddpsrun status` reads the name
+# is stripped and what is left says nothing. `hyperun status` reads the name
 # back to show the user, so a name they cannot recognise is a real loss.
 # An annotation has no character restriction (only a total size limit), so the
 # raw name goes here and the sanitised one stays in the label for `kubectl -l`.

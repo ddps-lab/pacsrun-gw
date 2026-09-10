@@ -43,7 +43,7 @@ def test_every_command_appears_in_the_cli_reference():
     text = (REFERENCES / "cli.md").read_text(encoding="utf-8")
     for command in ("login", "logout", "explain", "schema", "estimate",
                     "validate", "submit", "status", "logs"):
-        assert f"## ddpsrun {command}" in text, command
+        assert f"## hyperun {command}" in text, command
 
 
 def test_the_generated_files_say_not_to_edit_them():
@@ -59,10 +59,10 @@ def test_the_hand_written_references_are_not_generated():
 
 
 def test_the_skill_frontmatter_has_the_two_fields_that_make_it_load():
-    text = (REPO_ROOT / "agent" / "skills" / "ddpsrun" / "SKILL.md").read_text(encoding="utf-8")
+    text = (REPO_ROOT / "agent" / "skills" / "hyperun" / "SKILL.md").read_text(encoding="utf-8")
     assert text.startswith("---\n")
     frontmatter = text.split("---")[1]
-    assert "name: ddpsrun" in frontmatter
+    assert "name: hyperun" in frontmatter
     # The description is what decides WHEN the skill loads, so an empty or
     # generic one makes the whole plugin inert.
     description = [line for line in frontmatter.splitlines() if line.startswith("description:")]
@@ -120,10 +120,10 @@ def test_the_skill_points_at_reference_paths_that_exist():
 
     2026-09-08 까지 SKILL.md 는 `references/script-contract.md` 라고 8번 적었고
     그 파일은 `agent/references/` 에 있었다. SKILL.md 는
-    `agent/skills/ddpsrun/SKILL.md` 이므로 그 경로는 skill 디렉터리 기준으로
+    `agent/skills/hyperun/SKILL.md` 이므로 그 경로는 skill 디렉터리 기준으로
     풀리지 않는다 — 규칙 목록은 있는데 문서가 가리키는 주소로는 못 여는 상태였다.
     """
-    skill = REFERENCES.parent / "skills" / "ddpsrun" / "SKILL.md"
+    skill = REFERENCES.parent / "skills" / "hyperun" / "SKILL.md"
     text = skill.read_text(encoding="utf-8")
     cited = set(re.findall(r"`([./]*references/[a-z-]+\.md)`", text))
     assert cited, "SKILL.md 가 reference 파일을 하나도 안 가리킨다"
@@ -143,7 +143,7 @@ def test_the_skill_lists_every_rule_the_contract_has():
     numbers = [int(m) for m in re.findall(r"^## (\d+)\.", contract, re.M)]
     assert numbers == list(range(1, len(numbers) + 1)), f"절 번호가 연속이 아니다: {numbers}"
 
-    skill = (REFERENCES.parent / "skills" / "ddpsrun" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (REFERENCES.parent / "skills" / "hyperun" / "SKILL.md").read_text(encoding="utf-8")
     listed = [int(m) for m in re.findall(r"^\| (\d+) \|", skill, re.M)]
     assert listed == numbers, (
         f"script-contract.md 는 규칙 {len(numbers)}개인데 SKILL.md 표는 {listed} 를 적었다. "

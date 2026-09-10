@@ -547,7 +547,7 @@ async function drawDetail(jobId, ns = "") {
 const fact = (k, v) =>
   `<div class="fact"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`;
 
-/* The Shell panel hands the user `ddpsrun shell` — install line included — and
+/* The Shell panel hands the user `hyperun shell` — install line included — and
    never kubectl: a researcher with kubectl would not need this product
    (docs/00-overview.md, the founding rule). The command talks to THIS server's
    POST /v1/jobs/{id}/exec, which relays through the job's driver pod into the
@@ -566,11 +566,16 @@ function drawShell(jobId, job) {
     `<p class="dim small">From any terminal — no kubectl, no cloud account. One command ` +
     `per line (each is one HTTPS round trip, up to ~25s); AWS and GCP machine rentals ` +
     `only, because a RunPod job is a rented container with no machine behind it:</p>` +
-    `<pre class="spec">pip install ddpsrun\n` +
-    `ddpsrun login --server ${esc(store.server)}\n` +
-    `ddpsrun shell ${esc(key)}                # a prompt: type commands, 'exit' leaves\n` +
-    `ddpsrun shell ${esc(key)} -- nvidia-smi  # run one command and exit</pre>` +
-    `<p class="dim tiny">parallelism &gt; 1: add --slot N. Not a TTY — no vim, no top.</p>`;
+    `<pre class="spec">pip install hyperun\n` +
+    `hyperun login --server ${esc(store.server)}\n` +
+    `hyperun shell ${esc(key)}                # a prompt: type commands, 'exit' leaves\n` +
+    `hyperun shell ${esc(key)} -- nvidia-smi  # run one command and exit</pre>` +
+    // ★ --slot GOES BEFORE THE JOB ID, and the old wording did not say so.
+    // argparse.REMAINDER consumes everything after the job id, so a flag
+    // written there became part of the workload's command line and the pod
+    // silently stayed 0 (fixed 2026-09-10; the CLI now refuses it instead).
+    `<p class="dim tiny">parallelism &gt; 1: put --slot N BEFORE the job id ` +
+    `(everything after it is sent to the workload). Not a TTY — no vim, no top.</p>`;
 }
 
 /* The Result files panel: GET /v1/jobs/{id}/artifacts, drawn as a table with

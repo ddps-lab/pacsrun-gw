@@ -385,7 +385,7 @@ class Cluster:
         Returns:
             `{name: expires_at or None}`. Empty when nothing is registered yet,
             which is also what a namespace with no Secret answers -- a 404 here
-            is the normal state before the first `ddpsrun secret-set`, not an
+            is the normal state before the first `hyperun secret-set`, not an
             error.
 
             DDPSRUN-SECRET-EXPIRY. The date lives in an ANNOTATION on the same

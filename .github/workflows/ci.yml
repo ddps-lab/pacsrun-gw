@@ -133,7 +133,7 @@ jobs:
         working-directory: cli
         run: python -m pytest -q
       - name: 명령이 실제로 설치되는지
-        run: ddpsrun --help
+        run: hyperun --help
 
   screen:
     name: 화면이 서버가 받는 body 를 만드는지

@@ -1078,7 +1078,7 @@ def check_secret_expiry(secrets: list[str],
             f"{listed}. The value is still stored and would still be injected, "
             f"so this job would start, rent a machine, and fail at the call that "
             f"needs the credential.",
-            "re-mint it and store it again with `ddpsrun secret-set <NAME> "
+            "re-mint it and store it again with `hyperun secret-set <NAME> "
             "--from-file <path> --expires-at <when>`. Until then nothing that "
             "uses that name can succeed.",
         )
@@ -1115,7 +1115,7 @@ def check_secret_names(secrets: list[str], known: dict[str, object]) -> list[Fin
             ERROR, "secret-name-unknown",
             f"{', '.join(missing)} is not a secret this deployment holds, so the "
             f"submit would be refused. Stored names: {available}.",
-            "run `ddpsrun secrets` for the list. If the one you need is not "
+            "run `hyperun secrets` for the list. If the one you need is not "
             "there, an operator has to store it — the value never travels "
             "through this API, so nobody can add it from here.",
         )

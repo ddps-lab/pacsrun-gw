@@ -28,7 +28,7 @@ python patch_trl_liger_slice.py $(python -c "import trl.trainer.dpo_trainer as m
 ```
 
 **둘을 켜니 같은 L40S 에서 완주했고 스텝당 시간도 85.90 초에서 66.44 초로 22.7% 빨라졌다.**
-`ddpsrun validate` 가 `alloc-conf-missing` 과 `trl-patch-missing` 으로 먼저 잡는다.
+`hyperun validate` 가 `alloc-conf-missing` 과 `trl-patch-missing` 으로 먼저 잡는다.
 
 ---
 
@@ -62,7 +62,7 @@ fetch mode 에서 결과를 내보내는 길은 그 줄 하나뿐이고(script-c
 즉 12 시간이다. 그보다 긴 job 은 마지막에 자기 결과를 못 올린다.
 
 조치는 fetch mode 다. 원격에 읽기 전용 자격증명만 주고 **driver pod 이 대신 가져와서 올린다.**
-`ddpsrun estimate` 가 11 시간을 넘기면 미리 알려 준다.
+`hyperun estimate` 가 11 시간을 넘기면 미리 알려 준다.
 
 **이것은 cluster 전체 스위치다.** operator 의 `PACSRUN_FETCH_MODE` 환경변수를 읽으며
 (`PACSrun/internal/controller/vendorpod.go:1053` `fetchMode`, grep `PACSRUN-FETCH-MODE`),
@@ -136,7 +136,7 @@ schema 문제다.
 `--max-prompt-len` 보다 긴 프롬프트가 데이터에 있다는 뜻이다. 캡 짝을 확인한다. 우리가 쓴
 것은 `12288 / 11264` 와 `18432 / 17408` 이고, 둘 다 답을 위해 1,024 토큰을 남긴다.
 
-`ddpsrun validate` 가 `prompt-cap-too-high` 로 잡는다.
+`hyperun validate` 가 `prompt-cap-too-high` 로 잡는다.
 
 ---
 
@@ -147,7 +147,7 @@ OSError: /root/ab/adapter_bank does not appear to have a file named adapter_conf
 ```
 
 학습의 `--out` 과 추론의 `--lora` 가 다르다. **학습이 먼저 다 돌고 나서 드러나므로 가장 비싼
-실수다.** `script-contract.md` 2 번이 이것을 막고, `ddpsrun validate --script run.sh` 가
+실수다.** `script-contract.md` 2 번이 이것을 막고, `hyperun validate --script run.sh` 가
 `adapter-path-mismatch` 로 미리 잡는다.
 
 ---

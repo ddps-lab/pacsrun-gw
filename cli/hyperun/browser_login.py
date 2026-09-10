@@ -117,13 +117,13 @@ def _free_port() -> int:
 
 
 DONE_PAGE = b"""<!doctype html><meta charset="utf-8">
-<title>ddpsrun</title>
+<title>hyperun</title>
 <body style="font-family:system-ui;padding:64px;text-align:center">
 <h2>Signed in.</h2><p>You can close this tab and go back to the terminal.</p>
 """
 
 FAILED_PAGE = b"""<!doctype html><meta charset="utf-8">
-<title>ddpsrun</title>
+<title>hyperun</title>
 <body style="font-family:system-ui;padding:64px;text-align:center">
 <h2>Sign-in did not complete.</h2><p>The terminal has the details.</p>
 """
@@ -233,7 +233,7 @@ def login(server: str, open_browser=webbrowser.open) -> Tokens:
     if not config.get("enabled"):
         raise LoginError(
             "this server does not have browser sign-in configured. "
-            "Use `ddpsrun login --server ... --token ...` instead."
+            "Use `hyperun login --server ... --token ...` instead."
         )
 
     port = _free_port()

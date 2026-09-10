@@ -2002,7 +2002,7 @@ def test_the_note_appears_when_the_list_really_is_empty(client, cluster):
         listed = as_alice(client, "GET", "/v1/secrets")
         assert listed.status_code == 200, listed.text
         assert listed.json()["names"] == []
-        assert "ddpsrun secret-set" in listed.json()["note"], (
+        assert "hyperun secret-set" in listed.json()["note"], (
             "빌 때는 무엇을 하면 되는지가 문장으로 나온다")
     finally:
         client.app.state.settings = live

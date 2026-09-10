@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-from ddpsrun import cli, config
-from ddpsrun.client import ServerError
+from hyperun import cli, config
+from hyperun.client import ServerError
 
 
 @pytest.fixture(autouse=True)
@@ -81,7 +81,7 @@ class FakeClient:
                 "window_seconds": window_seconds}
 
     def explain(self):
-        return "ddpsrun — submit a batch job.\n"
+        return "hyperun — submit a batch job.\n"
 
     def secrets(self):
         return self.secrets_result
@@ -232,7 +232,7 @@ def test_submit_prints_the_id_the_results_and_how_to_follow(fake, capsys):
     printed = capsys.readouterr().out
     assert "job-a8acdef80a07" in printed
     assert "s3://bucket/pacsrun/lab-alice/" in printed
-    assert "ddpsrun logs job-a8acdef80a07 --follow" in printed
+    assert "hyperun logs job-a8acdef80a07 --follow" in printed
 
 
 def test_submit_with_json_prints_the_raw_response(fake, capsys):
@@ -311,7 +311,7 @@ def test_no_credentials_is_exit_2_and_names_the_login_command(capsys, monkeypatc
     monkeypatch.delenv(config.SERVER_ENV)
     monkeypatch.delenv(config.TOKEN_ENV)
     assert run(["status", "job-a8acdef80a07"]) == cli.EXIT_USAGE
-    assert "ddpsrun login" in capsys.readouterr().err
+    assert "hyperun login" in capsys.readouterr().err
 
 
 def test_ctrl_c_while_following_is_not_a_failure(fake, capsys, monkeypatch):
@@ -325,7 +325,7 @@ def test_ctrl_c_while_following_is_not_a_failure(fake, capsys, monkeypatch):
 
 def test_no_command_prints_help_and_exits_2(capsys):
     assert run([]) == cli.EXIT_USAGE
-    assert "ddpsrun" in capsys.readouterr().out
+    assert "hyperun" in capsys.readouterr().out
 
 
 # --------------------------------------------------- stage 3: estimate, validate
@@ -680,7 +680,7 @@ def test_an_unknown_mode_is_refused_by_argparse():
 def test_the_version_comes_from_the_install_and_not_from_a_literal():
     """★ THE LITERAL HAD ALREADY DRIFTED, AND SHIPPED. `__init__.py` said "0.1.0"
     while pyproject.toml said 0.1.1, and the published wheel carried BOTH:
-    ddpsrun-0.1.1.dist-info/METADATA says `Version: 0.1.1` and the module inside
+    hyperun-0.1.1.dist-info/METADATA says `Version: 0.1.1` and the module inside
     that same wheel said 0.1.0. Two answers to "which version am I running" is
     the one thing that has to be right when a bug is reported against an install.
 
@@ -689,10 +689,10 @@ def test_the_version_comes_from_the_install_and_not_from_a_literal():
     """
     from importlib.metadata import version
 
-    import ddpsrun
+    import hyperun
 
-    assert ddpsrun.__version__ == version("ddpsrun")
-    assert ddpsrun.__version__ != "0+unknown", (
+    assert hyperun.__version__ == version("hyperun")
+    assert hyperun.__version__ != "0+unknown", (
         "the fallback is for a source tree with nothing installed; a test run "
         "has the package installed, so reaching it means the metadata lookup broke"
     )
@@ -702,13 +702,13 @@ def test_there_is_a_version_flag_at_all(capsys):
     """There was none before 2026-09-08, so somebody who installed from PyPI had
     no way to say which build they were on. It sits on the TOP-LEVEL parser,
     unlike --json: it is a question about the install, not about a command."""
-    import ddpsrun
-    from ddpsrun import cli
+    import hyperun
+    from hyperun import cli
 
     with pytest.raises(SystemExit) as exited:
         cli.main(["--version"])
     assert exited.value.code == 0
-    assert capsys.readouterr().out.strip() == f"ddpsrun {ddpsrun.__version__}"
+    assert capsys.readouterr().out.strip() == f"hyperun {hyperun.__version__}"
 
 
 # ------------------------------------------------- DDPSRUN-USER-SECRET
@@ -799,10 +799,10 @@ def test_without_it_the_field_is_absent(fake):
 # and the `shell` subparser's own REMAINDER positional were BOTH called
 # `command`, so argparse wrote the shell line over the subcommand name:
 #
-#   ddpsrun shell job-x                 args.command = []             -> main()
+#   hyperun shell job-x                 args.command = []             -> main()
 #     printed the top-level help and returned 2, which is what a user pasted
 #     on 2026-09-10 asking why the command did nothing.
-#   ddpsrun shell job-x -- nvidia-smi   args.command = ['nvidia-smi'] -> main()
+#   hyperun shell job-x -- nvidia-smi   args.command = ['nvidia-smi'] -> main()
 #     died on COMMANDS[['nvidia-smi']], "TypeError: unhashable type: 'list'".
 #
 # The parser keeps `command` for the shell line, because cmd_shell reads it;
@@ -849,7 +849,7 @@ def test_a_flag_written_after_the_job_id_is_refused_not_obeyed_silently(fake, ca
     assert fake.execed == [], "잘못된 pod 에서 아무것도 실행하지 않는다"
     err = capsys.readouterr().err
     assert "options go BEFORE the job id" in err
-    assert "shape: ddpsrun shell [--slot N] <job> -- <command>" in err
+    assert "shape: hyperun shell [--slot N] <job> -- <command>" in err
     assert "you wrote: shell job-a8acdef80a07 --slot 2 -- hostname" in err, (
         "무엇을 썼는지 되돌려 보여 준다 -- 고친 명령을 만들어 주지는 않는다")
 

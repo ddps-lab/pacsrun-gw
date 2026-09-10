@@ -182,7 +182,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="ddpsrun",
+    title="hyperun",
     version="0.1.0",
     description="Submit a GPU job and get results back. No kubectl, no AWS account.",
     lifespan=lifespan,
@@ -198,7 +198,7 @@ def require_principal(
     DDPSRUN-TWO-CREDENTIALS. Two kinds of credential arrive here and both end at
     the same `Principal`:
 
-      * a Cognito id_token, from the screen and from `ddpsrun login`. Verified
+      * a Cognito id_token, from the screen and from `hyperun login`. Verified
         against the pool's public keys, then the verified email is looked up in
         the token file.
       * a static token, from CI, from scripts and from the agent skill. Hashed
@@ -1099,7 +1099,7 @@ def secrets_route(
     else:
         note = (
             "nothing is registered for this namespace yet, so a job asking for "
-            "a secret is refused. Register your own with `ddpsrun secret-set "
+            "a secret is refused. Register your own with `hyperun secret-set "
             "<NAME>` — it is stored in your namespace and only jobs there can "
             "read it. A value shared by the whole deployment is an operator's "
             "job instead (DDPSRUN_SECRET_BINDINGS). Values are never returned "
@@ -1113,7 +1113,7 @@ def secrets_route(
         # like a typo.
         note = ((note + " ") if note else "") + (
             "PAST ITS DATE: " + ", ".join(expired) + ". A job asking for one of "
-            "these is refused by `validate`. Re-store it with `ddpsrun secret-set`.")
+            "these is refused by `validate`. Re-store it with `hyperun secret-set`.")
     return SecretsResponse(names=names, own=sorted(own), note=note)
 
 
@@ -1626,7 +1626,7 @@ def scripts_route(
         note = (
             "No job in this namespace carries a script this route recognises. It reads the "
             "text back out of the job itself, so the job has to have `args == [\"bash\", "
-            "\"-lc\", <text>]` -- which is what `ddpsrun submit --script run.sh` and the New "
+            "\"-lc\", <text>]` -- which is what `hyperun submit --script run.sh` and the New "
             "job screen's Script box both produce. A job whose args are something else (a "
             "`kubectl apply` with its own args, or an image that runs its own ENTRYPOINT) has "
             "no text here to give back."
@@ -1769,7 +1769,7 @@ def exec_in_job(
 ) -> ExecResponse:
     """Run one command inside a running job's workload container.
 
-    DDPSRUN-EXEC. This is `ddpsrun shell`'s server half, and it exists so a
+    DDPSRUN-EXEC. This is `hyperun shell`'s server half, and it exists so a
     researcher NEVER needs kubectl: the same relay an operator reached with
     `kubectl exec` (driver pod -> shell.py -> the workload container on the
     rented machine, verified live 2026-09-07) is reached here through the

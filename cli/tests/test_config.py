@@ -10,7 +10,7 @@ import stat
 
 import pytest
 
-from ddpsrun import config
+from hyperun import config
 
 
 @pytest.fixture(autouse=True)
@@ -18,7 +18,7 @@ def isolated_home(tmp_path, monkeypatch):
     """Point XDG_CONFIG_HOME at a temp directory and clear the env overrides.
 
     Without this every test in this file would read and write the developer's
-    own ~/.config/ddpsrun/config.json.
+    own ~/.config/hyperun/config.json.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv(config.SERVER_ENV, raising=False)
@@ -56,7 +56,7 @@ def test_the_environment_beats_the_file(monkeypatch):
 
 
 def test_no_file_and_no_environment_names_the_command_that_fixes_it():
-    with pytest.raises(config.NotLoggedIn, match="ddpsrun login"):
+    with pytest.raises(config.NotLoggedIn, match="hyperun login"):
         config.load()
 
 

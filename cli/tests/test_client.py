@@ -11,7 +11,7 @@ import json
 import pytest
 import requests
 
-from ddpsrun.client import Client, ServerError
+from hyperun.client import Client, ServerError
 
 
 class FakeResponse:
@@ -75,7 +75,7 @@ def test_shell_sends_the_command_and_waits_longer_than_the_server():
 def test_explain_and_schema_send_no_token():
     # They need none, and asking for a credential to find out what a service is
     # would be the wrong way round.
-    session = FakeSession(FakeResponse(200, text="ddpsrun — submit a batch job."))
+    session = FakeSession(FakeResponse(200, text="hyperun — submit a batch job."))
     client_with(session).explain()
     assert "Authorization" not in session.calls[0]["headers"]
 

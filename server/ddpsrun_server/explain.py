@@ -19,7 +19,7 @@ Grep anchor: DDPSRUN-EXPLAIN
 """
 
 EXPLAIN_TEXT = """\
-ddpsrun — submit a batch job, get results back.
+hyperun — submit a batch job, get results back.
 
 WHAT IT DOES
   You describe a container image and a command. We rent a machine with the GPU

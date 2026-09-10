@@ -1,9 +1,9 @@
 ---
-name: ddpsrun
+name: hyperun
 description: Use when someone wants to run a training, fine-tuning or batch GPU job from their own repository and does not have kubectl, a kubeconfig, or a cloud account — building the run.sh, asking what it will cost and how long it will take, checking it before it runs, submitting it, and following it afterwards. Also use for reading back a running job's progress, GPU usage, logs and results.
 ---
 
-# ddpsrun — someone's repository into a running GPU job
+# hyperun — someone's repository into a running GPU job
 
 You turn a lab member's repository and intent into a **submitted job**, and you never
 guess anything the server can answer. The measurements, the memory arithmetic and the
@@ -17,27 +17,27 @@ stay in English.
 Run these first. They are the current truth; anything written down goes stale.
 
 ```bash
-ddpsrun explain     # what this is, what it will not do, what is not built yet
-ddpsrun schema      # the exact request shape, generated from the server's own model
-ddpsrun secrets     # which names `secrets:` accepts on THIS deployment
+hyperun explain     # what this is, what it will not do, what is not built yet
+hyperun schema      # the exact request shape, generated from the server's own model
+hyperun secrets     # which names `secrets:` accepts on THIS deployment
 ```
 
 **`secrets` is a word, not a value, and you must not invent one.** A submit
 request's `secrets: ["GITHUB_PAT"]` asks the server to open its own vault under
 that name; the server refuses a name it does not hold, and the value never
-travels through you or through the request. `ddpsrun secrets` prints the names
+travels through you or through the request. `hyperun secrets` prints the names
 that work, marking which the deployment holds and which this namespace
 registered itself.
 
 ### ★ If a name they need is missing, THEY type the value. You never see it.
 
-`ddpsrun secret-set <NAME>` stores a value in their own namespace. Give them the
+`hyperun secret-set <NAME>` stores a value in their own namespace. Give them the
 command to run and stop there:
 
 ```bash
-ddpsrun secret-set HF_TOKEN --from-file /path/to/token.txt
+hyperun secret-set HF_TOKEN --from-file /path/to/token.txt
 # or, typed straight in and never written to disk:
-ddpsrun secret-set HF_TOKEN     # reads stdin, Ctrl-D to finish
+hyperun secret-set HF_TOKEN     # reads stdin, Ctrl-D to finish
 ```
 
 **NEVER ASK THEM TO PASTE IT TO YOU, and never put it in a command you run.** A
@@ -52,14 +52,14 @@ this reason.
 token lasts 36 hours; without the date, the only way to learn it has run out is
 a job that fails at the call that needs it, hours in, on a rented machine — which
 is what happened on 2026-09-08. With it, `validate` refuses the submit and the
-GPU is never rented. `ddpsrun secrets` also marks a name as past its date.
+GPU is never rented. `hyperun secrets` also marks a name as past its date.
 
 If the value belongs to the whole lab rather than one namespace, say so and tell
 them an operator stores it in the cluster instead. Either way, **do not put it in
 `env`** — that sits in the job spec, and in every log and backup of it.
 
-If `ddpsrun` is missing, `pip install ddpsrun`. If it says `not logged in`, tell the
-user to run `ddpsrun login --server <url>` and stop — you must not ask for their token.
+If `hyperun` is missing, `pip install hyperun`. If it says `not logged in`, tell the
+user to run `hyperun login --server <url>` and stop — you must not ask for their token.
 
 ## Step 1 — read their repository before writing anything
 
@@ -110,7 +110,7 @@ The two that cost the most:
 ## Step 2 — never decide the GPU, the runtime or the purchase type yourself
 
 ```bash
-ddpsrun estimate --name <n> --image <i> --gpu-vram 48        # any job
+hyperun estimate --name <n> --image <i> --gpu-vram 48        # any job
 # and, ONLY if the job really is a TRL preference-tuning run at a sequence cap:
 #   --pairs 1110 --epochs 4 --row-tokens 4100 --cap 12288
 ```
@@ -136,7 +136,7 @@ estimate then multiplies THEIR hours by the real rate and labels the total
 `user-supplied`, so the reader can see whose number it is.
 
 ```bash
-ddpsrun estimate --name <n> --image <i> --gpu A100-80GB --gpu-count 4 \
+hyperun estimate --name <n> --image <i> --gpu A100-80GB --gpu-count 4 \
   --vendor runpod --expected-hours 21        # cost_basis: user-supplied
 ```
 
@@ -157,12 +157,12 @@ default.** An AWS ask that names no region gets the operator's ONE default regio
 search -- so omitting it silently picks one. It changes the price and sometimes whether
 the job can run at all: the H100 is $6.88/hour in us-west-2, $8.60 in ap-northeast-1, and
 in ap-northeast-2 it is sold only as an 8-GPU machine, so a one-card ask there cannot be
-filled and the job sits in Pending. `ddpsrun schema` lists what is on offer.
+filled and the job sits in Pending. `hyperun schema` lists what is on offer.
 
 ## Step 3 — validate, and stop on an error
 
 ```bash
-ddpsrun validate --name <n> --image <i> ... --script run.sh
+hyperun validate --name <n> --image <i> ... --script run.sh
 ```
 
 **ALWAYS pass `--script`.** Most checks read the script itself and are simply
@@ -173,7 +173,7 @@ script warns about things the script already does, and the `not_checked` list is
 what says so. If you built the request as a JSON file, put the script text in it.
 
 **When this document and `--help` disagree, `--help` is right**, and
-`pip install -U ddpsrun` is the fix: `../../references/cli.md` is generated from the
+`pip install -U hyperun` is the fix: `../../references/cli.md` is generated from the
 repository, so it can describe flags a published release does not have yet.
 That happened on 2026-09-08 with `--vendor`.
 
@@ -181,7 +181,7 @@ That happened on 2026-09-08 with `--vendor`.
 what validate can answer on 2026-09-08:
 
 - a `--secret` name the deployment does not hold is now an **error** rather than
-  a silent pass followed by a refusal at submit. `ddpsrun secrets` prints the
+  a silent pass followed by a refusal at submit. `hyperun secrets` prints the
   list; a name absent from it cannot be used, and only an operator can add one.
 - `--vendor runpod` stops the AWS machine-size check from judging the ask. It
   used to fire regardless, so a RunPod-only 4-card A100 job was told "AWS
@@ -238,13 +238,13 @@ one line each, what it fetches, what it writes, and where the results go. Then a
 **Then pass `--script run.sh` to `submit`, not just to `validate`.**
 
 ```bash
-ddpsrun submit --name <n> --image <i> --script run.sh \
+hyperun submit --name <n> --image <i> --script run.sh \
   --capacity-type <what they chose> ...
 ```
 
 ★ **`--script` IS WHAT RUNS.** With no `--arg`, the job gets
 `args ['bash','-lc',<the file's text>]`, which is also the shape that makes the script
-show up later under `ddpsrun` on the Scripts screen and in `GET /v1/scripts`.
+show up later under `hyperun` on the Scripts screen and in `GET /v1/scripts`.
 
 **This was a real trap until 2026-09-08 and this skill walked straight into it.** Step 1
 told you to write a run.sh, step 3 told you to validate it with `--script`, step 4 said
@@ -259,12 +259,12 @@ checked it, submitted it, and the script never ran.
 deliberate -- some jobs fetch their script inside the container -- so if you pass both,
 say which one is going to run.
 
-After `ddpsrun submit` give them the `job_id` and the follow command, and offer to watch
+After `hyperun submit` give them the `job_id` and the follow command, and offer to watch
 it.
 
 ```bash
-ddpsrun status <job_id>
-ddpsrun logs <job_id> --follow
+hyperun status <job_id>
+hyperun logs <job_id> --follow
 ```
 
 A `Recovering` phase and a non-zero restart count are **not failures**. Rented capacity

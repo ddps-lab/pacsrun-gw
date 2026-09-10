@@ -1,10 +1,10 @@
-"""The `ddpsrun` command: argument parsing, and deciding what to print.
+"""The `hyperun` command: argument parsing, and deciding what to print.
 
-END-TO-END FLOW of one `ddpsrun submit -f job.yaml`:
+END-TO-END FLOW of one `hyperun submit -f job.yaml`:
 
   1. `main()` parses the arguments and dispatches to `cmd_submit`.
   2. `config.load()` finds the server URL and the token, from the environment or
-     from `~/.config/ddpsrun/config.json`.
+     from `~/.config/hyperun/config.json`.
   3. `build_submit_body()` reads the file, applies any flag overrides on top,
      and produces the request body. It does NOT validate: the server owns that
      judgement, and a second copy here would eventually disagree with it.
@@ -103,7 +103,7 @@ def job_arguments() -> argparse.ArgumentParser:
         "--capacity-type", choices=["on-demand", "spot"],
         help="how the machine is bought. YOU decide this. on-demand costs more and is "
         "not taken away; spot is cheaper and can be reclaimed mid-run. Run "
-        "`ddpsrun estimate` first — it recommends one and says why. submit refuses "
+        "`hyperun estimate` first — it recommends one and says why. submit refuses "
         "without it rather than choosing for you.",
     )
     # DDPSRUN-VENDOR-CHOICE. The two placement fields that are not capacity type.
@@ -129,7 +129,7 @@ def job_arguments() -> argparse.ArgumentParser:
         "allow several. OMITTING IT IS NOT 'anywhere' -- an AWS ask that names "
         "no region gets the operator's ONE default region, us-west-2 on this "
         "deployment. It matters: the H100 is $6.88/hour in us-west-2 and $8.60 "
-        "in ap-northeast-1. `ddpsrun schema` lists every region on offer.",
+        "in ap-northeast-1. `hyperun schema` lists every region on offer.",
     )
     shared.add_argument(
         "--placement-mode", choices=["ordered", "cheapest", "compare"],
@@ -212,17 +212,17 @@ def build_parser() -> argparse.ArgumentParser:
         read anything else. This is the only documentation most users will see.
     """
     parser = argparse.ArgumentParser(
-        prog="ddpsrun",
+        prog="hyperun",
         description="Submit a batch job to a GPU we rent for you, and get the results back.",
-        epilog="Run `ddpsrun explain` for the full description, straight from the server.",
+        epilog="Run `hyperun explain` for the full description, straight from the server.",
     )
     # ON THE TOP-LEVEL PARSER ON PURPOSE, unlike --json below. "which version am
     # I running" is a question about the INSTALL and not about any one command,
-    # and `ddpsrun --version` is where every other tool puts it. There was no way
+    # and `hyperun --version` is where every other tool puts it. There was no way
     # to ask at all before 2026-09-08, which is awkward the moment somebody
     # reports a bug against a CLI they installed from PyPI.
     parser.add_argument(
-        "--version", action="version", version=f"ddpsrun {__version__}",
+        "--version", action="version", version=f"hyperun {__version__}",
         help="print the installed version and exit",
     )
     # ★ THE dest IS `subcommand`, NOT `command`, AND THAT IS NOT COSMETIC. The
@@ -241,7 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
         """`--json` goes on each subcommand that has something to print.
 
         Not on the top-level parser: argparse would require it BEFORE the
-        subcommand (`ddpsrun --json status X`), which is not the order anyone
+        subcommand (`hyperun --json status X`), which is not the order anyone
         types, and a subparser redefining it would silently reset it to False.
         """
         target.add_argument(
@@ -367,7 +367,10 @@ def build_parser() -> argparse.ArgumentParser:
         "TTY — no vim, no top, about 25 seconds per command — because the "
         "server is a Lambda and cannot hold a terminal open. AWS and GCP "
         "machine rentals only: a RunPod job is a rented container with no "
-        "machine behind it, and the relay refuses it.",
+        "machine behind it, and the relay refuses it. ★ PUT OPTIONS BEFORE THE "
+        "JOB ID -- everything after it is sent to the workload as-is, so "
+        "`shell job-x --slot 2` asks pod 0 and passes `--slot 2` to the shell. "
+        "That is refused rather than obeyed.",
     )
     shell.add_argument("job", help="the job id, or the PacsJob's Kubernetes name")
     shell.add_argument("--slot", type=int, default=0, help="which pod of a parallel job")
@@ -594,7 +597,7 @@ def build_submit_body(args: argparse.Namespace) -> dict[str, Any]:
     if not body.get("name") or not body.get("image"):
         raise SystemExit(
             "a job needs at least a name and an image. Give them with --name and "
-            "--image, or in a file with -f. `ddpsrun schema` prints every field."
+            "--image, or in a file with -f. `hyperun schema` prints every field."
         )
     return body
 
@@ -603,7 +606,7 @@ def refreshed(credentials: config.Credentials) -> config.Credentials:
     """Renew the stored id_token when it is about to expire.
 
     DDPSRUN-CLI-REFRESH. A Cognito id_token lives an hour. Without this, a
-    command run 61 minutes after `ddpsrun login` fails with 401 and the person
+    command run 61 minutes after `hyperun login` fails with 401 and the person
     has no idea why. With a refresh token stored, the renewal is silent.
 
     Args:
@@ -738,7 +741,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
     else:
         print(f"submitted  {result['job_id']}")
         print(f"results    {result['result_path']}")
-        print(f"follow     ddpsrun logs {result['job_id']} --follow")
+        print(f"follow     hyperun logs {result['job_id']} --follow")
     return EXIT_OK
 
 
@@ -840,7 +843,7 @@ def cmd_shell(args: argparse.Namespace) -> int:
     # wrong thing quietly. argparse.REMAINDER starts consuming at the token
     # right after the `job` positional, so
     #
-    #   ddpsrun shell job-x --slot 2 -- hostname
+    #   hyperun shell job-x --slot 2 -- hostname
     #
     # parses as slot=0 with the command line "--slot 2 -- hostname": the user
     # asked for pod 2 and would have got pod 0, with no message. Found
@@ -859,7 +862,7 @@ def cmd_shell(args: argparse.Namespace) -> int:
         print("error: options go BEFORE the job id. Everything after the job id "
               "is sent to the workload as-is, so a flag written there became "
               "part of the command line instead.", file=sys.stderr)
-        print("       shape: ddpsrun shell [--slot N] <job> -- <command>",
+        print("       shape: hyperun shell [--slot N] <job> -- <command>",
               file=sys.stderr)
         print(f"       you wrote: shell {args.job} " + " ".join(raw),
               file=sys.stderr)
@@ -922,7 +925,7 @@ def cmd_secret_set(args: argparse.Namespace) -> int:
     source = args.from_file or "-"
     if source == "-":
         if sys.stdin.isatty():
-            # A bare `ddpsrun secret-set NAME` on a terminal would sit there
+            # A bare `hyperun secret-set NAME` on a terminal would sit there
             # looking hung. Say what it is waiting for.
             print(
                 f"reading the value for {args.name} from stdin. Paste it and press "
@@ -955,7 +958,7 @@ def cmd_secret_set(args: argparse.Namespace) -> int:
     print(f"{what} {answer.get('name', args.name)} in {where}.")
     if answer.get("expires_at"):
         print(f"it stops working at {answer['expires_at']}; after that a job asking "
-              f"for it is refused by `ddpsrun validate`.")
+              f"for it is refused by `hyperun validate`.")
     print(f"a job can now ask for it with `--secret {args.name}`.")
     return EXIT_OK
 
@@ -1158,7 +1161,7 @@ COMMANDS = {
 
 
 def main(argv: list[str] | None = None) -> int:
-    """The entry point `pip install ddpsrun` puts on the PATH.
+    """The entry point `pip install hyperun` puts on the PATH.
 
     Args:
         argv: arguments without the program name. Defaults to `sys.argv[1:]`.

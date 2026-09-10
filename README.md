@@ -1,16 +1,16 @@
-# ddpsrun
+# hyperun
 
 **Submit a GPU job. Get results back. No `kubectl`, no cloud account, no VM to babysit.**
 
-`ddpsrun` is the front door to PACSrun, a Kubernetes-native batch job system that rents GPUs from
+`hyperun` is the front door to PACSrun, a Kubernetes-native batch job system that rents GPUs from
 whichever vendor is cheapest for the shape you asked for — AWS, GCP or RunPod — runs your code
 there, and puts the results in object storage. You describe the job; you never see the machine.
 
 ```console
-$ ddpsrun login <token>
-$ ddpsrun estimate -f job.yaml
-$ ddpsrun submit -f job.yaml
-$ ddpsrun logs <job-id> --follow
+$ hyperun login <token>
+$ hyperun estimate -f job.yaml
+$ hyperun submit -f job.yaml
+$ hyperun logs <job-id> --follow
 ```
 
 ## Why it exists
@@ -27,7 +27,7 @@ half-configured VM.
 ## Install
 
 ```console
-pip install ddpsrun
+pip install hyperun
 ```
 
 Two dependencies, `requests` and `PyYAML`, and that is deliberate: this package installs next to
@@ -38,16 +38,17 @@ Python 3.9 or newer.
 
 ## Configure
 
-`ddpsrun` needs a server URL and a token. Ask whoever runs your deployment for both.
+`hyperun` needs a server URL and a token. Ask whoever runs your deployment for both.
 
 ```console
-$ export DDPSRUN_SERVER=https://<your-gateway-url>
-$ ddpsrun login <token>
+$ export HYPERUN_SERVER=https://<your-gateway-url>
+$ hyperun login <token>
 ```
 
-`login` writes them to `~/.config/ddpsrun/config.json` with mode 0600, or to
-`$XDG_CONFIG_HOME/ddpsrun` when that is set. For CI, where a file is the wrong shape, set
-`DDPSRUN_TOKEN` in the environment and skip `login` entirely.
+`login` writes them to `~/.config/hyperun/config.json` with mode 0600, or to
+`$XDG_CONFIG_HOME/hyperun` when that is set. A config left behind by the old `ddpsrun`
+command is still read, so a rename logs nobody out. For CI, where a file is the wrong shape, set
+`HYPERUN_TOKEN` in the environment and skip `login` entirely.
 
 ## The commands
 
@@ -84,9 +85,9 @@ resources:
 resultPath: s3://<your-bucket>/runs/my-experiment/
 ```
 
-Run `ddpsrun schema` for every field and `ddpsrun explain` for what your deployment allows.
+Run `hyperun schema` for every field and `hyperun explain` for what your deployment allows.
 
-**Do not guess the GPU or the runtime.** `ddpsrun estimate` answers both from measured data, and
+**Do not guess the GPU or the runtime.** `hyperun estimate` answers both from measured data, and
 guessing is how a job ends up on a card several times more expensive than it needed.
 
 ## Using it from an AI coding agent
@@ -97,7 +98,7 @@ estimate rather than assume, validate and stop on a finding, and submit only aft
 
 ```
 /plugin marketplace add ddps-lab/pacsrun-gw
-/plugin install ddpsrun
+/plugin install hyperun
 ```
 
 The plugin's reference documents are in [`agent/references/`](agent/references/). The one worth
@@ -109,7 +110,7 @@ a long training run dies in its last minute, each one taken from a run that did.
 - **Not an interactive machine.** There is no SSH and no shell into a running job. You submit a
   program and read its output. If you need to poke at a live container, this is the wrong tool
   today.
-- **Not a scheduler you host.** `ddpsrun` is a client. Somebody has to run the gateway and the
+- **Not a scheduler you host.** `hyperun` is a client. Somebody has to run the gateway and the
   PACSrun operator; see [`docs/`](docs/) if that somebody is you.
 - **Not free of limits.** A job's credentials for writing results last twelve hours, which is
   AWS's hard maximum for a role session and not a setting anyone can raise. A run longer than that
@@ -119,7 +120,7 @@ a long training run dies in its last minute, each one taken from a run that did.
 
 | | |
 |---|---|
-| `cli/` | the `ddpsrun` package published to PyPI |
+| `cli/` | the `hyperun` package published to PyPI |
 | `server/` | the gateway: authenticates users, talks to Kubernetes |
 | `agent/` | the Claude Code plugin — one skill, four reference documents |
 | `ui/` | a small static web front end (`index.html`, `app.js`, `style.css`) |

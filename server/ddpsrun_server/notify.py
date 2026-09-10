@@ -74,7 +74,7 @@ logger = logging.getLogger("ddpsrun.notify")
 MARKER_PREFIX = "ddpsrun-register/"
 
 # The subject line. Fixed so the operator can filter on it.
-SUBJECT = "[ddpsrun] registration request"
+SUBJECT = "[hyperun] registration request"
 
 # The team used in the example commands when the token file names none. Not a
 # policy -- just a value that makes the emailed command runnable instead of one

@@ -376,7 +376,7 @@ def test_a_script_with_nothing_else_is_what_runs():
     """★ THE TRAP THIS CLOSES, and the agent skill walked straight into it.
 
     `script` was a VALIDATE-ONLY field: four checks read the text and the submit
-    path threw it away. So `ddpsrun submit --script run.sh` created a job with no
+    path threw it away. So `hyperun submit --script run.sh` created a job with no
     command and no args -- the operator then refuses to build the driver pod
     ("nothing to run") AFTER the job has been accepted.
 

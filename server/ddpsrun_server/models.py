@@ -214,7 +214,7 @@ class SubmitRequest(BaseModel):
         "script reads, e.g. [\"GITHUB_PAT\"]. NOT the name of a Kubernetes "
         "Secret: the server maps each one to a Secret and key itself. The "
         "value never travels through this API, and neither does that internal "
-        "name. Ask `ddpsrun secrets` for the list this deployment accepts; a "
+        "name. Ask `hyperun secrets` for the list this deployment accepts; a "
         "name that is not on it is refused.",
     )
     gpu: GpuRequest | None = Field(
@@ -560,7 +560,7 @@ class SecretsResponse(BaseModel):
     own: list[str] = Field(
         default_factory=list,
         description="Which of `names` your namespace registered itself, through "
-        "`ddpsrun secret-set`. You can replace or remove these; the rest belong "
+        "`hyperun secret-set`. You can replace or remove these; the rest belong "
         "to the deployment and only an operator changes them.",
     )
     note: str = Field(
@@ -906,7 +906,7 @@ def to_pacsjob(
             raise ValueError(
                 f"there is no secret called {secret_name!r}. Available: "
                 f"{allowed or '(none)'}. Register one of your own with "
-                f"`ddpsrun secret-set {secret_name}`, which stores it in your "
+                f"`hyperun secret-set {secret_name}`, which stores it in your "
                 f"namespace and never puts the value in this job's spec."
             )
         # secretKeyRef and never a literal: the CRD's own description explains
@@ -962,13 +962,13 @@ def to_pacsjob(
         # ★ A SUBMIT THAT CARRIES A SCRIPT AND NOTHING TO RUN RUNS THE SCRIPT.
         #
         # `script` began life as a VALIDATE-ONLY field -- four checks read the text
-        # and the submit path threw it away. That made `ddpsrun submit --script
+        # and the submit path threw it away. That made `hyperun submit --script
         # run.sh` a trap: the CLI read the file, the server checked it, and the
         # job carried no command at all. Measured 2026-09-08 on the real models:
         # spec.args and spec.command both None, so the operator's shellCommand
         # refuses the driver pod ("nothing to run") AFTER the job was accepted.
         #
-        # An agent following agent/skills/ddpsrun/SKILL.md hit this exactly: step 1
+        # An agent following agent/skills/hyperun/SKILL.md hit this exactly: step 1
         # writes a run.sh, step 3 validates it with --script, step 4 submits -- and
         # nothing anywhere told it to ALSO pass `--arg bash --arg -lc --arg
         # "$(cat run.sh)"`. It wrote a script, checked it, submitted it, and the
