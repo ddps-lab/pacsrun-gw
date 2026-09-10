@@ -77,6 +77,7 @@ from .models import (
     GpuAdviceView,
     HoursRange,
     JobListResponse,
+    KNOWN_VENDORS,
     ImageView,
     ImagesResponse,
     ScriptView,
@@ -883,7 +884,14 @@ def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    totals = stats_reader.summarise(principal.team, namespaces, jobs_by_namespace)
+    # KNOWN_VENDORS is passed in rather than imported by stats.py, which cannot
+    # import models -- models imports stats. It makes the Per vendor table the
+    # same list of sellers for every team instead of only the ones that have
+    # already sold into these namespaces (DDPSRUN-STATS, the seeding comment).
+    totals = stats_reader.summarise(
+        principal.team, namespaces, jobs_by_namespace,
+        known_vendors=KNOWN_VENDORS,
+    )
     # ★ THE CALLER'S OWN FIGURE IS NOW ONLY THEIR OWN. It used to fold the
     # ownerless bucket in whenever the caller was an operator, on the reasoning
     # that only an operator can apply a PacsJob with kubectl so those jobs are

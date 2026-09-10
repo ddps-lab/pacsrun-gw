@@ -1567,11 +1567,22 @@ async function drawVendors() {
 
   $("vendors-note").textContent = s.team ? `team ${s.team}` : "";
   const rows = s.vendors || [];
+  // The table is the whole catalogue now, so a bare row count would read `7`
+  // for every team forever and say nothing. What is worth a card is how many
+  // of them this team has actually bought from.
+  const used = rows.filter((v) => v.jobs > 0).length;
   $("vendors-cards").innerHTML = [
-    card("Vendors", rows.length),
+    card("Vendors used", `${used} of ${rows.length}`),
     card("GPU hours", s.gpu_hours.toFixed(1)),
     card("Tracked spend", "$" + s.cost_usd.toFixed(2)),
   ].join("");
+
+  // A job that never reached Running rented nothing, so the server files it
+  // under no vendor at all (DDPSRUN-STATS, VendorTotals). Silently showing
+  // fewer jobs here than Team shows is the kind of quiet gap this screen's
+  // SCOPE_NOTE exists to refuse, so the difference is stated outright.
+  const placed = rows.reduce((sum, v) => sum + v.jobs, 0);
+  const unplaced = s.jobs - placed;
 
   $("vendors-body").innerHTML = (rows.length
     ? `<div class="scroll"><table><thead><tr>` +
@@ -1586,7 +1597,15 @@ async function drawVendors() {
         `<td class="num"${v.unpriced_jobs ? ' style="color:var(--run)"' : ""}>${v.unpriced_jobs}</td>` +
         `</tr>`).join("") +
       `</tbody></table></div>`
-    : empty("No jobs to add up yet.", "New job", "submit")) + SCOPE_NOTE;
+    : empty("No vendor is configured on this deployment.", "New job", "submit"))
+    + (unplaced > 0
+        ? note("info",
+               `${unplaced} of the team's ${s.jobs} ${s.jobs === 1 ? "job" : "jobs"} ` +
+               `${unplaced === 1 ? "is" : "are"} not in this table.`,
+               "They never reached Running, so no vendor sold them a machine. They "
+               + "are still counted on the Team screen.")
+        : "")
+    + SCOPE_NOTE;
 }
 
 /* ------------------------------------------------------------------ wiring */

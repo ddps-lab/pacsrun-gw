@@ -185,7 +185,9 @@ def test_the_same_jobs_add_up_by_vendor_too():
     aws["status"]["currentOffering"]["vendor"] = "aws"
     runpod = job(started=started, hours=2, instance="L40S")
     runpod["status"]["currentOffering"]["vendor"] = "runpod"
-    ancient = job(started=None)   # pre-clock, and pre-vendor-field
+    # Ran for an hour on a machine whose record does not name the seller. This
+    # is what `unknown` is for, and its hours are real.
+    ancient = job(started=started, hours=1)
     ancient["status"]["currentOffering"].pop("vendor", None)
 
     totals = stats.summarise(
@@ -196,8 +198,94 @@ def test_the_same_jobs_add_up_by_vendor_too():
     # The AWS machine is in no price table: hours counted, dollars refused.
     assert by["aws"].unpriced_jobs == 1 and by["aws"].gpu_hours == 1.0
     assert abs(by["runpod"].cost_usd - 2 * 0.99) < 0.01
-    # A job with no clock contributes presence, not hours.
-    assert by["unknown"].jobs == 1 and by["unknown"].gpu_hours == 0.0
+    assert by["unknown"].jobs == 1 and by["unknown"].gpu_hours == 1.0
+
+
+def test_every_vendor_in_the_catalogue_gets_a_row_even_with_no_jobs():
+    # ★ THE ROWS ARE THE CATALOGUE, NOT WHOEVER HAPPENS TO HAVE SOLD TO THIS
+    # TEAM. Derived from the jobs, the Per vendor table showed exactly one row
+    # on 2026-09-11 -- `runpod` -- because aws, gcp and shadeform had only sold
+    # into the `default` namespace, which is not in this team. A brand new
+    # account with no jobs would have seen an empty table and no way to tell
+    # "never used" from "the screen forgot".
+    totals = stats.summarise(
+        "ddps", ["ddps-alice"],
+        {"ddps-alice": [job(started=NOW - timedelta(hours=1), hours=1)]},
+        now=NOW, known_vendors=("aws", "runpod", "gcp", "azure"),
+    )
+    by = {v.vendor: v for v in totals.vendors}
+    assert set(by) == {"aws", "runpod", "gcp", "azure"}
+    assert by["gcp"].jobs == 0 and by["gcp"].gpu_hours == 0.0 and by["gcp"].cost_usd == 0.0
+    assert by["runpod"].jobs == 1
+    # Spend first, so the vendor actually used is not buried under the zeroes.
+    assert totals.vendors[0].vendor == "runpod"
+    assert [v.vendor for v in totals.vendors[1:]] == ["aws", "azure", "gcp"]
+
+
+def test_a_vendor_the_catalogue_does_not_list_still_gets_a_row():
+    # A name the gateway has not heard of must be visible, not swallowed. This
+    # is how `shadeform` behaved before 2026-09-10, when the CRD accepted the
+    # word and the gateway did not know it.
+    surprise = job(started=NOW - timedelta(hours=1), hours=1)
+    surprise["status"]["currentOffering"]["vendor"] = "brandnew"
+
+    totals = stats.summarise(
+        "ddps", ["ddps-alice"], {"ddps-alice": [surprise]},
+        now=NOW, known_vendors=("aws", "runpod"),
+    )
+    assert {v.vendor for v in totals.vendors} == {"aws", "runpod", "brandnew"}
+
+
+def test_a_job_with_no_vendor_that_never_ran_is_in_no_row_at_all():
+    # ★ NOTHING WAS BOUGHT AND NOBODY IS NAMED. A Pending job and a
+    # compare-mode job both reach here with no currentOffering and no
+    # startedAt, and until 2026-09-11 the bucket was made before either was
+    # checked, so they showed as a seller called `unknown` with $0.00 beside
+    # `runpod`. On the live cluster that was 17 compare-mode jobs and one
+    # Pending seed marker. They stay in the team's job count.
+    pending = job(phase="Pending", started=None, instance=None)
+    compared = job(phase="Compared", started=None, instance=None)
+    ran = job(started=NOW - timedelta(hours=1), hours=1)
+
+    totals = stats.summarise(
+        "ddps", ["default"], {"default": [pending, compared, ran]}, now=NOW,
+    )
+    assert [v.vendor for v in totals.vendors] == ["runpod"]
+    assert totals.vendors[0].jobs == 1
+    # The skipped jobs are not lost -- Team still counts them, and the Vendors
+    # screen subtracts these two numbers to say how many it left out.
+    assert totals.jobs == 3
+
+
+def test_a_named_vendor_keeps_its_row_even_with_no_clock():
+    # ★ THE FIRST ATTEMPT AT THE RULE ABOVE DROPPED THESE TOO, and that deleted
+    # `gcp` from the Per vendor table outright: its one job finished before
+    # PACSRUN-JOB-CLOCK (2026-09-01) and carries a vendor with no startedAt,
+    # as do eleven runpod jobs. We know exactly who sold those machines, so a
+    # row reading 0.0 hours is the true answer and no row is not.
+    old_gcp = job(phase="Succeeded", started=None)
+    old_gcp["status"]["currentOffering"]["vendor"] = "gcp"
+    ran = job(started=NOW - timedelta(hours=1), hours=1)
+
+    totals = stats.summarise(
+        "ddps", ["default"], {"default": [old_gcp, ran]}, now=NOW,
+    )
+    by = {v.vendor: v for v in totals.vendors}
+    assert set(by) == {"gcp", "runpod"}
+    assert by["gcp"].jobs == 1 and by["gcp"].gpu_hours == 0.0
+
+
+def test_a_job_that_ran_but_names_no_vendor_is_still_unknown():
+    # The third case: `unknown` is not gone, it just means what it always said
+    # -- a machine WAS rented for real hours and the record does not say by
+    # whom. No such job exists on this cluster today, and the day one appears
+    # its hours must not vanish.
+    ran = job(started=NOW - timedelta(hours=2), hours=2)
+    ran["status"]["currentOffering"].pop("vendor", None)
+
+    totals = stats.summarise("ddps", ["default"], {"default": [ran]}, now=NOW)
+    assert [v.vendor for v in totals.vendors] == ["unknown"]
+    assert totals.vendors[0].gpu_hours == 2.0
 
 
 def test_a_job_with_no_owner_label_reports_under_kubectl():

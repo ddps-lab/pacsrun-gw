@@ -65,8 +65,24 @@ class VendorTotals:
     """One vendor's share of the team's figures.
 
     The vendor is status.currentOffering.vendor — "aws", "runpod", "gcp".
-    Jobs recorded before that field existed carry none and group under
-    "unknown", because inventing a vendor for them would be a guess.
+
+    ★ A JOB THAT NAMES NO VENDOR AND NEVER RAN IS IN NO ROW AT ALL. Nothing was
+    bought and nobody is named, so there is nothing to file. Until 2026-09-11
+    the bucket was made before the duration was known, so 17 compare-mode jobs
+    and one Pending seed marker showed up as a seller called `unknown` with 0.0
+    hours and $0.00 next to `runpod`, which reads as a vendor we had failed to
+    identify. Such a job stays in the team's job count and in `members`; the
+    Vendors screen subtracts the two and says how many it left out.
+
+    "unknown" itself is not gone and keeps its original meaning: a job that DID
+    rent a machine for real hours whose record does not name the seller. Those
+    hours must land somewhere rather than disappear.
+
+    A NAMED VENDOR KEEPS ITS ROW EVEN WITH NO CLOCK. Jobs that finished before
+    PACSRUN-JOB-CLOCK (2026-09-01) carry a vendor and no startedAt -- one gcp
+    and eleven runpod on this cluster. A row saying 0.0 hours is a true and
+    useful answer; deleting `gcp` from the table because we cannot time it is
+    not. See the loop in `summarise` for the two-fact rule.
     """
 
     vendor: str
@@ -188,6 +204,7 @@ def summarise(
     namespaces: list[str],
     jobs_by_namespace: dict[str, Iterable[dict[str, Any]]],
     now: datetime | None = None,
+    known_vendors: Iterable[str] = (),
 ) -> TeamTotals:
     """Turn a team's jobs into figures.
 
@@ -197,6 +214,10 @@ def summarise(
         jobs_by_namespace: the PacsJobs found in each.
         now: what to measure still-running jobs against. Defaults to the current
             time; tests pass a fixed one.
+        known_vendors: every vendor this deployment can buy from, which the
+            caller supplies because `models.KNOWN_VENDORS` cannot be imported
+            here -- models imports this module. Each gets a row whether or not
+            this team has used it. See the seeding below for why.
 
     Returns:
         A `TeamTotals`. `unpriced_jobs` is how many jobs contributed hours but
@@ -229,7 +250,25 @@ def summarise(
     members: dict[str, MemberTotals] = {}
     # The same jobs, added up a second way: by WHO SOLD the machine. Same loop,
     # same hours, same prices — the two tables must never disagree about a job.
-    vendors: dict[str, VendorTotals] = {}
+    #
+    # ★ THE ROWS ARE THE CATALOGUE, NOT A BY-PRODUCT OF THE JOBS. Every vendor
+    # this deployment can buy from is seeded here with zeroes, so the table is
+    # the same seven rows for every team, every namespace and every account,
+    # including one created a minute ago with no jobs at all. Deriving the rows
+    # from the jobs instead made the list mean "who happens to have sold to
+    # THESE namespaces": on 2026-09-11 the Per vendor table showed one row,
+    # `runpod`, because aws, gcp and shadeform had only ever sold into the
+    # `default` namespace, which is not in this team. A vendor that sold
+    # nothing is a real and useful answer -- 0 jobs, 0.0 hours, $0.00 -- and an
+    # absent row is not, because the reader cannot tell "never used" from
+    # "we forgot about this one".
+    #
+    # A job naming a vendor outside this list still gets its own row appended
+    # by the loop below, so a name the gateway has not heard of is visible
+    # rather than swallowed.
+    vendors: dict[str, VendorTotals] = {
+        name: VendorTotals(vendor=name) for name in known_vendors
+    }
 
     for namespace in namespaces:
         for job in jobs_by_namespace.get(namespace, []):
@@ -237,13 +276,7 @@ def summarise(
             owner = labels.get(OWNER_LABEL) or NO_OWNER
             member = members.setdefault(owner, MemberTotals(user=owner))
 
-            sold_by = (((job.get("status") or {}).get("currentOffering")) or {}).get(
-                "vendor"
-            ) or "unknown"
-            vendor = vendors.setdefault(sold_by, VendorTotals(vendor=sold_by))
-
             member.jobs += 1
-            vendor.jobs += 1
             phase = ((job.get("status") or {}).get("phase")) or ""
             if phase == "Succeeded":
                 member.succeeded += 1
@@ -253,6 +286,40 @@ def summarise(
                 member.running += 1
 
             hours = job_hours(job, now)
+
+            # ★ A ROW PER SELLER, AND NO ROW AT ALL FOR A JOB NOBODY SOLD.
+            # Two independent facts decide this, and conflating them is how the
+            # screen went wrong twice on 2026-09-11:
+            #
+            #   does status.currentOffering.vendor name somebody?
+            #   does status.startedAt exist, i.e. did a machine ever run?
+            #
+            # A NAMED VENDOR ALWAYS GETS ITS ROW, clock or no clock. On this
+            # cluster one gcp job and eleven runpod jobs finished before
+            # PACSRUN-JOB-CLOCK existed (2026-09-01), so they carry a vendor and
+            # no duration. Dropping them for want of a clock deleted `gcp` from
+            # the Per vendor table entirely, which is a worse answer than a row
+            # reading 0.0 hours: we know perfectly well who sold those.
+            #
+            # NO VENDOR AND NO CLOCK GETS NO ROW. Nothing was bought and nobody
+            # is named, so there is nothing to file. That is the 18 jobs -- 17
+            # compare-mode and one Pending seed marker -- that used to appear as
+            # a seller called `unknown` with $0.00 beside `runpod`, reading as a
+            # vendor we had failed to identify.
+            #
+            # NO VENDOR BUT A CLOCK IS STILL `unknown`, and that bucket keeps
+            # its original meaning: a machine was rented for real hours and the
+            # record does not say by whom. There is no such job on this cluster
+            # today, and the day one appears its hours must not vanish.
+            sold_by = (((job.get("status") or {}).get("currentOffering")) or {}).get(
+                "vendor"
+            ) or ""
+            vendor = None
+            if sold_by or hours is not None:
+                name = sold_by or "unknown"
+                vendor = vendors.setdefault(name, VendorTotals(vendor=name))
+                vendor.jobs += 1
+
             if hours is None:
                 continue
             member.gpu_hours += hours
@@ -276,7 +343,13 @@ def summarise(
         totals.cost_usd += member.cost_usd
         totals.unpriced_jobs += member.unpriced_jobs
 
-    for sold_by in sorted(vendors):
+    # Spend first, then hours, then name. Seeding the catalogue means most rows
+    # are zeroes on a young team, and plain alphabetical order buried the one
+    # vendor that had actually been used between five that had not.
+    for sold_by in sorted(
+        vendors, key=lambda name: (-vendors[name].cost_usd,
+                                   -vendors[name].gpu_hours, name)
+    ):
         vendor = vendors[sold_by]
         vendor.gpu_hours = round(vendor.gpu_hours, 2)
         vendor.cost_usd = round(vendor.cost_usd, 2)
