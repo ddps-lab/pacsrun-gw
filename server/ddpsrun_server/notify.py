@@ -246,8 +246,8 @@ def registration_body(email: str, subject_id: str, namespace_hint: str,
     """
     teams = [t for t in (known_teams or []) if t]
     team = teams[0] if teams else DEFAULT_TEAM
-    entry = json.dumps({"email": email, "user": email, "namespace": namespace_hint,
-                        "team": team}, indent=2)
+    entry = json.dumps({"email": email, "user": user_suggestion(email),
+                        "namespace": namespace_hint, "team": team}, indent=2)
     if teams:
         roster = ("Teams already in the token file, commonest first: "
                   + ", ".join(teams) + ".")
@@ -381,9 +381,46 @@ def namespace_suggestion(email: str, team: str = DEFAULT_TEAM) -> str:
         >>> namespace_suggestion("alice@example.ac.kr", "ddps")
         'ddps-alice'
     """
-    who = _label((email or "").split("@")[0]) or "unnamed"
-    where = _label(team) or DEFAULT_TEAM
-    return f"{where}-{who}"[:63].strip("-")
+    return f"{_label(team) or DEFAULT_TEAM}-{user_suggestion(email)}"[:63].strip("-")
+
+
+def user_suggestion(email: str) -> str:
+    """The `user` field a new person gets: the local part of their address.
+
+    ★ IT USED TO SUGGEST THE WHOLE ADDRESS, and that is what this fixes. The
+    registration mail printed `{"user": "<the full email>"}` for the operator to
+    paste, and `user` is written into the `ddpsrun.io/owner` LABEL, where an `@`
+    is not a legal character. `naming.label_value` scrubs it rather than failing,
+    so nothing crashed -- the job screen simply said "Submitted by
+    hyundo-gmail.com". A mangled address is not a person's name.
+    
+    AND IT IS THE SAME RULE THE NAMESPACE USES, deliberately. Two names were
+    being decided at the same moment by different rules: the namespace came from
+    the local part and `user` came from the whole address, so they drifted the
+    moment either was typed by hand. This deployment has one account whose
+    `user` is a short handle and whose namespace is derived from the address, and
+    nothing relates the two strings. One rule means `newcomer@example.com` gets
+    namespace `ddps-newcomer` and user `newcomer`, and a reader can see they are
+    the same person.
+
+    A SUGGESTION, NOT A CONSTRAINT. The operator still writes the entry, and
+    `user` may be anything -- it is a display name and not a security boundary
+    (`auth.Principal`). What changed is what the mail proposes.
+
+    Args:
+        email: the verified address the person signs in with.
+
+    Returns:
+        The local part squashed to an RFC 1123 label, or "unnamed" when nothing
+        survives that (an address of only punctuation). Never empty, because an
+        empty `user` would drop the owner label and make the job look like one
+        applied with kubectl.
+
+    Example:
+        >>> user_suggestion("newcomer@example.com")
+        'newcomer'
+    """
+    return _label((email or "").split("@")[0]) or "unnamed"
 
 
 def send_registration_request(*, email: str, subject_id: str, notify_to: str,

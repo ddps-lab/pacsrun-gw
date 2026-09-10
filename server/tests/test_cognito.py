@@ -695,3 +695,55 @@ def test_a_token_file_with_no_team_at_all_lists_none():
         {"sha256": auth.hash_token("a"), "user": "a", "namespace": "solo"},
     ]})
     assert store.teams() == []
+
+
+def test_the_suggested_user_is_the_local_part_and_matches_the_namespace():
+    """★ THE MAIL USED TO SUGGEST THE WHOLE ADDRESS AS `user`, and `user` is
+    written into the `ddpsrun.io/owner` LABEL, where `@` is not legal.
+    `naming.label_value` scrubs rather than fails, so nothing crashed and the
+    job screen simply read "Submitted by newcomer-example.com".
+
+    One rule for both names now, so a reader can see they are the same person.
+    """
+    from ddpsrun_server.naming import label_value
+    from ddpsrun_server.notify import namespace_suggestion, user_suggestion
+
+    assert user_suggestion("newcomer@example.com") == "newcomer"
+    assert namespace_suggestion("newcomer@example.com", "ddps") == "ddps-newcomer"
+    # The namespace is the team plus exactly this, and nothing else.
+    assert namespace_suggestion("newcomer@example.com", "ddps") == (
+        "ddps-" + user_suggestion("newcomer@example.com"))
+    # What the old suggestion would have shown on the jobs screen.
+    assert label_value("newcomer@example.com") == "newcomer-example.com"
+
+
+def test_the_suggested_user_survives_the_owner_label_unchanged():
+    """A suggestion that the label scrubber would alter is not a suggestion --
+    the operator would paste one name and the screen would show another."""
+    from ddpsrun_server.naming import label_value
+    from ddpsrun_server.notify import user_suggestion
+
+    for address in ("alice@example.com", "bo.ram+x@example.ac.kr",
+                    "a.long.name@example.ac.kr", "A.Big.Name@EXAMPLE.COM"):
+        suggested = user_suggestion(address)
+        assert suggested == label_value(suggested), address
+        assert suggested, "빈 user 는 owner label 을 떨어뜨려 kubectl 로 만든 job 처럼 보인다"
+
+
+def test_an_address_with_nothing_usable_still_yields_a_name():
+    from ddpsrun_server.notify import user_suggestion
+
+    assert user_suggestion("...@example.com") == "unnamed"
+    assert user_suggestion("") == "unnamed"
+
+
+def test_the_registration_mail_pastes_the_short_user_not_the_address():
+    """The operator copies this entry verbatim, so the mail is where the rule
+    actually takes effect."""
+    from ddpsrun_server.notify import registration_body
+
+    body = registration_body("newcomer@example.com", "sub-1", "ddps-newcomer", ["ddps"])
+    assert '"user": "newcomer"' in body
+    assert '"user": "newcomer@example.com"' not in body
+    # The address is still in the entry, as the field that is looked up at sign-in.
+    assert '"email": "newcomer@example.com"' in body
