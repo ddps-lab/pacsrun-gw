@@ -152,13 +152,31 @@ class GpuRequest(BaseModel):
 # that names the bad word and lists the ones that would have worked, before
 # anything is submitted. Same reason GpuRequest repeats the CRD's CEL rule.
 #
-# THE SPLIT IS THE PART THAT MATTERS. aws and runpod have an execution path: the
-# built-in KubePACS solver over EC2, and a rented container behind a driver pod.
+# THE SPLIT IS THE PART THAT MATTERS. aws, runpod and shadeform have an execution
+# path: the built-in KubePACS solver over EC2, a rented container behind a driver
+# pod, and a marketplace VM turned into a one-node k3s cluster by a driver pod.
 # The other four are answered from the SkyPilot catalog CSVs, which needs no
 # credential of any kind -- enough to state a price, nothing like enough to rent
 # a machine, because no actuator here understands their machine names. So they
 # belong with `mode: compare`, which stops after the ranking.
-RUNNABLE_VENDORS: tuple[str, ...] = ("aws", "runpod")
+# ★★ shadeform JOINED THE RUNNABLE LIST ON 2026-09-10, AND THE GATEWAY DID NOT KNOW THE WORD AT
+# ALL BEFORE THAT. The CRD's enum accepted it, the operator built a driver pod for it and the
+# driver rented a machine -- while `POST /v1/jobs` refused the name as unknown. A gateway that
+# says no to something the cluster does is worse than one that has not heard of it.
+#
+# WHAT IS PROVEN LIVE, in one run each: the driver picks an in-stock row from the vendor's own
+# catalog, rents, the machine boots from a CUDA-baked image, becomes a single-node k3s cluster,
+# the driver reaches its apiserver with a CA it derived and a token it was handed (nothing comes
+# back from the machine -- this vendor has no channel for anything to), the node goes Ready with
+# its GPU advertised, the workload container runs, and the machine is handed back on every path
+# including the failing ones.
+#
+# ★ WHAT IS NOT YET PROVEN, said here because a user reads this list to decide: ARTIFACT
+# RETRIEVAL. `pods/exec` needs a running container and a workload that writes its results and
+# exits is gone one second later; the fix (PACSRUN-K3S-FETCH-HOLD, PACSrun d3c611e) holds the
+# container open and has unit coverage but has not completed a live run. A job with no
+# spec.result_path is unaffected. The same defect is on the aws path and has been all along.
+RUNNABLE_VENDORS: tuple[str, ...] = ("aws", "runpod", "shadeform")
 PRICE_ONLY_VENDORS: tuple[str, ...] = ("gcp", "azure", "lambda", "nebius")
 KNOWN_VENDORS: tuple[str, ...] = RUNNABLE_VENDORS + PRICE_ONLY_VENDORS
 
@@ -1261,7 +1279,7 @@ class PriceView(BaseModel):
     """
 
     vendor: str = Field(
-        description="'aws', 'gcp' or 'runpod'. aws and runpod rows can both "
+        description="'aws', 'gcp', 'runpod' or 'shadeform'. aws and runpod rows can both "
         "price a job, because those are the two vendors PACSrun can price AND "
         "rent; gcp rows are here to be looked at and nothing ranks them against "
         "the other two -- see `basis`."

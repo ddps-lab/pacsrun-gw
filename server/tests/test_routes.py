@@ -1446,7 +1446,12 @@ def test_the_price_table_answers_without_a_token(client):
     body = answer.json()
     # 610 aws+gcp rows read from the SkyPilot catalogue, plus the 105 RunPod rows
     # added 2026-09-09 from that vendor's own catalog endpoint.
-    assert len(body["rows"]) == 715
+    # 766 = aws 304 + gcp 306 + runpod 105 + shadeform 51. The number is asserted rather than
+    # ranged because the table is GENERATED and committed: a change in it means either a vendor's
+    # catalogue moved or gen_prices_all.py did, and both are worth a human looking at the diff.
+    # shadeform's 51 arrived 2026-09-10, ten of them a card that an exact-case membership test
+    # had been dropping (it spells RTXPro6000, CHOOSABLE spells RTXPRO6000).
+    assert len(body["rows"]) == 766
     assert len([r for r in body["rows"] if r["vendor"] == "runpod"]) == 105
     # RunPod contributes no region: it publishes one price per GPU type with no
     # location dimension, so `regions` is still the 22 AWS ones.
@@ -1474,7 +1479,10 @@ def test_the_price_table_says_which_basis_each_row_is(client):
     whenever it is not cheaper."""
     body = client.get("/v1/prices").json()
     bases = {(r["vendor"], r["basis"]) for r in body["rows"]}
-    assert bases == {("aws", "machine"), ("gcp", "accelerator"),
+    # ★ shadeform IS `machine`, WITH aws AND runpod. It sells whole instances -- its CSV Price
+    # covers the host -- and gcp remains the only `accelerator` vendor because GCP really does
+    # price cards separately from the machines they sit in.
+    assert bases == {("aws", "machine"), ("gcp", "accelerator"), ("shadeform", "machine"),
                      ("runpod", "machine")}
     assert "whole unit that runs a pod" in body["note"]
     # And the note has to name BOTH read dates, because the runpod rows come

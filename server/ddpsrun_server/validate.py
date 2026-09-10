@@ -638,7 +638,7 @@ def check_vendors_can_run(vendors: list[str], placement_mode: str | None) -> lis
     """Can the vendors that were named actually rent a machine.
 
     DDPSRUN-VENDOR-CHOICE. Six vendor names are accepted and only two of them can
-    run anything. aws and runpod have an execution path; gcp, azure, lambda and
+    run anything. aws, runpod and shadeform have an execution path; gcp, azure, lambda and
     nebius are answered from the SkyPilot catalogue CSVs, which is enough to
     state a price and nothing like enough to rent a machine -- no actuator in
     PACSrun understands their machine names.

@@ -38,9 +38,11 @@ import os
 import pathlib
 import collections
 import csv
+import io
 import json
 import re
 import sys
+import urllib.request
 
 AWS = os.path.expanduser("~/.sky/catalogs/v8/aws/vms.csv")
 GCP = os.path.expanduser("~/.sky/catalogs/v8/gcp/vms.csv")
@@ -82,6 +84,24 @@ RUNPOD_READ_ON = "2026-09-09"
 # table matches a cluster that sets neither key as well as this one.
 RUNPOD_DENY = ("MIG",)
 RUNPOD_MIN_MEMORY_GB = 16
+
+# ★ SHADEFORM IS FETCHED, NOT READ OFF DISK, and that is not a shortcut. `~/.sky/catalogs/v8`
+# has aws, gcp, runpod and common on this machine and no shadeform directory -- SkyPilot writes
+# one only for a cloud it is configured for. The DECIDER already reads this same URL with no
+# credential (pkg/decider/skycatalog, PACSRUN-CSV-VENDOR), so fetching it here keeps the price
+# table and the solve reading one source instead of two that can disagree.
+SHADEFORM = ("https://raw.githubusercontent.com/skypilot-org/skypilot-catalog/master/"
+             "catalogs/v8/shadeform/vms.csv")
+SHADEFORM_READ_ON = "2026-09-10"
+
+# ★★ THE UNIT BUG IN THAT CSV, and it must be handled here or every Shadeform row is dropped.
+# Its GpuInfo writes GiB into the field named `SizeInMiB`: L4 = 24, H100 = 80, where aws writes
+# 22888 and 81920. Read literally a Shadeform H100 is 0.078 GiB and falls under every floor.
+# PACSrun's decider fixes it by plausibility rather than by vendor name
+# (pkg/decider/skycatalog/decider.go, perGPUVRAMGiB): under 1024 the number is GiB, because no
+# GPU has less than 1 GiB and the oldest card in these catalogues is a 16 GiB V100. Same rule
+# here, same reason -- it stays right if upstream fixes it.
+SHADEFORM_MIB_IS_GIB_BELOW = 1024
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from ddpsrun_server.catalogue import CHOOSABLE            # noqa: E402
@@ -318,11 +338,81 @@ def runpod_rows():
     return rows, unreachable
 
 
+def shadeform_rows():
+    """One row per (card, count, region) Shadeform sells. A MACHINE price, like aws and runpod.
+
+    RETURNS (rows, notes). `notes` are the things a reader needs told rather than left to infer
+    from an absence -- the same shape runpod_rows() uses.
+
+    ★ THE BASIS IS `machine` AND NOT `accelerator`. Shadeform sells whole instances: the CSV's
+    Price is for the machine including its host, exactly as an AWS instance type is. gcp is the
+    only `accelerator` vendor in this table because GCP really does price cards separately from
+    hosts.
+
+    ★ THE INSTANCE NAME IS THE COMPOSITE `<cloud>_<type>` VERBATIM. `massedcompute_A100_sxm4_80Gx8`
+    names the sub-provider and its type, and both halves are needed to buy it -- the create body
+    takes `cloud` and `shade_instance_type` as separate required fields. Splitting it here would
+    throw away the half a reader needs to know WHO the machine comes from, which on this
+    marketplace decides the boot time, whether the address is NATed, and who to ask when it
+    breaks (all three measured differing between hyperstack and massedcompute on 2026-09-10).
+
+    ★ NO SPOT. The CSV has a SpotPrice column and it is empty for every row; the live API's 750
+    availability entries were all `on_demand` on 2026-09-10. Flagged `no_spot`, the same
+    statement runpod rows carry, because two empty columns otherwise cannot be told apart from
+    "we never looked".
+    """
+    text = urllib.request.urlopen(SHADEFORM, timeout=60).read().decode("utf-8")
+    # ★ MATCHED CASE-INSENSITIVELY, AND THE NEAR-MISS DETECTOR IS WHAT FOUND WHY. Shadeform
+    # spells it `RTXPro6000` and CHOOSABLE spells it `RTXPRO6000`, which is AWS's spelling -- so
+    # an exact-membership test dropped every row of a 96 GiB card that the compares had already
+    # shown in stock. It is the same class of miss that cost RunPod two cards on 2026-09-09.
+    #
+    # THE CARD NAME WE WRITE IS OURS, not the vendor's: the table is read by `hourly_rate(card,
+    # ...)` with a name a user typed, and the vendor's capitalisation is not part of that
+    # contract. The driver already compares case-insensitively (shadeform.sellable_rows), so the
+    # two halves agree.
+    ours_by_lower = {c.lower(): c for c in CARDS}
+    buckets = collections.defaultdict(list)
+    seen_cards = set()
+    for r in csv.DictReader(io.StringIO(text)):
+        vendor_card = r.get("AcceleratorName")
+        seen_cards.add(vendor_card)
+        card = ours_by_lower.get(str(vendor_card or "").lower())
+        if card is None:
+            continue
+        if not r.get("Price"):
+            continue
+        count = int(float(r["AcceleratorCount"] or 0) + 0.5)
+        if count < 1:
+            continue
+        buckets[(card, count, r.get("Region") or "")].append(r)
+
+    rows = []
+    for (card, count, region), rs in sorted(buckets.items()):
+        cheapest = min(rs, key=lambda r: float(r["Price"]))
+        rows.append(["shadeform", "machine", card, count, region,
+                     cheapest.get("InstanceType") or "",
+                     f"{float(cheapest['Price']):.4f}", "", "", len(rs)])
+
+    notes = []
+    # WHAT WE ASK FOR AND SHADEFORM DOES NOT SELL. Printed rather than inferred: a card absent
+    # from the table is indistinguishable from one nobody stocks.
+    missing = sorted(c for c in CARDS if not any(r[2] == c for r in rows))
+    for card in missing:
+        # A NEAR MISS IS THE INTERESTING LINE: it means Shadeform HAS the card and our spelling
+        # cannot reach it, which is a defect. A card with no near miss is simply not stocked.
+        near = sorted(n for n in seen_cards
+                      if n and card.lower().replace(" ", "") in str(n).lower().replace(" ", ""))
+        notes.append((card, near))
+    return rows, notes
+
+
 def main():
     out = csv.writer(sys.stdout)
     out.writerow([f"# generated by tools/gen_prices_all.py. aws and gcp rows from "
                   f"~/.sky/catalogs/v8 on {READ_ON}; runpod rows from RunPod's own "
-                  f"catalog API on {RUNPOD_READ_ON}. Do not hand-edit."])
+                  f"catalog API on {RUNPOD_READ_ON}; shadeform rows from the SkyPilot "
+                  f"catalog on GitHub on {SHADEFORM_READ_ON}. Do not hand-edit."])
     out.writerow(["vendor", "basis", "card", "gpus", "region", "instance",
                   "usd_per_hour", "spot_low", "spot_high", "zones", "flags"])
     # ★ THE RATIO CHECK, AND WHAT IT FOUND TWICE.
@@ -347,13 +437,17 @@ def main():
     n = collections.Counter()
     inverted = collections.Counter()
     runpod, unreachable = runpod_rows()
-    for row in list(aws_rows()) + list(gcp_rows()) + runpod:
+    shadeform, sf_missing = shadeform_rows()
+    for row in list(aws_rows()) + list(gcp_rows()) + runpod + shadeform:
         vendor, _basis, _card, _count, _region, _inst, od, _lo, hi = row[:9]
         # `no_spot` is a STATEMENT, not a missing value. RunPod sells no spot at
         # all, and without the flag a reader has to guess whether the two empty
         # spot columns mean "none exists" or "we never looked" -- the same
         # distinction `unknown` carries everywhere else in this service.
-        flags = "no_spot" if vendor == "runpod" else ""
+        # shadeform joins runpod here for the same measured reason: its CSV's
+        # SpotPrice column is empty on every row and the live API offered no
+        # spot capacity at all on 2026-09-10.
+        flags = "no_spot" if vendor in ("runpod", "shadeform") else ""
         if od and hi and float(hi) > float(od) * 1.001:
             flags = "spot_above_ondemand"
             inverted[vendor] += 1
@@ -366,6 +460,11 @@ def main():
     # silently absent from 105 rows is indistinguishable from one RunPod does
     # not stock. A near miss on the right is the interesting line: it means
     # RunPod HAS the card and the name in catalogue.CHOOSABLE cannot reach it.
+    for card, near in sf_missing:
+        print(f"# shadeform sells no card matching {card!r}"
+              + (f" -- but its catalogue lists {', '.join(near)}"
+                 if near else ""),
+              file=sys.stderr)
     for card, near in unreachable:
         print(f"# runpod sells no card matching {card!r}"
               + (f" -- but it sells {', '.join(near)}, which matchesModel does "

@@ -287,7 +287,7 @@ A submit request plus the facts needed to judge it.
 | `script` |  | The text of your run.sh. Four validate checks are skipped without it. IT IS ALSO WHAT RUNS when you send no `command` and no `args`: the job then gets args ['bash','-lc',<this text>], which is the same shape the screen sends and the shape GET /v1/scripts reads back. An explicit `command` or `args` wins, for the case where the script is fetched inside the container instead. Never stored anywhere -- it lives on the job, so deleting the job deletes it. |
 | `secrets` |  | ENVIRONMENT VARIABLE names to inject — the names your script reads, e.g. ["GITHUB_PAT"]. NOT the name of a Kubernetes Secret: the server maps each one to a Secret and key itself. The value never travels through this API, and neither does that internal name. Ask `hyperun secrets` for the list this deployment accepts; a name that is not on it is refused. |
 | `training` |  |  |
-| `vendors` |  | WHO the machines may be bought from. Empty means no restriction, which is how every job behaved before this field existed. Runnable: aws, runpod. Price-only: gcp, azure, lambda, nebius -- these are answered from catalogue CSVs and no actuator here can rent from them, so list one only together with placement_mode 'compare', which stops after the ranking. |
+| `vendors` |  | WHO the machines may be bought from. Empty means no restriction, which is how every job behaved before this field existed. Runnable: aws, runpod, shadeform. Price-only: gcp, azure, lambda, nebius -- these are answered from catalogue CSVs and no actuator here can rent from them, so list one only together with placement_mode 'compare', which stops after the ranking. |
 
 ### LogsResponse
 
@@ -355,7 +355,7 @@ One row of the catalogue's price table.
 | `spot_high` |  | Spot is per zone and moves, so it is a range across the zones in one snapshot, not a number. Both spot fields are null on every RunPod row because that vendor sells no spot -- see the no_spot flag. |
 | `spot_low` |  |  |
 | `usd_per_hour` |  | On-demand. Null when the catalogue publishes none: AWS sells some of the newest cards through Capacity Blocks instead. |
-| `vendor` | yes | 'aws', 'gcp' or 'runpod'. aws and runpod rows can both price a job, because those are the two vendors PACSrun can price AND rent; gcp rows are here to be looked at and nothing ranks them against the other two -- see `basis`. |
+| `vendor` | yes | 'aws', 'gcp', 'runpod' or 'shadeform'. aws and runpod rows can both price a job, because those are the two vendors PACSrun can price AND rent; gcp rows are here to be looked at and nothing ranks them against the other two -- see `basis`. |
 | `zones` | yes | How many places carried this row, and it means two things. AWS and GCP: how many availability zones offer it, which moves rarely. RunPod: how many data centers reported SELLABLE STOCK at the moment of the snapshot, which is volatile and can be 0 for a card whose price is published. Do not read a RunPod zones as availability now. |
 
 ### PricesResponse
