@@ -241,6 +241,32 @@ def test_team_membership_comes_from_the_token_file_not_from_the_cluster():
     assert store.namespaces_in_team("other") == ["other-carol"]
 
 
+def test_a_member_who_only_signs_in_through_the_screen_is_still_in_the_team():
+    # THE BUG THIS PINS. A person with no static token has an `email` and no
+    # `sha256`, so they exist only in `_by_email`. `namespaces_in_team` scanned
+    # `_by_hash` alone and skipped them -- and on the live deployment
+    # (2026-09-11) that was every member of team `ddps`, so Team and Vendors
+    # both drew 0 jobs, 0.0 GPU hours and $0.00. Every test above this one uses
+    # `sha256` entries, which is why nothing caught it.
+    store = auth.TokenStore.from_document(({"tokens": [
+        {"email": "alice@example.com", "user": "alice", "namespace": "ddps-alice", "team": "ddps"},
+        {"sha256": auth.hash_token("b"), "user": "bob", "namespace": "ddps-bob", "team": "ddps"},
+        {"sha256": auth.hash_token("p"), "user": "probe", "namespace": "default", "team": "probe"},
+    ]}))
+    assert store.namespaces_in_team("ddps") == ["ddps-alice", "ddps-bob"]
+    assert store.namespaces_in_team("probe") == ["default"]
+
+
+def test_one_person_with_both_credentials_contributes_one_namespace():
+    # The same Principal is in both maps, and the union must not report its
+    # namespace twice -- `sorted({...})` already deduplicates, and this says so.
+    store = auth.TokenStore.from_document(({"tokens": [
+        {"sha256": auth.hash_token("a"), "email": "alice@example.com",
+         "user": "alice", "namespace": "ddps-alice", "team": "ddps"},
+    ]}))
+    assert store.namespaces_in_team("ddps") == ["ddps-alice"]
+
+
 def test_an_empty_team_name_matches_nobody():
     store = auth.TokenStore.from_document(({"tokens": [
         {"sha256": auth.hash_token("a"), "user": "alice", "namespace": "ddps-alice"},

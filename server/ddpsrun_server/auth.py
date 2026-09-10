@@ -299,6 +299,21 @@ class TokenStore:
         listing them, which works but widens what a compromise of this pod
         reaches for no benefit.
 
+        ★ IT READS BOTH MAPS, and reading only `_by_hash` was a real bug. A
+        person who only ever signs in through the screen has no static token, so
+        their entry has an `email` and no `sha256` and lands in `_by_email`
+        alone -- exactly the shape `parse_token_document` was widened to accept
+        when Cognito landed. Scanning `_by_hash` therefore skipped every such
+        person, and on this deployment (2026-09-11) that was BOTH members of
+        team `ddps`. `/v1/stats` got an empty namespace list, and Team and
+        Vendors drew 0 jobs, 0.0 GPU hours and $0.00 with no rows under either.
+        It looked correct until 2026-09-10 only by accident: the one static
+        token, `probe`, sat in namespace `default` with `team: ddps`, so the 42
+        kubectl-era jobs in `default` were what the screen had been adding up.
+        Moving `probe` to its own team removed the last hash-keyed `ddps` entry
+        and the totals went to zero. `teams()` and `all_namespaces()` above
+        already union the two maps; this is the one place that did not.
+
         Args:
             team: the team name. Empty returns nothing rather than everything,
                 because a caller with no team must not be handed the whole
@@ -309,7 +324,8 @@ class TokenStore:
         """
         if not team:
             return []
-        return sorted({p.namespace for p in self._by_hash.values() if p.team == team})
+        principals = set(self._by_hash.values()) | set(self._by_email.values())
+        return sorted({p.namespace for p in principals if p.team == team})
 
     def all_namespaces(self) -> list[str]:
         """Every namespace the token file names, sorted and deduplicated.
