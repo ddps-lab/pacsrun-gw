@@ -17,7 +17,7 @@
 #   2. namespace                                             kubectl create namespace
 #   3. the workload ServiceAccount                           kubectl create serviceaccount
 #   4. the gateway's namespaced Role for user secrets        rbac.yaml, substituted
-#   5. the RunPod API key, copied from pacsrun-system        kubectl get -o yaml | apply
+#   5. EVERY vendor credential, copied from pacsrun-system   kubectl get -o json | apply
 #   6. PRINT what this script must not do: the terraform
 #      entry, the import command, and the token record       print_manual()
 #
@@ -71,7 +71,32 @@ fi
 # is a habit worth not starting.
 SOURCE_NS="pacsrun-system"
 SA="pacsjob-writer"
-RUNPOD_SECRET="pacsrun-runpod"
+
+# ★ EVERY VENDOR CREDENTIAL A DRIVER POD MAY NEED, and why this is a list rather
+# than one name. A driver pod names its vendor key with a LocalObjectReference
+# (PACSrun internal/controller/vendorpod.go:1440 for RunPod,
+# gcpdriverpod.go:823 for GCP), which resolves in the POD'S OWN namespace and
+# nowhere else. Kubernetes has no cluster-scoped Secret, so a namespace that may
+# rent from a vendor needs that vendor's key sitting in it.
+#
+# Missing one is invisible until a job runs: the pod stops at
+# CreateContainerConfigError and kubelet says `secret "pacsrun-gcp" not found`.
+# Measured 2026-09-10 across the live cluster -- every tenant namespace had
+# pacsrun-runpod and NONE had pacsrun-gcp or pacsrun-shadeform, so a GCP or
+# Shadeform job in a tenant namespace could not have started.
+#
+# AWS IS DELIBERATELY ABSENT. The AWS driver authenticates to its vendor with
+# the projected Kubernetes token the pod already mounts plus a role ARN, so
+# there is no Secret object anywhere on that path
+# (PACSrun internal/controller/awsdriverpod.go:472-480).
+#
+# ONE KEY PER VENDOR, SHARED BY EVERY TENANT. Verified 2026-09-10: the four
+# copies of pacsrun-runpod on this cluster are byte-identical (same sha256).
+# S3 is split per tenant by IAM prefix; the VENDOR ACCOUNT is not split, so a
+# namespace holding this key can see and delete every pod on that account,
+# including another researcher's. That is a property of the account, not of
+# this script, and it is why the copy is printed before it is made.
+VENDOR_SECRETS="pacsrun-runpod pacsrun-shadeform pacsrun-gcp"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CLUSTER="${DDPSRUN_CLUSTER_NAME:-pacsrun}"
 
@@ -83,7 +108,18 @@ say "== $NS =="
 NS_OK=no;  kubectl get namespace "$NS"            >/dev/null 2>&1 && NS_OK=yes
 SA_OK=no;  kubectl get sa "$SA" -n "$NS"          >/dev/null 2>&1 && SA_OK=yes
 ROLE_OK=no; kubectl get role ddpsrun-gw-secrets -n "$NS" >/dev/null 2>&1 && ROLE_OK=yes
-SEC_OK=no; kubectl get secret "$RUNPOD_SECRET" -n "$NS" >/dev/null 2>&1 && SEC_OK=yes
+# MISSING_SECRETS is what this namespace lacks AND the operator namespace has, so
+# it can be copied. NO_SOURCE is what neither has -- reported, never invented.
+MISSING_SECRETS=""
+NO_SOURCE=""
+for vs in $VENDOR_SECRETS; do
+  kubectl get secret "$vs" -n "$NS" >/dev/null 2>&1 && continue
+  if kubectl get secret "$vs" -n "$SOURCE_NS" >/dev/null 2>&1; then
+    MISSING_SECRETS="$MISSING_SECRETS $vs"
+  else
+    NO_SOURCE="$NO_SOURCE $vs"
+  fi
+done
 
 # The association is the half that decides whether this namespace can write S3
 # at all, and WHICH prefix. Reported by role name, because "an association
@@ -105,7 +141,15 @@ fi
 printf '  %-34s %s\n' "namespace"                    "$NS_OK"
 printf '  %-34s %s\n' "serviceaccount/$SA"           "$SA_OK"
 printf '  %-34s %s\n' "role/ddpsrun-gw-secrets"      "$ROLE_OK"
-printf '  %-34s %s\n' "secret/$RUNPOD_SECRET"        "$SEC_OK"
+for vs in $VENDOR_SECRETS; do
+  if kubectl get secret "$vs" -n "$NS" >/dev/null 2>&1; then
+    printf '  %-34s %s\n' "secret/$vs" "yes"
+  elif kubectl get secret "$vs" -n "$SOURCE_NS" >/dev/null 2>&1; then
+    printf '  %-34s %s\n' "secret/$vs" "no (copyable from $SOURCE_NS)"
+  else
+    printf '  %-34s %s\n' "secret/$vs" "no (and none in $SOURCE_NS either)"
+  fi
+done
 printf '  %-34s %s\n' "pod identity association"     "${ASSOC_ROLE:-none}"
 if [ "$ASSOC_ROLE" = "pacsrun-workload" ]; then
   say "  ★ that is the SHARED role: it allows Put/Get/DeleteObject on pacsrun/*,"
@@ -142,24 +186,37 @@ if [ "$ROLE_OK" = no ]; then
   fi
 fi
 
-if [ "$SEC_OK" = no ]; then
-  # ★ THE COPY, AND WHY IT IS A COPY AND NOT A REFERENCE. The driver pod names
-  # this Secret with a LocalObjectReference (internal/controller/vendorpod.go),
-  # which resolves in the pod's OWN namespace and nowhere else. There is no
-  # cluster-scoped Secret in Kubernetes, so every namespace that may rent from
-  # RunPod needs its own copy. `--export` was removed from kubectl in 1.18, so
-  # the metadata is stripped here instead: keeping resourceVersion or the old
-  # namespace makes apply refuse.
+for vs in $MISSING_SECRETS; do
+  # ★ THE COPY, AND WHY IT IS A COPY AND NOT A REFERENCE. See VENDOR_SECRETS
+  # above for the LocalObjectReference argument. `--export` was removed from
+  # kubectl in 1.18, so the metadata is stripped here instead: keeping
+  # resourceVersion or the old namespace makes apply refuse.
+  #
+  # ONLY name SURVIVES the strip. Dropping labels and annotations along with it
+  # is deliberate -- an annotation like kubectl.kubernetes.io/last-applied
+  # carries the SOURCE namespace's own apply record, and a
+  # `kubernetes.io/service-account.name` would bind the copy to a
+  # ServiceAccount that does not exist here. `type` and `data` are NOT touched:
+  # a Secret's type is part of what it is, and rewriting it to Opaque would
+  # silently change the object for any vendor whose key is not Opaque.
   if [ -n "$APPLY" ]; then
-    say "+ copy secret/$RUNPOD_SECRET from $SOURCE_NS -> $NS"
-    kubectl -n "$SOURCE_NS" get secret "$RUNPOD_SECRET" -o json \
-      | python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["metadata"]; d["metadata"]={"name":m["name"]}; print(json.dumps(d))' \
+    say "+ copy secret/$vs from $SOURCE_NS -> $NS"
+    kubectl -n "$SOURCE_NS" get secret "$vs" -o json \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); d["metadata"]={"name":d["metadata"]["name"]}; print(json.dumps(d))' \
       | kubectl -n "$NS" apply -f - || { say "  FAILED"; exit 1; }
   else
-    say "  would run: kubectl -n $SOURCE_NS get secret $RUNPOD_SECRET -o json | <strip metadata> | kubectl -n $NS apply -f -"
-    say "             (this copies a vendor API KEY: it lets this namespace spend money)"
+    say "  would run: kubectl -n $SOURCE_NS get secret $vs -o json | <strip metadata> | kubectl -n $NS apply -f -"
+    say "             (this copies a vendor API KEY: it lets this namespace spend money on that account)"
   fi
-fi
+done
+
+for vs in $NO_SOURCE; do
+  # Reported and not created. A key this cluster does not have is one somebody
+  # has to obtain from the vendor, and inventing an empty Secret here would turn
+  # a legible `not found` into a vendor 401 several seconds and one API call later.
+  say "  ! secret/$vs is missing here AND in $SOURCE_NS -- nothing to copy."
+  say "    a job asking for that vendor in $NS will stop at CreateContainerConfigError."
+done
 
 # ----------------------------------------------------- step 6: what stays manual
 say ""
