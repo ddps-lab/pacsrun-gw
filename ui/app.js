@@ -1466,6 +1466,71 @@ async function drawImages(force) {
   });
 }
 
+/* DDPSRUN-SCRIPT-REUSE. The scripts this namespace has already submitted, offered beside the
+   Script box instead of on a screen the person has to leave the form to reach.
+
+   Same source as the Scripts screen -- GET /v1/scripts, which reads each script back off the
+   PacsJob it rides on, so nothing is stored for this and a deleted job takes its script with it.
+   Newest first, and the list is fetched once per page load: a script appears here when a job is
+   submitted, which is not while this form is open.
+
+   ONLY THE SCRIPT IS FILLED. The name would collide with the job it came from
+   (PACSRUN-CLIENT-TOKEN burns a name), and the image, GPU and capacity type are the new job's
+   decisions -- the Scripts screen's own "Use this" button has said so since it existed. */
+let reuseRows = null;
+
+async function drawScriptReuse() {
+  const box = $("f-script-reuse");
+  if (reuseRows) return;
+  let answer;
+  try { answer = await call("/v1/scripts"); }
+  catch (err) { box.innerHTML = note("err", err.message); reuseRows = []; return; }
+
+  reuseRows = answer.scripts || [];
+  if (!reuseRows.length) {
+    box.innerHTML = note("info",
+      answer.note || "Nothing has been submitted from this namespace yet.",
+      "A script appears here once a job carrying it has been submitted.");
+    return;
+  }
+
+  // One row per script: what it is, when it last ran, how big it is. The body is NOT shown --
+  // these are 350 to 460 lines each on this deployment, and five of those would bury the form.
+  // Clicking loads it into the box, which is where it can be read and edited.
+  box.innerHTML = `<div class="scroll"><table><thead><tr>` +
+    ["Script", "Last run", "Lines", "Runs", ""].map((h) => `<th>${h}</th>`).join("") +
+    `</tr></thead><tbody>` +
+    reuseRows.map((r, i) =>
+      `<tr><td>${esc(r.name || "(unnamed)")}` +
+      (r.owner ? ` <span class="dim tiny">${esc(r.owner)}</span>` : "") + `</td>` +
+      `<td class="num">${r.created_at ? esc(when(r.created_at)) : "-"}</td>` +
+      `<td class="num">${r.lines}</td>` +
+      `<td class="num">${r.used}</td>` +
+      `<td><button class="go tiny reuse" type="button" data-i="${i}" ` +
+      `style="padding:3px 10px">Load</button></td></tr>`).join("") +
+    `</tbody></table></div>`;
+
+  box.querySelectorAll("button.reuse").forEach((b) => {
+    b.onclick = () => {
+      const row = reuseRows[Number(b.dataset.i)];
+      $("f-command").value = row.script;
+      $("f-command-note").innerHTML = note("info",
+        `Loaded ${row.name || "a previous script"} (${row.lines} lines). The name, the image, ` +
+        `the GPU and the capacity type are still yours to set.`);
+      box.hidden = true;
+      $("f-script-reuse-toggle").textContent = "Reuse a script you have submitted";
+    };
+  });
+}
+
+$("f-script-reuse-toggle").onclick = () => {
+  const box = $("f-script-reuse");
+  box.hidden = !box.hidden;
+  $("f-script-reuse-toggle").textContent = box.hidden
+    ? "Reuse a script you have submitted" : "Hide the list";
+  if (!box.hidden) drawScriptReuse();
+};
+
 $("f-image-toggle").onclick = () => {
   const box = $("f-image-picker");
   box.hidden = !box.hidden;

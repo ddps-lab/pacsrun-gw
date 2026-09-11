@@ -357,6 +357,20 @@
       <button type="button" class="flat small" id="f-script-save">Save as a file</button>
       <span class="dim tiny" id="f-script-file-note"></span>
     </div>
+    <!-- DDPSRUN-SCRIPT-REUSE. The scripts this namespace has already submitted, ON THIS SCREEN.
+         They were reachable before -- the Scripts screen has had a "Use this" button since it
+         existed -- but only by leaving the half-filled form, finding that screen, clicking, and
+         being sent back. Rerunning a script with one thing changed is the commonest submission
+         there is, so the list belongs where the box is (asked for 2026-09-11).
+         Same shape as the image picker above: a button that opens a list, a click that fills the
+         box. Only the SCRIPT is filled -- the name, the image, the GPU and the capacity type are
+         this job's own decisions, and a copied name would collide with the job it came from. -->
+    <div class="row" style="margin:-4px 0 10px">
+      <button class="flat tiny" id="f-script-reuse-toggle" type="button"
+              style="padding:4px 10px">Reuse a script you have submitted</button>
+      <span class="dim tiny" id="f-script-reuse-note"></span>
+    </div>
+    <div id="f-script-reuse" hidden></div>
     <div class="grid2">
       <label><span><b>GPU</b></span>
         <select id="f-gpu">

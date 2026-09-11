@@ -514,6 +514,29 @@ check(SRC.includes("`hyperun login --server ${store.server}`"),
       "app.js fills that line with this deployment's own address rather than a placeholder");
 
 // ---------------------------------------------------------------------------------------------
+// DDPSRUN-SCRIPT-REUSE. The submit screen offers the scripts already submitted. Source checks:
+// the function is small and its one rule is what it must NOT touch.
+// ---------------------------------------------------------------------------------------------
+const reuse = SRC.slice(SRC.indexOf("async function drawScriptReuse"),
+                        SRC.indexOf('$("f-image-toggle").onclick'));
+
+check(HTML.includes('id="f-script-reuse-toggle"') && HTML.includes('id="f-script-reuse"'),
+      "the submit screen has the reuse control beside the Script box, not only on the Scripts "
+      + "screen the person would have to leave the half-filled form to reach");
+
+check(reuse.includes('$("f-command").value = row.script'),
+      "clicking a script writes it straight into the Script box");
+
+check(!reuse.includes('$("f-name")'),
+      "and does NOT copy the name, which would collide with the job the script came from");
+
+check(!/\$\("f-(image|gpu|capacity|mode)"\)\.value\s*=/.test(reuse),
+      "nor the image, GPU, capacity type or mode -- those are the new job's own decisions");
+
+check(reuse.includes('call("/v1/scripts")'),
+      "the list is the same /v1/scripts the Scripts screen reads, so the two cannot disagree");
+
+// ---------------------------------------------------------------------------------------------
 console.log();
 if (failures.length) {
   console.log(`FAILED (${failures.length}):`);
