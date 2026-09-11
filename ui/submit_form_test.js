@@ -562,6 +562,51 @@ check(SRC.includes("value${filled === 1 ? \"\" : \"s\"} set and still sent"),
       "and a value typed then folded away is still announced, because the form still sends it");
 
 // ---------------------------------------------------------------------------------------------
+// DDPSRUN-UI-STALE-TAB. A behaviour check on the real function: a tab that never reloads runs
+// old code forever and looks normal doing it, which cost two exchanges on 2026-09-11.
+// ---------------------------------------------------------------------------------------------
+{
+  const bars = {};
+  const stubDoc = { getElementById: (id) => (bars[id] = bars[id] || { hidden: true, innerHTML: "" }) };
+  const ctx = {
+    $: stubDoc.getElementById,
+    esc: (v) => String(v ?? ""),
+    RUNNING_VERSION: "",
+  };
+  const checkStale = new Function("$", "esc", "RUNNING_VERSION",
+    `${extract("checkStale")}; return checkStale;`);
+
+  const run = (running, deployed) => {
+    bars.stale = { hidden: true, innerHTML: "" };
+    checkStale(ctx.$, ctx.esc, running)(deployed);
+    return bars.stale;
+  };
+
+  check(run("aaaaaaaaaaaa", "bbbbbbbbbbbb").hidden === false,
+        "a page running an older build than the deployed one says so in a bar that does not "
+        + "fade -- the whole failure is that a stale tab looks normal");
+
+  check(run("aaaaaaaaaaaa", "aaaaaaaaaaaa").hidden === true,
+        "and a page running the deployed build says nothing");
+
+  check(run("", "bbbbbbbbbbbb").hidden === true && run("aaaaaaaaaaaa", "").hidden === true,
+        "'I cannot tell' is not shown as 'you are out of date': a local file with no ?v=, or a "
+        + "deployment older than the version field, stays quiet");
+
+  check(run("aaaaaaaaaaaa", "bbbbbbbbbbbb").innerHTML.includes("aaaaaaa")
+        && run("aaaaaaaaaaaa", "bbbbbbbbbbbb").innerHTML.includes("bbbbbbb"),
+        "the bar names both builds, so the reader can tell a support answer from their own screen");
+}
+
+check(SRC.includes('setInterval(pollDeployedVersion'),
+      "and the check runs again while the tab stays open, not only at load -- a tab open "
+      + "overnight is exactly the case that breaks");
+
+check(/url\.searchParams\.set\("v"/.test(SRC),
+      "the Reload button changes the URL rather than calling location.reload(), which some "
+      + "browsers serve from cache");
+
+// ---------------------------------------------------------------------------------------------
 console.log();
 if (failures.length) {
   console.log(`FAILED (${failures.length}):`);

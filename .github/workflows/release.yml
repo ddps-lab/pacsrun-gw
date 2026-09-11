@@ -223,9 +223,25 @@ jobs:
           #
           # Nothing in this file is a secret. It is one address, and it is the
           # address every request from this page goes to anyway.
-          python - <<'PYEOF' > ui/config.json
+          #
+          # DDPSRUN-UI-STALE-TAB. `version` is the same commit stamped into the
+          # asset URLs below, and it is here so a page that is ALREADY OPEN can
+          # find out it is out of date. Versioned asset URLs fix the next LOAD;
+          # they do nothing for a tab nobody has reloaded, and this is a
+          # single-page app whose every navigation is a hash change. A tab left
+          # open overnight therefore keeps running the code it fetched
+          # yesterday, and on 2026-09-11 a reader was reading a Shell panel that
+          # had been replaced by a working shell twenty hours earlier and told
+          # twice that it was already shipped. config.json is the one file the
+          # page re-reads with `cache: "no-store"`, so it is the one place that
+          # answer can come from.
+          V="${GITHUB_SHA::12}"
+          python - <<PYEOF > ui/config.json
           import json, os
-          print(json.dumps({"api_base": os.environ["API_BASE"].rstrip("/")}, indent=2))
+          print(json.dumps({
+              "api_base": os.environ["API_BASE"].rstrip("/"),
+              "version": "$V",
+          }, indent=2))
           PYEOF
           cat ui/config.json
           # DDPSRUN-UI-VERSIONED-ASSETS. index.html is uploaded with
@@ -236,8 +252,8 @@ jobs:
           # reader pressing a Sign out button whose handler was in a newer file
           # they had never fetched. Stamping the commit into the query makes
           # each deploy a different URL, so the always-fresh index.html can
-          # never point at a stale script.
-          V="${GITHUB_SHA::12}"
+          # never point at a stale script. V is set above, where config.json
+          # records the same value for DDPSRUN-UI-STALE-TAB.
           sed -i "s|src=\"app.js\"|src=\"app.js?v=$V\"|" ui/index.html
           sed -i "s|href=\"style.css\"|href=\"style.css?v=$V\"|" ui/index.html
           grep -E 'app\.js|style\.css' ui/index.html

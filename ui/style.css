@@ -408,3 +408,32 @@ textarea { font-family: var(--mono); font-size: 13px; resize: vertical; min-heig
    Enter cannot interleave two lines into one shell. */
 .shell-input:disabled { opacity: 0.6; }
 #d-shell-out { max-height: 340px; overflow: auto; white-space: pre-wrap; }
+
+/* ----------------------------------------------------------------- stale tab */
+
+/* DDPSRUN-UI-STALE-TAB. Above the bar and across the width, because the thing it says is that
+   NOTHING else on the page can be trusted to be current. Not a toast: a toast that fades leaves
+   the reader with stale code and no record of being told. */
+#stale {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 20px;
+  background: var(--run);
+  color: #fff;
+  font-size: 13px;
+}
+#stale button {
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: transparent;
+  color: #fff;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+#stale button:hover { background: rgba(255, 255, 255, 0.15); }

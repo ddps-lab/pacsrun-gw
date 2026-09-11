@@ -33,6 +33,63 @@
 
 const $ = (id) => document.getElementById(id);
 
+/* DDPSRUN-UI-STALE-TAB. Which build of this file is running.
+
+   The release workflow rewrites index.html's `<script src="app.js">` to `app.js?v=<commit>`, so
+   the running code can read its own version out of its own src. `document.currentScript` is only
+   valid while the script is executing at top level, which is here.
+
+   WHY THIS EXISTS. Versioned asset URLs fix the NEXT load: a fresh index.html points at a new
+   URL and the browser has to fetch it. They do nothing for a tab that is never reloaded, and
+   every navigation in this app is a hash change, so a tab opened yesterday keeps running
+   yesterday's app.js indefinitely and looks completely normal doing it. On 2026-09-11 a reader
+   spent two exchanges on a Shell panel that had been replaced by a working shell twenty hours
+   earlier -- they were shown evidence that the deployed page was fine, which it was, and the
+   page in front of them still was not. */
+const RUNNING_VERSION = (() => {
+  const src = (document.currentScript && document.currentScript.src) || "";
+  const at = src.indexOf("?v=");
+  return at < 0 ? "" : src.slice(at + 3);
+})();
+
+/* Compare what is running with what is deployed, and say so in a bar that does not go away.
+
+   Args:
+     deployedVersion: the `version` field of config.json, written at deploy time.
+
+   Nothing happens when either side is unknown -- a local file, or a deployment made before this
+   field existed -- because "I cannot tell" must not be shown as "you are out of date". */
+function checkStale(deployedVersion) {
+  if (!RUNNING_VERSION || !deployedVersion) return;
+  if (RUNNING_VERSION === deployedVersion) return;
+  const bar = $("stale");
+  if (!bar.hidden) return;
+  bar.innerHTML =
+    `<span>This page is running an older build than the one deployed ` +
+    `(<span class="mono">${esc(RUNNING_VERSION.slice(0, 7))}</span> here, ` +
+    `<span class="mono">${esc(String(deployedVersion).slice(0, 7))}</span> deployed). ` +
+    `What you see may not be what the server does.</span>` +
+    `<button type="button" id="stale-reload">Reload</button>`;
+  bar.hidden = false;
+  // location.reload() can be served from cache in some browsers. Adding a changing query to the
+  // URL cannot: it is a different address, so index.html is fetched and points at the new script.
+  $("stale-reload").onclick = () => {
+    const url = new URL(location.href);
+    url.searchParams.set("v", Date.now().toString(36));
+    location.replace(url.toString());
+  };
+}
+
+/* Ask again while the tab stays open. Ten minutes: the file is a few hundred bytes and the check
+   only has to be faster than a person's patience, not faster than a deploy. */
+async function pollDeployedVersion() {
+  try {
+    const response = await fetch("config.json", { cache: "no-store" });
+    if (response.ok) checkStale((await response.json()).version);
+  } catch { /* offline, or no config.json. Not something to shout about. */ }
+}
+setInterval(pollDeployedVersion, 600000);
+
 /* ------------------------------------------------------------------ storage */
 
 const store = {
@@ -2459,6 +2516,11 @@ window.addEventListener("hashchange", route);
     if (response.ok) {
       const deployed = await response.json();
       if (deployed.api_base) apiBase = deployed.api_base.replace(/\/+$/, "");
+      // A startup check as well as the ten-minute one: a browser holding an
+      // index.html from before `cache-control: no-cache` existed will not
+      // revalidate it, so even a deliberate reload can come back on the old
+      // script. This catches that on the very first load (DDPSRUN-UI-STALE-TAB).
+      checkStale(deployed.version);
     }
   } catch { /* no config.json: a pod deployment, or a local file. */ }
   if (!apiBase) apiBase = location.origin;

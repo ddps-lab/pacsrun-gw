@@ -32,6 +32,14 @@
   on screen against what the cluster says.
 -->
 
+<!-- DDPSRUN-UI-STALE-TAB. Sits above everything, hidden until the page finds out it is running
+     code older than what is deployed. Versioned asset URLs make the next LOAD correct and do
+     nothing for a tab nobody reloads, and every navigation here is a hash change, so a tab left
+     open overnight runs yesterday's code with no sign of it. On 2026-09-11 that had a reader
+     looking at a Shell panel that had been replaced by a working shell twenty hours earlier,
+     and being told twice that the thing in front of them was already fixed. -->
+<div id="stale" hidden></div>
+
 <header hidden id="bar">
   <div class="brand">ddps<span>run</span></div>
   <nav>
