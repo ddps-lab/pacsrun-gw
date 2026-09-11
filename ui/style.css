@@ -386,3 +386,25 @@ textarea { font-family: var(--mono); font-size: 13px; resize: vertical; min-heig
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* The Shell panel's input row. PACSRUN-SHELL-SESSION.
+   The prompt, the line and the button sit on one row so the pane above reads as
+   the transcript and this reads as the place you type -- the same arrangement a
+   terminal has, without pretending to be one. */
+.shell-row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+.shell-prompt { color: var(--ink-dim); white-space: nowrap; }
+.shell-input {
+  flex: 1;
+  min-width: 0;                 /* without this a long line pushes the button off the panel */
+  padding: 8px 10px;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 14px;
+}
+.shell-input:focus { outline: none; border-color: var(--accent); }
+/* Disabled while a line is in flight: one round trip at a time, so a second
+   Enter cannot interleave two lines into one shell. */
+.shell-input:disabled { opacity: 0.6; }
+#d-shell-out { max-height: 340px; overflow: auto; white-space: pre-wrap; }

@@ -547,36 +547,175 @@ async function drawDetail(jobId, ns = "") {
 const fact = (k, v) =>
   `<div class="fact"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`;
 
-/* The Shell panel hands the user `hyperun shell` — install line included — and
-   never kubectl: a researcher with kubectl would not need this product
-   (docs/00-overview.md, the founding rule). The command talks to THIS server's
-   POST /v1/jobs/{id}/exec, which relays through the job's driver pod into the
-   workload container on the rented machine (verified live 2026-09-07, exit
-   codes relay like ssh). A terminal cannot run in this PAGE — the API is a
-   Lambda Function URL, which cannot accept the inbound WebSocket a browser
-   terminal needs — so the page teaches the CLI instead of pretending. */
+/* The Shell panel. PACSRUN-SHELL-SESSION.
+
+   WHAT IT IS AND WHAT IT IS NOT. One typed line is one POST to this server's
+   /v1/jobs/{id}/exec, which relays through the job's driver pod into the
+   workload container on the rented machine and brings the output back. `cd`, an
+   exported variable and an activated venv survive from one line to the next,
+   because the shell they run in stays alive in the DRIVER POD
+   (PACSrun driver/common/shellsession.py) rather than being started fresh each
+   time.
+
+   IT IS NOT A TTY, and that is a property of the transport rather than a corner
+   we cut. The API is a Lambda Function URL: an invocation is capped at 15
+   minutes and nothing in the gateway is alive between two of a person's
+   keystrokes, so there is no held-open stream for a pty to live on. No vim, no
+   top, no Ctrl-C mid-command. A true terminal needs a connection something
+   other than a Lambda invocation holds open — an API Gateway WebSocket — and
+   that is a separate piece of infrastructure, not a flag.
+
+   AN EARLIER VERSION OF THIS PANEL PRINTED THE CLI COMMAND INSTEAD, on the
+   reasoning that "a terminal cannot run in this PAGE — the API is a Lambda
+   Function URL, which cannot accept the inbound WebSocket a browser terminal
+   needs". The premise is right and the conclusion was too wide: a WebSocket is
+   what a TTY needs, not what a line-oriented shell needs, and the CLI's own
+   prompt has always been a request loop over this very route. The CLI lines are
+   still printed below the terminal for anyone who would rather be in a real
+   shell. */
+
+/* Everything the panel has to remember between two typed lines. It is here and
+   not in the DOM because drawShell runs again on every 30-second poll, and the
+   sequence number is the one value that must survive that. */
+const shellUI = { jobKey: null, seq: 0, busy: false, history: [], hpos: 0 };
+
+function shellAppend(text) {
+  const out = $("d-shell-out");
+  if (!out) return;
+  out.textContent += text;
+  // Follow the tail the way a terminal does. scrollHeight is read after the
+  // append on purpose: before it, the new line is not part of the height yet.
+  out.scrollTop = out.scrollHeight;
+}
+
+/* One line, one round trip. Returns nothing — everything it has to say it says
+   in the output pane, because that is where the person is looking. */
+async function shellRun(line) {
+  const key = shellUI.jobKey;
+  const input = $("d-shell-input");
+  if (!key || shellUI.busy) return;
+  shellUI.busy = true;
+  if (input) { input.disabled = true; }
+  shellAppend(`\n${key}$ ${line}\n`);
+
+  const send = (seq) => call(`/v1/jobs/${encodeURIComponent(key)}/exec`, {
+    method: "POST",
+    body: JSON.stringify({ command: line, session: true, seq }),
+  });
+
+  try {
+    let answer;
+    try {
+      answer = await send(shellUI.seq);
+    } catch (err) {
+      // 409 FROM THE DRIVER, AND THE ONLY ERROR WORTH ACTING ON. The session is
+      // reaped after ten minutes nobody reads from it, and the workload can
+      // restart under it. Reopening is right here and only here: the shell that
+      // held the person's `cd` is provably gone, so a new one loses nothing
+      // they still have. The sequence resets with it — the new shell's output
+      // starts from nothing.
+      if (!/no session/i.test(err.message)) throw err;
+      shellUI.seq = 0;
+      shellAppend("(the session had closed; reopening — cd and variables from before are gone)\n");
+      answer = await send(0);
+    }
+    if (typeof answer.seq === "number") shellUI.seq = answer.seq;
+    // The driver pod's buffer is a ring with a byte cap, so a workload that
+    // printed a flood between two of our reads really can lose some of it. Say
+    // so rather than letting the gap look like the command printing nothing.
+    if (answer.lost) {
+      shellAppend("(some output was dropped: the driver pod's buffer is a ring with a byte cap)\n");
+    }
+    shellAppend(answer.output || "");
+    if (answer.note) shellAppend(`(${answer.note})\n`);
+  } catch (err) {
+    // Shown, not thrown. The server writes these for a person to read — "exec
+    // is for the k3s vendors and PACSRUN_VENDOR is 'runpod'" is the whole
+    // explanation — so it goes in the pane verbatim.
+    shellAppend(`(${err.message})\n`);
+  } finally {
+    shellUI.busy = false;
+    if (input) { input.disabled = false; input.focus(); }
+  }
+}
+
 function drawShell(jobId, job) {
+  const key = job.job_id || jobId;
+
   if (TERMINAL.includes(job.phase)) {
+    shellUI.jobKey = null;
     $("d-shell").innerHTML =
       `<p class="dim">This job has finished — its containers are gone, so there is nothing to shell into.</p>`;
     return;
   }
-  const key = job.job_id || jobId;
+
+  // ★ A VENDOR THAT RENTS CONTAINERS HAS NOTHING TO ATTACH TO, and saying so
+  // here rather than after a round trip is the difference between an answer and
+  // a failed command. RunPod's own API has no exec of any kind: its v2 OpenAPI
+  // publishes 36 paths, six of them about pods — create, get, delete, patch,
+  // action, logs — and not one that runs a command (read 2026-09-11). The other
+  // three vendors rent a MACHINE and we install k3s on it, so there is an
+  // apiserver to exec through.
+  if ((job.vendor || "").toLowerCase() === "runpod") {
+    shellUI.jobKey = null;
+    $("d-shell").innerHTML =
+      `<p class="dim">This job runs on RunPod, which rents a container rather than a machine, ` +
+      `so there is no cluster to attach a shell to. RunPod's API has no exec either. ` +
+      `Use <span class="mono">Logs</span> below, or place the job on aws, gcp or shadeform.</p>`;
+    return;
+  }
+
+  // ALREADY MOUNTED FOR THIS JOB: leave it alone. drawShell runs again on every
+  // 30-second poll, and re-rendering would throw away what the person has typed
+  // and everything the pane has printed.
+  if (shellUI.jobKey === key && $("d-shell-input")) return;
+
+  shellUI.jobKey = key;
+  shellUI.seq = 0;
+  shellUI.busy = false;
+  shellUI.history = [];
+  shellUI.hpos = 0;
+
   $("d-shell").innerHTML =
-    `<p class="dim small">From any terminal — no kubectl, no cloud account. One command ` +
-    `per line (each is one HTTPS round trip, up to ~25s); AWS, GCP and Shadeform ` +
-    `machine rentals only, because a RunPod job is a rented container with no ` +
-    `machine behind it and so has no cluster to attach to:</p>` +
-    `<pre class="spec">pip install hyperun\n` +
-    `hyperun login --server ${esc(store.server)}\n` +
-    `hyperun shell ${esc(key)}                # a prompt: type commands, 'exit' leaves\n` +
-    `hyperun shell ${esc(key)} -- nvidia-smi  # run one command and exit</pre>` +
-    // ★ --slot GOES BEFORE THE JOB ID, and the old wording did not say so.
-    // argparse.REMAINDER consumes everything after the job id, so a flag
-    // written there became part of the workload's command line and the pod
-    // silently stayed 0 (fixed 2026-09-10; the CLI now refuses it instead).
-    `<p class="dim tiny">parallelism &gt; 1: put --slot N BEFORE the job id ` +
-    `(everything after it is sent to the workload). Not a TTY — no vim, no top.</p>`;
+    `<pre class="log" id="d-shell-out">one line per round trip, about a second each. ` +
+    `cd and exported variables survive between lines. Not a TTY — no vim, no top.\n</pre>` +
+    `<div class="shell-row">` +
+    `<span class="shell-prompt mono">${esc(key)}$</span>` +
+    `<input id="d-shell-input" class="shell-input mono" type="text" autocomplete="off" ` +
+    `autocapitalize="off" spellcheck="false" placeholder="nvidia-smi">` +
+    `<button id="d-shell-send" class="go">Run</button>` +
+    `</div>` +
+    `<p class="dim tiny">The same shell from any terminal, which is where you want to be for ` +
+    `anything long: <span class="mono">pip install hyperun</span> · ` +
+    `<span class="mono">hyperun login --server ${esc(store.server)}</span> · ` +
+    `<span class="mono">hyperun shell ${esc(key)}</span>. ` +
+    `parallelism &gt; 1: put --slot N BEFORE the job id.</p>`;
+
+  const input = $("d-shell-input");
+  const submit = () => {
+    const line = input.value.trim();
+    if (!line) return;
+    input.value = "";
+    shellUI.history.push(line);
+    shellUI.hpos = shellUI.history.length;
+    shellRun(line);
+  };
+  $("d-shell-send").addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); submit(); return; }
+    // Up and down walk what has been typed. Cheap, and its absence is the first
+    // thing anyone notices in a box that calls itself a shell.
+    if (e.key === "ArrowUp" && shellUI.hpos > 0) {
+      e.preventDefault();
+      shellUI.hpos -= 1;
+      input.value = shellUI.history[shellUI.hpos] || "";
+    } else if (e.key === "ArrowDown" && shellUI.hpos < shellUI.history.length) {
+      e.preventDefault();
+      shellUI.hpos += 1;
+      input.value = shellUI.history[shellUI.hpos] || "";
+    }
+  });
+  input.focus();
 }
 
 /* The Result files panel: GET /v1/jobs/{id}/artifacts, drawn as a table with
