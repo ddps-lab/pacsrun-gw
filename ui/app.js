@@ -649,21 +649,20 @@ function drawShell(jobId, job) {
     return;
   }
 
-  // ★ A VENDOR THAT RENTS CONTAINERS HAS NOTHING TO ATTACH TO, and saying so
-  // here rather than after a round trip is the difference between an answer and
-  // a failed command. RunPod's own API has no exec of any kind: its v2 OpenAPI
-  // publishes 36 paths, six of them about pods — create, get, delete, patch,
-  // action, logs — and not one that runs a command (read 2026-09-11). The other
-  // three vendors rent a MACHINE and we install k3s on it, so there is an
-  // apiserver to exec through.
-  if ((job.vendor || "").toLowerCase() === "runpod") {
-    shellUI.jobKey = null;
-    $("d-shell").innerHTML =
-      `<p class="dim">This job runs on RunPod, which rents a container rather than a machine, ` +
-      `so there is no cluster to attach a shell to. RunPod's API has no exec either. ` +
-      `Use <span class="mono">Logs</span> below, or place the job on aws, gcp or shadeform.</p>`;
-    return;
-  }
+  // ★ RUNPOD USED TO BE REFUSED HERE AND IS NOT ANY MORE (2026-09-11). The old
+  // reasoning was half right: RunPod rents a container, so there is no cluster
+  // to exec through, and its API has no exec either — 36 paths in the v2
+  // OpenAPI, six about pods, none that runs a command. What it missed is that
+  // PACSrun already runs an authenticated server of its own INSIDE that
+  // container for the artifact fetch, and that server now answers POST /shell
+  // (PACSRUN-RUNPOD-SHELL). The driver relays this panel's line to it, so every
+  // vendor reaches the same socket and this panel does not need to know which
+  // one it is talking to.
+  //
+  // WHAT CAN STILL SAY NO, and it says so in the pane rather than here: a job
+  // submitted with PACSRUN_SHELL=off, or one whose image has no python3 for the
+  // container's server to run in. Both are the container's own sentence, which
+  // is more use than a guess made before the request.
 
   // ALREADY MOUNTED FOR THIS JOB: leave it alone. drawShell runs again on every
   // 30-second poll, and re-rendering would throw away what the person has typed
