@@ -76,9 +76,19 @@ GPU_CARD_LINE = re.compile(
 # elapsed and remaining times are known:
 #   350/556 [4:02:35<2:22:44, 41.57s/it]
 #   35%|###   | 350/556 [4:02:35<2:22:44, 41.57s/it]
+#
+# ★ AND THE RATE COMES IN TWO UNITS, WHICH IS WHY SOME JOBS HAD NO PROGRESS BAR
+# AT ALL. tqdm prints seconds per iteration only while a step takes MORE than a
+# second; the moment it takes less, the same bar flips to iterations per second
+# and writes "9.52it/s". This pattern ended at `s/it`, so it matched nothing on
+# any run faster than one step a second, and the screen showed no Progress panel
+# whatever the job was doing. `market64-exp0` at 179.09s/it had a bar and a job
+# at 9.52it/s had none (reported 2026-09-11). Both units are read now and
+# `parse_progress` turns the second into the first, so everything downstream --
+# the projection, STEADY_STEPS, the screen -- keeps working in seconds per step.
 PROGRESS_LINE = re.compile(
     r"(?P<done>\d+)/(?P<total>\d+)\s*\[(?P<elapsed>[\d:]+)<(?P<remaining>[\d:]+),\s*"
-    r"(?P<pace>[\d.]+)s/it"
+    r"(?P<pace>[\d.]+)(?P<unit>s/it|it/s)"
 )
 
 # Below this many steps the job's own pace is not yet worth quoting.
@@ -321,6 +331,14 @@ def parse_progress(line: str) -> Progress | None:
     step = int(match.group("done"))
     total = int(match.group("total"))
     pace = float(match.group("pace"))
+    # "9.52it/s" is 0.105 seconds per step. Everything below this line, and
+    # every reader of Progress, works in seconds per step; converting here is
+    # what keeps the unit out of the rest of the file. A rate of 0 cannot be
+    # inverted and is not a real reading either, so the line is discarded.
+    if match.group("unit") == "it/s":
+        if pace <= 0:
+            return None
+        pace = 1 / pace
     return Progress(
         step=step,
         total_steps=total,

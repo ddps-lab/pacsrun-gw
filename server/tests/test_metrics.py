@@ -94,6 +94,39 @@ def test_the_last_progress_line_wins():
     assert reading.progress.step == 350
 
 
+def test_a_run_faster_than_one_step_a_second_still_has_a_progress_bar():
+    # ★ WHY SOME JOBS SHOWED NO PROGRESS PANEL AT ALL. tqdm writes seconds per
+    # iteration only while a step takes more than a second; below that the same
+    # bar flips to iterations per second. The pattern ended at `s/it`, so every
+    # fast run matched nothing and the screen drew no Progress panel -- which
+    # reads as "this job has no progress" rather than "we cannot parse it"
+    # (reported 2026-09-11, against market64-exp0 at 179.09s/it which did have
+    # one).
+    fast = m.parse_progress("100%|##########| 128/128 [00:13<00:00,  9.52it/s]")
+
+    assert fast is not None
+    assert (fast.step, fast.total_steps) == (128, 128)
+    # 9.52 steps a second is 0.105 seconds a step, and everything downstream
+    # works in seconds a step.
+    assert round(fast.seconds_per_step, 4) == 0.1050
+    assert round(fast.projected_total_hours, 5) == round(128 * 0.1050 / 3600, 5)
+
+
+def test_the_slow_unit_is_unchanged():
+    # market64-exp0's real line, read from its log on 2026-09-11.
+    slow = m.parse_progress("  8%|3   | 10/128 [30:41<5:52:12, 179.09s/it]")
+
+    assert (slow.step, slow.total_steps) == (10, 128)
+    assert slow.seconds_per_step == 179.09
+    assert round(slow.projected_total_hours, 2) == 6.37
+
+
+def test_a_bar_that_has_not_measured_a_rate_yet_is_not_progress():
+    # tqdm's first frame carries 0.00it/s, which has no reciprocal and says
+    # nothing about pace. Inverting it would divide by zero.
+    assert m.parse_progress(" 0%| | 0/128 [00:00<?,  0.00it/s]") is None
+
+
 def test_a_long_series_is_thinned_but_still_ends_where_the_job_is():
     # A 25-hour job prints about 3,000 readings and no chart can show them all.
     lines = [f"PACSRUN_GPU={i % 100},{i},45440,70,300.0" for i in range(3000)]
