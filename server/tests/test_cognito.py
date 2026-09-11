@@ -52,26 +52,31 @@ def verifier(keypair, monkeypatch):
 
         return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
-    document = json.dumps({
+    document = {
         "keys": [{
             "kty": "RSA", "kid": KID, "use": "sig", "alg": "RS256",
             "n": to_b64(numbers.n), "e": to_b64(numbers.e),
         }]
-    }).encode()
+    }
 
-    class FakeResponse:
-        def read(self):
-            return document
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    monkeypatch.setattr(
-        "jwt.jwks_client.urllib.request.urlopen", lambda *a, **k: FakeResponse()
-    )
+    # ★ PyJWKClient.fetch_data IS THE SEAM, and reaching past it into urllib
+    # broke this file on 2026-09-11. The stub used to replace
+    # `jwt.jwks_client.urllib.request.urlopen`, which is a private call inside
+    # someone else's function. PyJWT 2.14.0 (released 13:11 UTC that day, and
+    # our floor is `pyjwt[crypto]>=2.8` with no ceiling) rewrote `fetch_data` to
+    # build its own opener with a no-redirect handler and call `opener.open`
+    # instead -- a sensible hardening for a JWKS fetch, and one that left the
+    # patch attached to nothing. Eighteen tests then made a REAL request to a
+    # pool that does not exist and every one of them failed with
+    # `Fail to fetch data from the url ... HTTP Error 404`, which blocked the
+    # deploy of an unrelated change.
+    #
+    # `fetch_data` is the method whose whole job is "where does the document
+    # come from", it is public, and it has the same name and signature in 2.13
+    # and 2.14. Everything the tests are actually about stays production code:
+    # PyJWKSet parses this dict, the `kid` lookup picks the key out of it, and
+    # `jwt.decode` verifies the signature and the claims.
+    monkeypatch.setattr(jwt.PyJWKClient, "fetch_data", lambda self: document)
     return cognito.Verifier(pool_id=POOL, region=REGION, client_id=CLIENT)
 
 
