@@ -324,6 +324,20 @@
         <div class="row" style="margin-top:2px">
           <button class="flat tiny" id="f-image-toggle" type="button" style="padding:4px 10px">Browse this lab's images</button>
         </div>
+        <!-- DDPSRUN-IMAGES-TRIM. The list drew EVERY tag of EVERY repository: 55 buttons across
+             19 repositories on this account, and most of them 12-character or 40-character
+             commit shas that tell a reader nothing. Twelve of the nineteen repositories belong
+             to other projects entirely (criu-kubevirt-test, theseus), so the thing being looked
+             for was never near the top. Two changes, both about reading rather than about what
+             is reachable: a filter over the repository name, and only the three newest tags per
+             repository with the rest one click away. The registry already returns tags newest
+             first (registry.py: "the newest tags, newest first"), so the three are the three
+             newest and not an arbitrary slice. -->
+        <div id="f-image-search-row" class="row" style="margin-top:6px" hidden>
+          <input id="f-image-search" type="search" autocomplete="off" placeholder="filter by repository"
+                 style="max-width:260px">
+          <span class="dim tiny" id="f-image-search-note"></span>
+        </div>
         <div id="f-image-picker" hidden></div></label>
     </div>
     <!-- DDPSRUN-UI-COMMAND. One shell line, sent as args ["bash","-lc","<line>"], which is
@@ -466,7 +480,18 @@
          the user had filled three boxes to be told nothing. Measured on this screen 2026-09-08.
          grad_accum is not asked for: it defaults to 8, which is what our scripts use, and the
          CLI has --grad-accum for anyone who differs. -->
-    <label><span><b>Training size</b> <span class="dim">what the cost estimate needs. Safe to leave empty, but then it answers "unknown".</span></span>
+    <!-- DDPSRUN-TRAINING-SIZE. Folded away by default (2026-09-11). Five numeric boxes sat open
+         in the middle of the form and every one of them is optional, so the commonest
+         submission -- rerun this script, change one thing -- had to scroll past five questions
+         it was never going to answer. They are the ONLY input the runtime estimate has, so they
+         are not removed: without them step 3 answers "unknown" hours, while the hourly rate
+         still comes back, which is why the button says what opening it buys. -->
+    <div class="row" style="margin:2px 0 10px">
+      <button class="flat tiny" id="f-size-toggle" type="button" style="padding:4px 10px">
+        Add training size, so the cost step can answer how long it will take</button>
+      <span class="dim tiny" id="f-size-note"></span>
+    </div>
+    <label id="f-size-box" hidden><span><b>Training size</b> <span class="dim">what the cost estimate needs. Safe to leave empty, but then it answers "unknown".</span></span>
       <div class="grid2">
         <input id="f-pairs" type="number" min="1" placeholder="rows in the dataset">
         <input id="f-epochs" type="number" min="1" placeholder="epochs">

@@ -537,6 +537,31 @@ check(reuse.includes('call("/v1/scripts")'),
       "the list is the same /v1/scripts the Scripts screen reads, so the two cannot disagree");
 
 // ---------------------------------------------------------------------------------------------
+// DDPSRUN-IMAGES-TRIM and DDPSRUN-TRAINING-SIZE. Both are about what the form shows first, so
+// both are source checks over the shipped files.
+// ---------------------------------------------------------------------------------------------
+const picker = SRC.slice(SRC.indexOf("function renderImagePicker"),
+                         SRC.indexOf('$("f-image-search").oninput'));
+
+check(picker.includes("addrs.slice(0, TAGS_SHOWN)") && picker.includes("more-tags"),
+      "the image picker draws the newest few tags per repository with the rest behind a button, "
+      + "instead of 55 sha-named buttons at once");
+
+check(picker.includes("String(r.repository).toLowerCase().includes(needle)"),
+      "and the search box filters by repository name, which is what 12 unrelated projects in "
+      + "the list made necessary");
+
+check(picker.includes("The box above still takes any address"),
+      "a filter that matches nothing says the box is still free text, so a public image stays "
+      + "reachable");
+
+check(HTML.includes('id="f-size-box" hidden'),
+      "the five optional Training size boxes start folded");
+
+check(SRC.includes("value${filled === 1 ? \"\" : \"s\"} set and still sent"),
+      "and a value typed then folded away is still announced, because the form still sends it");
+
+// ---------------------------------------------------------------------------------------------
 console.log();
 if (failures.length) {
   console.log(`FAILED (${failures.length}):`);

@@ -1442,25 +1442,76 @@ async function drawImages(force) {
       : "";
 
   /* The visible half. One block per repository, newest push first, its tags as buttons -- so
-     the list can be READ without knowing a datalist is there, and a screenshot shows it. */
-  $("f-image-picker").innerHTML = rows.length
-    ? rows.map((r) => {
+     the list can be READ without knowing a datalist is there, and a screenshot shows it.
+
+     DDPSRUN-IMAGES-TRIM. Only the three newest tags per repository are drawn, and the rest sit
+     behind a "+N more" button. Every tag of every repository came to 55 buttons on this account
+     -- 19 repositories, and 12 of them other projects -- most of them 12-character or
+     40-character commit shas. The registry returns tags newest first (registry.py), so the
+     three are the three newest rather than an arbitrary slice, and the search box above filters
+     by repository name so the wall can be cut down to what is being looked for. */
+  imageRows = rows;
+  $("f-image-search-row").hidden = rows.length < 2;
+  renderImagePicker("");
+}
+
+// The repositories last fetched, kept so the filter can redraw without asking the registry
+// again -- that call takes about 4 s (one round trip per repository).
+let imageRows = [];
+const TAGS_SHOWN = 3;
+
+function renderImagePicker(filter) {
+  const needle = filter.trim().toLowerCase();
+  const shown = needle
+    ? imageRows.filter((r) => String(r.repository).toLowerCase().includes(needle))
+    : imageRows;
+
+  $("f-image-search-note").textContent = !imageRows.length ? ""
+    : needle ? `${shown.length} of ${imageRows.length} repositories`
+             : `${imageRows.length} repositories`;
+
+  $("f-image-picker").innerHTML = shown.length
+    ? shown.map((r, ri) => {
         const addrs = r.addresses || [];
         const when = r.pushed_at ? String(r.pushed_at).slice(0, 10) : "";
-        const tags = addrs.length
-          ? addrs.map((a, i) => `<button class="flat tiny pick" type="button" data-image="${esc(a)}"`
-              + ` style="padding:3px 8px">${esc(r.tags[i] || a)}</button>`).join(" ")
-          : `<span class="dim tiny">no tagged image</span>`;
+        const button = (a, i) =>
+          `<button class="flat tiny pick" type="button" data-image="${esc(a)}"`
+          + ` style="padding:3px 8px">${esc(r.tags[i] || a)}</button>`;
+        if (!addrs.length) {
+          return `<div style="margin:6px 0">`
+            + `<div class="dim tiny mono">${esc(r.repository)}${when ? "  " + esc(when) : ""}</div>`
+            + `<div class="row"><span class="dim tiny">no tagged image</span></div></div>`;
+        }
+        const head = addrs.slice(0, TAGS_SHOWN).map(button).join(" ");
+        const rest = addrs.slice(TAGS_SHOWN)
+          .map((a, i) => button(a, i + TAGS_SHOWN)).join(" ");
+        const more = rest
+          ? ` <button class="flat tiny more-tags" type="button" data-r="${ri}"`
+            + ` style="padding:3px 8px">+${addrs.length - TAGS_SHOWN} more</button>`
+            + `<span class="row rest-tags" data-r="${ri}" hidden>${rest}</span>`
+          : "";
         return `<div style="margin:6px 0">`
           + `<div class="dim tiny mono">${esc(r.repository)}${when ? "  " + esc(when) : ""}</div>`
-          + `<div class="row">${tags}</div></div>`;
+          + `<div class="row">${head}${more}</div></div>`;
       }).join("")
-    : note("info", answer.note || "This account holds no container repositories.");
+    : note("info", imageRows.length
+        ? `No repository here matches "${esc(filter)}". The box above still takes any address, `
+          + `including a public one this registry does not hold.`
+        : "This account holds no container repositories.");
+
+  $("f-image-picker").querySelectorAll("button.more-tags").forEach((b) => {
+    b.onclick = () => {
+      const rest = $("f-image-picker").querySelector(`.rest-tags[data-r="${b.dataset.r}"]`);
+      if (rest) rest.hidden = false;
+      b.remove();
+    };
+  });
 
   $("f-image-picker").querySelectorAll("button.pick").forEach((b) => {
     b.onclick = () => {
       $("f-image").value = b.dataset.image;
       $("f-image-picker").hidden = true;
+      $("f-image-search-row").hidden = true;
       $("f-image-toggle").textContent = "Browse this lab's images";
     };
   });
@@ -1531,9 +1582,30 @@ $("f-script-reuse-toggle").onclick = () => {
   if (!box.hidden) drawScriptReuse();
 };
 
+$("f-image-search").oninput = () => renderImagePicker($("f-image-search").value);
+
+// DDPSRUN-TRAINING-SIZE. Five optional numeric boxes, folded away. They are the only input the
+// runtime estimate has, so the button says what opening them buys rather than hiding that.
+const SIZE_FIELDS = ["f-pairs", "f-epochs", "f-rowtokens", "f-cap", "f-batch"];
+
+$("f-size-toggle").onclick = () => {
+  const box = $("f-size-box");
+  box.hidden = !box.hidden;
+  $("f-size-toggle").textContent = box.hidden
+    ? "Add training size, so the cost step can answer how long it will take"
+    : "Hide training size";
+  // A folded box still SENDS what is in it, so a number typed and then hidden has to stay
+  // visible as a fact. Without this the form would carry a value nothing on screen mentions.
+  const filled = SIZE_FIELDS.filter((id) => $(id).value).length;
+  $("f-size-note").textContent = box.hidden && filled
+    ? `${filled} value${filled === 1 ? "" : "s"} set and still sent`
+    : "";
+};
+
 $("f-image-toggle").onclick = () => {
   const box = $("f-image-picker");
   box.hidden = !box.hidden;
+  $("f-image-search-row").hidden = box.hidden || imageRows.length < 2;
   $("f-image-toggle").textContent = box.hidden
     ? "Browse this lab's images" : "Hide the list";
   /* Uses what the view-entry fetch already got, and only asks again when that produced nothing.
