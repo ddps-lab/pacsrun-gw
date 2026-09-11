@@ -145,15 +145,27 @@
     <div id="home-running"></div>
   </div>
 
+  <!-- DDPSRUN-GETTING-STARTED. EVERY LINE HERE IS A COMMAND SOMEBODY WILL COPY, so a line that
+       is only most of a command is worse than no line: it runs, it does not fail loudly, and it
+       leaves the reader believing they have done the step. Two of the three were that (reported
+       2026-09-11).
+
+       `hyperun login` alone exits 2 -- `--server` is argparse-required (cli.py, the login
+       parser) and the page already knows the address, so app.js fills it the way the Shell
+       panel's footnote already did.
+
+       `/plugin marketplace add ...` registers the marketplace and installs nothing. `/plugin
+       install hyperun` is the step that puts the skill in Claude Code, and README.md:100-101
+       has always printed both. -->
   <div class="panel">
     <header><h2>Getting started</h2></header>
     <div class="facts">
       <div class="fact"><span class="k">Install the CLI</span>
         <span class="v">pip install hyperun</span></div>
       <div class="fact"><span class="k">Sign in from a terminal</span>
-        <span class="v">hyperun login</span></div>
+        <span class="v" id="home-login">hyperun login --server &lt;this server&gt;</span></div>
       <div class="fact"><span class="k">Use it from Claude Code</span>
-        <span class="v">/plugin marketplace add ddps-lab/pacsrun-gw</span></div>
+        <span class="v">/plugin marketplace add ddps-lab/pacsrun-gw<br>/plugin install hyperun</span></div>
     </div>
   </div>
 </section>

@@ -494,6 +494,26 @@ check(older.includes(">12<"),
       "and a server too old to send sample_count still fills the column from the series");
 
 // ---------------------------------------------------------------------------------------------
+// The Getting started card. A source check on index.html, because every line there is a command
+// somebody copies and a line that is only most of a command fails quietly: `hyperun login` on
+// its own exits 2 (`--server` is argparse-required), and `/plugin marketplace add` registers a
+// marketplace without installing anything. Both shipped that way until 2026-09-11.
+// ---------------------------------------------------------------------------------------------
+const HTML = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+const started = HTML.slice(HTML.indexOf("Getting started"), HTML.indexOf("2. Jobs"));
+
+check(started.includes("/plugin install hyperun"),
+      "Getting started tells the reader to INSTALL the plugin, not only to add the marketplace "
+      + "(README.md prints both commands and this card printed one)");
+
+check(!/>\s*hyperun login\s*</.test(started),
+      "and the sign-in line is not a bare `hyperun login`, which exits 2 because --server is "
+      + "required");
+
+check(SRC.includes("`hyperun login --server ${store.server}`"),
+      "app.js fills that line with this deployment's own address rather than a placeholder");
+
+// ---------------------------------------------------------------------------------------------
 console.log();
 if (failures.length) {
   console.log(`FAILED (${failures.length}):`);

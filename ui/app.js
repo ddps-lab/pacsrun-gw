@@ -236,6 +236,14 @@ function go(view, arg) { location.hash = "#/" + view + (arg ? "/" + arg : ""); }
 /* ------------------------------------------------------------------ 1. Home */
 
 function drawHome() {
+  // The address is this page's own, so the sign-in line can be a command that
+  // runs rather than one with a placeholder in it. `--server` is required by
+  // the CLI's argparse, so `hyperun login` on its own exits 2 without signing
+  // anybody in (DDPSRUN-GETTING-STARTED in index.html).
+  if (store.server) {
+    $("home-login").textContent = `hyperun login --server ${store.server}`;
+  }
+
   poll.every(30, async () => {
     let jobs = [], stats = null;
     try {
