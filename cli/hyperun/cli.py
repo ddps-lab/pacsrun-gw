@@ -365,9 +365,10 @@ def build_parser() -> argparse.ArgumentParser:
         "through the job's driver pod into the workload container on the "
         "rented machine and brings the exit code back like ssh. It is NOT a "
         "TTY — no vim, no top, about 25 seconds per command — because the "
-        "server is a Lambda and cannot hold a terminal open. AWS and GCP "
-        "machine rentals only: a RunPod job is a rented container with no "
-        "machine behind it, and the relay refuses it. ★ PUT OPTIONS BEFORE THE "
+        "server is a Lambda and cannot hold a terminal open. AWS, GCP and "
+        "Shadeform machine rentals only: a RunPod job is a rented container "
+        "with no machine behind it, so there is no cluster to attach to and "
+        "the relay refuses it. ★ PUT OPTIONS BEFORE THE "
         "JOB ID -- everything after it is sent to the workload as-is, so "
         "`shell job-x --slot 2` asks pod 0 and passes `--slot 2` to the shell. "
         "That is refused rather than obeyed.",

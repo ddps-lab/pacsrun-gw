@@ -564,8 +564,9 @@ function drawShell(jobId, job) {
   const key = job.job_id || jobId;
   $("d-shell").innerHTML =
     `<p class="dim small">From any terminal — no kubectl, no cloud account. One command ` +
-    `per line (each is one HTTPS round trip, up to ~25s); AWS and GCP machine rentals ` +
-    `only, because a RunPod job is a rented container with no machine behind it:</p>` +
+    `per line (each is one HTTPS round trip, up to ~25s); AWS, GCP and Shadeform ` +
+    `machine rentals only, because a RunPod job is a rented container with no ` +
+    `machine behind it and so has no cluster to attach to:</p>` +
     `<pre class="spec">pip install hyperun\n` +
     `hyperun login --server ${esc(store.server)}\n` +
     `hyperun shell ${esc(key)}                # a prompt: type commands, 'exit' leaves\n` +
