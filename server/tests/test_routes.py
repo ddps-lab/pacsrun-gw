@@ -1024,9 +1024,11 @@ def test_an_ownerless_job_is_its_own_row_and_not_the_operators_spend(client, clu
     actually submitted. "Only an operator can have applied them" is true about
     who ran kubectl and says nothing about whose spend it is.
 
-    So the bucket keeps its own row, and it is no longer called `admin`: a role
-    in the Member column reads as an account, which is what made the reporter
-    ask why the only member was "admin" and where their own spend had gone.
+    2026-09-11: the bucket has no row at all. Renaming it was never the fix --
+    `default` (a namespace), `admin` (a role) and `kubectl` (a tool) were each
+    read as a colleague in turn, because every other column in that table is a
+    fact about a person. The jobs stay in the team's totals and the count is
+    stated as a sentence, which `unowned_jobs` carries.
     """
     cluster.objects[("default", "hand-made")] = {
         "metadata": {"name": "hand-made"},
@@ -1040,8 +1042,9 @@ def test_an_ownerless_job_is_its_own_row_and_not_the_operators_spend(client, clu
     }
     result = as_root(client, "GET", "/v1/stats").json()
     assert result["caller"] == "root"
-    assert [m["user"] for m in result["members"]] == ["kubectl"], (
+    assert result["members"] == [], (
         "사람 이름이 아닌 것이 Member 칸에 사람처럼 앉아 있으면 안 된다")
+    assert result["unowned_jobs"] == 1, "행은 없어도 건수는 말한다"
     assert abs(result["cost_usd"] - 2 * 0.99) < 0.01, "team 합계에는 들어간다"
     assert result["caller_cost_usd"] == 0.0, (
         "operator 가 kubectl 로 만든 것을 그 사람의 spend 로 세지 않는다")

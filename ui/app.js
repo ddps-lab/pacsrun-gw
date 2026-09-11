@@ -1530,7 +1530,22 @@ async function drawTeam() {
         `<td class="num">$${m.cost_usd.toFixed(2)}</td>` +
         `</tr>`).join("") +
       `</tbody></table></div>`
-    : empty("This team has no jobs yet.", "New job", "submit");
+    : empty(s.jobs ? "No job here was submitted by a person."
+                   : "This team has no jobs yet.", "New job", "submit");
+
+  // A job applied with kubectl carries no ddpsrun.io/owner label, so there is
+  // nobody to put in the Member column -- and the three names that column has
+  // tried (`default`, `admin`, `kubectl`) were each read as a colleague. Its
+  // spend is in the totals above, so saying nothing here would leave the table
+  // quietly short of the team figure.
+  if (s.unowned_jobs) {
+    $("team-body").innerHTML +=
+      note("info",
+           `${s.unowned_jobs} ${s.unowned_jobs === 1 ? "job is" : "jobs are"} ` +
+           `in the totals above but in no row below.`,
+           "They were applied straight to the cluster with kubectl, so they "
+           + "carry no owner and belong to no member.");
+  }
 
   // Dropping unpriced jobs without saying so would make the total a lie.
   if (s.unpriced_jobs) {

@@ -467,6 +467,7 @@ What /v1/stats returns.
 | `members` |  |  |
 | `note` |  | Why the figures are incomplete, in words. Empty when they are not. |
 | `team` | yes |  |
+| `unowned_jobs` |  | How many of `jobs` were applied straight to the cluster with kubectl and so carry no ddpsrun.io/owner label. They are in every total here and in no row of `members`: that table's columns are facts about a person, and three non-people in a row (`default` the namespace, `admin` the role, `kubectl` the tool) were each read as a colleague. The screen states this as a sentence instead. |
 | `unpriced_jobs` |  |  |
 | `vendors` |  | The same jobs added up by who sold the machines — computed in the same pass as members, so the two tables cannot disagree. |
 

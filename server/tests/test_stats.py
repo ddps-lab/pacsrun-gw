@@ -147,10 +147,10 @@ def test_outcomes_are_counted_separately():
     totals = stats.summarise(
         "ddps", ["ddps-alice"],
         {"ddps-alice": [
-            job(phase="Succeeded", started=started, hours=1),
-            job(phase="Failed", started=started, hours=1),
-            job(phase="Failed", started=None),
-            job(phase="Running", started=started),
+            job(phase="Succeeded", started=started, hours=1, owner="alice"),
+            job(phase="Failed", started=started, hours=1, owner="alice"),
+            job(phase="Failed", started=None, owner="alice"),
+            job(phase="Running", started=started, owner="alice"),
         ]},
         now=NOW,
     )
@@ -288,13 +288,13 @@ def test_a_job_that_ran_but_names_no_vendor_is_still_unknown():
     assert totals.vendors[0].gpu_hours == 2.0
 
 
-def test_a_job_with_no_owner_label_reports_under_kubectl():
-    # Only an operator can apply a PacsJob with kubectl, and such a job has no
-    # ddpsrun.io/owner label. It reports under `kubectl` -- what applied it --
-    # and the Member column has now had two wrong names for the same reason,
-    # each of which a reader took for an account: "default", the NAMESPACE,
-    # until 2026-09-07, and "admin", a ROLE, until 2026-09-10. The row sorts
-    # first either way, which is what made it look like the only member.
+def test_a_job_with_no_owner_label_is_in_no_member_row():
+    # ★ THE COLUMN HAS CARRIED THREE NON-PEOPLE AND A READER TOOK EACH FOR A
+    # COLLEAGUE: `default` (a namespace) until 2026-09-07, `admin` (a role)
+    # until 2026-09-10, `kubectl` (a tool) until 2026-09-11. Every column in
+    # that table is a fact about a person, so the fix is not a fourth name --
+    # the row is gone and the count is a sentence. The jobs stay in every
+    # total, because the money was spent either way.
     totals = stats.summarise(
         "ddps", ["default"],
         {"default": [
@@ -303,8 +303,23 @@ def test_a_job_with_no_owner_label_reports_under_kubectl():
         ]},
         now=NOW,
     )
-    assert [m.user for m in totals.members] == ["alice", "kubectl"]
+    assert [m.user for m in totals.members] == ["alice"]
+    assert totals.unowned_jobs == 1
     assert totals.jobs == 2
+    assert abs(totals.cost_usd - 2 * 0.99) < 0.01
+
+
+def test_a_team_whose_every_job_was_applied_by_hand_has_no_member_rows():
+    # The degenerate case the screen has to word carefully: real spend, and
+    # nobody to attribute it to.
+    totals = stats.summarise(
+        "ddps", ["default"],
+        {"default": [job(started=NOW - timedelta(hours=1), hours=1)]},
+        now=NOW,
+    )
+    assert totals.members == []
+    assert totals.jobs == 1 and totals.unowned_jobs == 1
+    assert abs(totals.cost_usd - 0.99) < 0.01
 
 
 def test_a_clean_team_has_nothing_to_note():

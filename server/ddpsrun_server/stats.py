@@ -104,6 +104,10 @@ class TeamTotals:
     gpu_hours: float = 0.0
     cost_usd: float = 0.0
     unpriced_jobs: int = 0
+    # How many of `jobs` carry no ddpsrun.io/owner label, and so appear in no
+    # row of `members`. Their hours and dollars ARE in the totals above; only
+    # the row is gone. See the rollup in `summarise`.
+    unowned_jobs: int = 0
     note: str = ""
 
 
@@ -336,12 +340,26 @@ def summarise(
         member = members[user]
         member.gpu_hours = round(member.gpu_hours, 2)
         member.cost_usd = round(member.cost_usd, 2)
-        totals.members.append(member)
 
+        # The team's figures count every job, owned or not. Only the ROW is at
+        # stake below.
         totals.jobs += member.jobs
         totals.gpu_hours += member.gpu_hours
         totals.cost_usd += member.cost_usd
         totals.unpriced_jobs += member.unpriced_jobs
+
+        # ★ THE OWNERLESS BUCKET IS NOT A MEMBER ROW. Every column in that
+        # table is a fact about a PERSON, and `kubectl` is not one -- it is how
+        # the job was applied. The column has now carried three non-people in a
+        # row and a reader took each of them for a colleague: `default` (a
+        # namespace) until 2026-09-07, `admin` (a role) until 2026-09-10, and
+        # `kubectl` until today. Renaming it a fourth time does not fix the
+        # kind of thing it is, so the row is gone and the count is stated as a
+        # sentence instead.
+        if user == NO_OWNER:
+            totals.unowned_jobs = member.jobs
+            continue
+        totals.members.append(member)
 
     # Spend first, then hours, then name. Seeding the catalogue means most rows
     # are zeroes on a young team, and plain alphabetical order buried the one

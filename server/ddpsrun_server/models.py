@@ -1665,6 +1665,15 @@ class StatsResponse(BaseModel):
     gpu_hours: float = 0.0
     cost_usd: float = 0.0
     unpriced_jobs: int = 0
+    unowned_jobs: int = Field(
+        default=0,
+        description="How many of `jobs` were applied straight to the cluster "
+        "with kubectl and so carry no ddpsrun.io/owner label. They are in every "
+        "total here and in no row of `members`: that table's columns are facts "
+        "about a person, and three non-people in a row (`default` the "
+        "namespace, `admin` the role, `kubectl` the tool) were each read as a "
+        "colleague. The screen states this as a sentence instead.",
+    )
     note: str = Field(
         default="",
         description="Why the figures are incomplete, in words. Empty when they are not.",

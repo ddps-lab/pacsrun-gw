@@ -928,6 +928,7 @@ def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
         gpu_hours=totals.gpu_hours,
         cost_usd=totals.cost_usd,
         unpriced_jobs=totals.unpriced_jobs,
+        unowned_jobs=totals.unowned_jobs,
         note=totals.note,
     )
 
