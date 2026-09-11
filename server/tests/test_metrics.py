@@ -103,6 +103,31 @@ def test_a_long_series_is_thinned_but_still_ends_where_the_job_is():
     assert reading.latest_gpu.memory_used_mib == 2999
 
 
+def test_the_sample_count_is_the_readings_taken_and_not_the_points_kept():
+    # ★ THE SCREEN PRINTED THE WRONG ONE UNDER THE WORD "samples".
+    # job-66b46719b854 printed 785 readings per card; downsample kept 393 of
+    # them so a chart could draw the line, and both the panel note and the
+    # per-card table counted the 393 (reported 2026-09-11). The mean and the
+    # peak are computed over all 785, so the count next to them has to be 785.
+    lines = [f"PACSRUN_GPU_CARD=0,{i % 100},{i},81920,70,300.0" for i in range(785)]
+    reading = m.scan(lines, 86400)
+
+    assert reading.sample_count == 785
+    assert reading.cards[0].sample_count == 785
+    assert len(reading.cards[0].series) < 785, "the series itself is still thinned"
+    assert len(reading.cards[0].series) <= m.MAX_SAMPLES
+
+
+def test_every_card_counts_its_own_readings():
+    # Four cards, and one of them printed fewer -- a card that joined late, or
+    # a line the relay dropped. Each count is that card's own.
+    lines = [f"PACSRUN_GPU_CARD={c},90,{i},81920,70,300.0"
+             for c in range(4) for i in range(500 if c < 3 else 120)]
+    cards = m.scan(lines, 86400).cards
+
+    assert [c.sample_count for c in cards] == [500, 500, 500, 120]
+
+
 def test_a_short_series_is_not_thinned():
     lines = [f"PACSRUN_GPU=50,{i},45440,70,300.0" for i in range(10)]
     assert len(m.scan(lines, 3600).gpu_series) == 10

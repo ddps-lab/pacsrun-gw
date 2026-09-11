@@ -476,6 +476,23 @@ check([cells[2], cells[6], cells[10], cells[14]].join(",") === "84.6%,78%,80.1%,
 check(cardTable([{ gpu_index: 0, peak: null, latest: null, series: [] }]).includes("<td class=\"num\">-</td>"),
       "a card with no reading yet prints '-' rather than throwing");
 
+// The Samples column. `series` is thinned to at most 400 points for the chart, so counting it
+// reported 393 for a card that printed 785 (same job, same report). sample_count is the
+// readings actually taken, and it is what the mean and the peak above are computed over.
+const counted = cardTable([{ gpu_index: 0, peak: { memory_used_mib: 1, memory_total_mib: 2,
+                                                   memory_percent: 50, utilization_percent: 9 },
+                             peak_utilization_percent: 100, avg_utilization_percent: 84.6,
+                             sample_count: 785, series: new Array(393) }]);
+check(counted.includes(">785<") && !counted.includes(">393<"),
+      "the Samples column counts the readings taken (785), not the chart points left after "
+      + "downsampling (393)");
+
+// An older server sends no sample_count, and then the thinned length is the only number there
+// is -- better than a blank column.
+const older = cardTable([{ gpu_index: 0, peak: null, latest: null, series: new Array(12) }]);
+check(older.includes(">12<"),
+      "and a server too old to send sample_count still fills the column from the series");
+
 // ---------------------------------------------------------------------------------------------
 console.log();
 if (failures.length) {

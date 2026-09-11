@@ -1542,6 +1542,14 @@ class CardMetricsView(BaseModel):
         "utilisation inside `peak` -- that one is chosen by memory and can be a "
         "sample taken between steps.",
     )
+    sample_count: int = Field(
+        default=0,
+        description="How many readings this card printed in the window, which "
+        "`len(series)` is not: the series is thinned to at most 400 points so a "
+        "chart can draw it. job-66b46719b854 printed 785 per card and the screen "
+        "showed 393 under a column headed Samples. The mean and peak above are "
+        "computed over all of them.",
+    )
 
 
 class MetricsResponse(BaseModel):
@@ -1575,6 +1583,13 @@ class MetricsResponse(BaseModel):
         "happened to fall between steps and read 0 -- against a real maximum of "
         "100 and a mean of 84.6. Reporting the first as the peak told a reader "
         "the GPU had been idle for a run that was not.",
+    )
+    sample_count: int = Field(
+        default=0,
+        description="How many readings the lowest-indexed card printed in the "
+        "window. `len(gpu_series)` is not that number -- the series is thinned "
+        "to at most 400 points for drawing -- and the screen printed the thinned "
+        "one as 'N samples'.",
     )
     cards: list[CardMetricsView] = Field(
         default_factory=list,

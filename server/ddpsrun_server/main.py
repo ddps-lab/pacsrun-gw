@@ -2013,6 +2013,7 @@ def get_metrics(
         peak_gpu=_gpu_view(reading.peak_gpu),
         avg_utilization_percent=reading.avg_utilization_percent,
         peak_utilization_percent=reading.peak_utilization_percent,
+        sample_count=reading.sample_count,
         cards=[
             CardMetricsView(
                 gpu_index=c.gpu_index,
@@ -2021,6 +2022,7 @@ def get_metrics(
                 peak=_gpu_view(c.peak),
                 avg_utilization_percent=c.avg_utilization_percent,
                 peak_utilization_percent=c.peak_utilization_percent,
+                sample_count=c.sample_count,
             )
             for c in reading.cards
         ],

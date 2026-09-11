@@ -666,7 +666,12 @@ async function drawMetrics(jobId, job) {
     const peak = m.peak_gpu || last;
     const done = job && TERMINAL.includes(job.phase);
     const from = series[0].time, to = series[series.length - 1].time;
-    $("d-gpu-note").textContent = `${series.length} samples` +
+    // m.sample_count, NOT series.length: the server thins the series to at most
+    // 400 points so the chart can draw it, and job-66b46719b854 printed 785
+    // readings per card and had this line say 393. An older server sends no
+    // count, and then the thinned length is the only number there is.
+    const taken = m.sample_count || series.length;
+    $("d-gpu-note").textContent = `${taken} samples` +
       (from && to ? `, ${when(from)} ~ ${when(to)}` : `, last ${m.window_seconds}s`);
 
     // A FINISHED run's last reading is the idle card just before teardown —
@@ -750,7 +755,9 @@ function cardTable(cards) {
         // lines below it, was not.
         `<td class="num">${c.peak_utilization_percent == null ? "-" : c.peak_utilization_percent + "%"}</td>` +
         `<td class="num">${c.avg_utilization_percent == null ? "-" : c.avg_utilization_percent + "%"}</td>` +
-        `<td class="num">${(c.series || []).length}</td></tr>`;
+        // Same correction as the panel note above: the readings this card
+        // printed, not the points left after downsampling for the chart.
+        `<td class="num">${c.sample_count || (c.series || []).length}</td></tr>`;
     }).join("") +
     `</tbody></table></div>`;
 }

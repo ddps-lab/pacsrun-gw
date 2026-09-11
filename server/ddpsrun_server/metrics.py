@@ -186,6 +186,13 @@ class CardMetrics:
     peak: GpuSample | None = None
     avg_utilization_percent: float | None = None
     peak_utilization_percent: float | None = None
+    # ★ HOW MANY READINGS THIS CARD ACTUALLY PRINTED, which `len(series)` is
+    # NOT: `downsample` thins the series to at most MAX_SAMPLES so a chart can
+    # draw it. job-66b46719b854 printed 785 readings per card and the screen
+    # counted the 393 that survived the thinning, under a column headed
+    # "Samples" (reported 2026-09-11). The mean and the peak above are computed
+    # over all 785, so this is also the count those two are based on.
+    sample_count: int = 0
 
 
 @dataclass
@@ -218,9 +225,13 @@ class Metrics:
     # see CardMetrics.peak_utilization_percent for the run that made the
     # difference visible.
     peak_utilization_percent: float | None = None
+    # Readings the LOWEST-indexed card printed, the companion of gpu_series in
+    # the same way peak_gpu and the two utilisation fields are: gpu_series has
+    # been thinned for drawing and this has not. See CardMetrics.sample_count.
+    sample_count: int = 0
     # ONE ENTRY PER CARD, lowest index first. A job renting four A100s used to
     # arrive here as one series — the watcher's `head -1` — and the screen drew
-    # card 0 alone (baseline-c, 2026-09-08). The three fields above still
+    # card 0 alone (baseline-c, 2026-09-08). The four fields above still
     # describe the LOWEST-indexed card so an older screen keeps working.
     cards: list[CardMetrics] = field(default_factory=list)
 
@@ -432,6 +443,8 @@ def scan(lines: object, window_seconds: int) -> Metrics:
                 sum(r.utilization_percent for r in readings) / len(readings), 1
             ),
             peak_utilization_percent=max(r.utilization_percent for r in readings),
+            # `readings`, not the downsampled `series` above it.
+            sample_count=len(readings),
         )
         for index, readings in sorted(per_card.items())
         if readings
@@ -450,5 +463,6 @@ def scan(lines: object, window_seconds: int) -> Metrics:
         peak_gpu=first.peak if first else None,
         avg_utilization_percent=first.avg_utilization_percent if first else None,
         peak_utilization_percent=first.peak_utilization_percent if first else None,
+        sample_count=first.sample_count if first else 0,
         cards=cards,
     )
