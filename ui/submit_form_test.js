@@ -428,6 +428,55 @@ check(perOpen.includes('$("d-gpu-panel").hidden = true'),
       "the reset is once per open, not once per poll");
 
 // ---------------------------------------------------------------------------------------------
+// The per-card GPU table. A behaviour check on the real function, pulled out of app.js: it is
+// pure, so it needs no document at all -- only CARD_COLORS, which it closes over.
+//
+// WHAT THIS PINS. The "Peak utilisation" column must come from the card's own
+// peak_utilization_percent and NOT from the utilisation inside `peak`, which is the
+// highest-MEMORY sample and carries whatever the card was doing at that instant. The numbers
+// below are job-66b46719b854's real ones, read from /v1/jobs/job-66b46719b854/metrics on
+// 2026-09-11: four A100s that each reached 77,631 MiB, whose memory-peak samples read 0, 3, 1
+// and 95 per cent while every card's true peak was 99 or 100.
+// ---------------------------------------------------------------------------------------------
+const CARD_COLORS = ["var(--accent)", "var(--run)", "var(--ok)", "var(--bad)"];
+const cardTable = eval(`(${extract("cardTable")})`);
+
+const REAL_CARDS = [
+  { gpu_index: 0, peak: { memory_used_mib: 77631, memory_total_mib: 81920, memory_percent: 94.8,
+                          utilization_percent: 0 },
+    peak_utilization_percent: 100.0, avg_utilization_percent: 84.6, series: new Array(393) },
+  { gpu_index: 1, peak: { memory_used_mib: 77631, memory_total_mib: 81920, memory_percent: 94.8,
+                          utilization_percent: 3 },
+    peak_utilization_percent: 100.0, avg_utilization_percent: 78.0, series: new Array(393) },
+  { gpu_index: 2, peak: { memory_used_mib: 77631, memory_total_mib: 81920, memory_percent: 94.8,
+                          utilization_percent: 1 },
+    peak_utilization_percent: 100.0, avg_utilization_percent: 80.1, series: new Array(393) },
+  { gpu_index: 3, peak: { memory_used_mib: 77211, memory_total_mib: 81920, memory_percent: 94.3,
+                          utilization_percent: 95 },
+    peak_utilization_percent: 99.0, avg_utilization_percent: 37.8, series: new Array(393) },
+];
+
+const table = cardTable(REAL_CARDS);
+const cells = [...table.matchAll(/<td class="num">([^<]*)<\/td>/g)].map((m) => m[1]);
+// Four columns of numbers per row, in header order: peak memory, peak utilisation,
+// average utilisation, samples.
+const peakUtil = [cells[1], cells[5], cells[9], cells[13]];
+
+check(JSON.stringify(peakUtil) === JSON.stringify(["100%", "100%", "100%", "99%"]),
+      "the per-card table's Peak utilisation is the card's real maximum, not the utilisation "
+      + "of its highest-memory sample (which read 0%, 3%, 1%, 95% on job-66b46719b854)");
+
+check(!table.includes("Utilisation at peak"),
+      "and the heading no longer says 'Utilisation at peak', which is what made a reader take "
+      + "the memory-peak sample's number for the highest utilisation");
+
+check([cells[2], cells[6], cells[10], cells[14]].join(",") === "84.6%,78%,80.1%,37.8%",
+      "Average utilisation still comes from the card's own mean");
+
+check(cardTable([{ gpu_index: 0, peak: null, latest: null, series: [] }]).includes("<td class=\"num\">-</td>"),
+      "a card with no reading yet prints '-' rather than throwing");
+
+// ---------------------------------------------------------------------------------------------
 console.log();
 if (failures.length) {
   console.log(`FAILED (${failures.length}):`);

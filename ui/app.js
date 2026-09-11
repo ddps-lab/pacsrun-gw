@@ -724,7 +724,7 @@ const CARD_COLORS = ["var(--accent)", "var(--run)", "var(--ok)", "var(--bad)"];
    compares, and a chart cannot be read to the megabyte. */
 function cardTable(cards) {
   return `<div class="scroll" style="margin-top:12px"><table><thead><tr>` +
-    ["GPU", "Peak memory", "Utilisation at peak", "Average utilisation", "Samples"]
+    ["GPU", "Peak memory", "Peak utilisation", "Average utilisation", "Samples"]
       .map((h) => `<th>${h}</th>`).join("") +
     `</tr></thead><tbody>` +
     cards.map((c, i) => {
@@ -734,7 +734,21 @@ function cardTable(cards) {
       return `<tr><td>${swatch}GPU ${c.gpu_index}</td>` +
         `<td class="num">${p.memory_used_mib == null ? "-" :
           `${p.memory_used_mib} / ${p.memory_total_mib} MiB (${(p.memory_percent || 0).toFixed(0)}%)`}</td>` +
-        `<td class="num">${p.utilization_percent == null ? "-" : p.utilization_percent + "%"}</td>` +
+        // ★ c.peak_utilization_percent, NOT c.peak.utilization_percent, and the
+        // difference is the whole reason this column was wrong. `peak` is the
+        // sample with the most MEMORY in it, and its utilisation is whatever the
+        // card happened to be doing at that instant. On job-66b46719b854 all four
+        // A100s reached 77,631 MiB, and the utilisation inside those four samples
+        // read 0, 3, 1 and 95 -- under a heading ("Utilisation at peak") a reader
+        // takes to mean the highest utilisation. Every one of those cards actually
+        // peaked at 99 or 100 and averaged between 37.8 and 84.6. Worse, the
+        // headline above this table already printed card 0's real peak of 100%,
+        // so the same card read 100 in one panel and 0 in the next, which is what
+        // the reporter saw as the cards being mixed up (2026-09-11).
+        //
+        // The single-card headline was fixed on 2026-09-10 and this table, eight
+        // lines below it, was not.
+        `<td class="num">${c.peak_utilization_percent == null ? "-" : c.peak_utilization_percent + "%"}</td>` +
         `<td class="num">${c.avg_utilization_percent == null ? "-" : c.avg_utilization_percent + "%"}</td>` +
         `<td class="num">${(c.series || []).length}</td></tr>`;
     }).join("") +
