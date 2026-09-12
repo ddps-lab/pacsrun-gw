@@ -635,6 +635,72 @@ check(/data-vendor="shadeform"(?![^>]*data-priced)/.test(HTML),
 }
 
 // ---------------------------------------------------------------------------------------------
+// DDPSRUN-SHELL-CWD. The prompt has to say where the next line will run, and the marker that
+// carries that must never reach the transcript. Behaviour checks on the real functions.
+// ---------------------------------------------------------------------------------------------
+{
+  const CWD_MARK = "__DDPSRUN_CWD__";
+  // takeCwd closes over CWD_MARK, so the marker is passed in rather than redefined -- the value
+  // under test is the one app.js ships.
+  const MARK = SRC.match(/const CWD_MARK = "([^"]+)"/)[1];
+  const takeCwd = new Function("CWD_MARK", `${extract("takeCwd")}; return takeCwd;`)(MARK);
+  check(MARK === CWD_MARK, "the marker this test uses is the one app.js defines");
+
+  const [clean, cwd] = takeCwd(`total 4\ndrwxr-xr-x work\n\n${CWD_MARK}/workspace\n`);
+  check(cwd === "/workspace", "the directory comes back in the same round trip as the command");
+  check(!clean.includes(CWD_MARK),
+        "and the marker never reaches the transcript -- it is ours, not the workload's");
+  check(clean.startsWith("total 4\ndrwxr-xr-x work"),
+        "the command's own output is untouched in front of it");
+
+  // One response can carry output the caller had not read yet, so an earlier line's marker may
+  // still be in the buffer. The last one is where the shell is NOW.
+  const [, latest] = takeCwd(`${CWD_MARK}/old\nsomething\n${CWD_MARK}/workspace/data\n`);
+  check(latest === "/workspace/data", "with two markers buffered, the last one wins");
+
+  check(takeCwd("no marker here")[1] === "",
+        "and output with no marker yields no directory rather than a wrong one");
+}
+
+{
+  // withCwdProbe. Every expectation below was measured against the live session on 2026-09-12.
+  const MARK2 = SRC.match(/const CWD_MARK = "([^"]+)"/)[1];
+  const at = SRC.indexOf("function withCwdProbe");
+  let depth = 0, j = SRC.indexOf("{", at);
+  for (; j < SRC.length; j++) { if (SRC[j] === "{") depth++; else if (SRC[j] === "}" && --depth === 0) break; }
+  const probe = new Function("CWD_MARK", `${SRC.slice(at, j + 1)}; return withCwdProbe;`)(MARK2);
+
+  check(probe("ls").startsWith("ls; printf"),
+        "the directory probe rides on the same line with `; ` -- a newline was measured to run "
+        + "the first line only, the driver drops the rest");
+
+  check(probe("echo a;") === probe("echo a"),
+        "a trailing semicolon is dropped, because `echo a;; printf` is a syntax error");
+
+  check(probe("sleep 0 &") === "sleep 0 &",
+        "a line ending in a lone & is sent alone -- `&; printf` is a syntax error, and "
+        + "backgrounding something does not move the directory anyway");
+
+  check(probe("a && b").includes("printf"),
+        "but && is not that case and still gets the probe");
+}
+
+check(SRC.includes('shellUI.cwd ? `${shellUI.jobKey}:${shellUI.cwd}$`'),
+      "the prompt is job and directory once the directory is known, so `cd` moves it");
+
+check(/shellUI\.cwd = "";/.test(SRC),
+      "and a reopened session forgets the directory, because a new shell starts where the image "
+      + "does and not where the old one was");
+
+// DDPSRUN-SHELL-ONE-PANE.
+check(!SRC.includes('d-shell-send'),
+      "there is no Run button: Enter already ran the line and the button was the slower of the "
+      + "two ways while being the only one the screen mentioned");
+
+check(SRC.includes("Enter runs it, up and down walk what you have typed"),
+      "and the pane says so, which is what the button was standing in for");
+
+// ---------------------------------------------------------------------------------------------
 console.log();
 if (failures.length) {
   console.log(`FAILED (${failures.length}):`);

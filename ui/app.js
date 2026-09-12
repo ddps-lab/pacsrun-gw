@@ -642,7 +642,61 @@ const fact = (k, v) =>
 /* Everything the panel has to remember between two typed lines. It is here and
    not in the DOM because drawShell runs again on every 30-second poll, and the
    sequence number is the one value that must survive that. */
-const shellUI = { jobKey: null, seq: 0, busy: false, history: [], hpos: 0 };
+const shellUI = { jobKey: null, seq: 0, busy: false, history: [], hpos: 0, cwd: "" };
+
+/* DDPSRUN-SHELL-CWD. The prompt said `job-xxx$` and never moved, so after `cd /workspace` the
+   screen still claimed to be wherever it had started. A real prompt's job is to say where the
+   next command will run.
+
+   HOW THE DIRECTORY IS FOUND, in the SAME round trip rather than a second one. The typed line is
+   sent with `; printf` of `$PWD` behind a marker on the end. The shell session lives in the
+   driver pod and `cd` survives between lines, so `$PWD` after the line is exactly where the next
+   one will start. A separate `pwd` call would double a round trip that already takes about a
+   second.
+
+   ★ `; ` AND NOT A NEWLINE, WHICH WAS MEASURED AND NOT ASSUMED. Against the live session on
+   2026-09-12 (`job-b7b3c38939c2`, shadeform): `echo two` + newline + printf printed `two` and
+   nothing else -- the driver runs the FIRST line and drops the rest. The same pair joined with
+   `; ` printed both.
+
+   TWO SHAPES BREAK `; ` AND BOTH ARE HANDLED, also measured on that session:
+     `sleep 0 &`   ->  `sh: Syntax error: ";" unexpected`   (a trailing `&` terminates already)
+     `echo a;`     ->  `sh: Syntax error: ";;" unexpected`
+   A trailing `;` is dropped, and a line ending in a lone `&` is sent alone -- the prompt then
+   keeps the directory it had, which is right, because backgrounding something does not move it.
+   A line ending in a `#` comment swallows the probe harmlessly: no marker comes back and the
+   prompt stays put.
+
+   `exit_code` is not disturbed because nothing here reads it -- see shellRun. */
+const CWD_MARK = "__DDPSRUN_CWD__";
+
+function withCwdProbe(line) {
+  const bare = line.trim().replace(/;+$/, "");
+  // A lone `&` on the end, but not `&&`, which is an incomplete line the shell would wait on
+  // whatever we appended.
+  if (/(^|[^&])&$/.test(bare)) return line;
+  return `${bare}; printf "\\n${CWD_MARK}%s\\n" "$PWD"`;
+}
+
+/* Pull the marker line out of the output and return [cleanOutput, cwd].
+
+   The LAST marker wins: one response can carry output this caller had not read yet, so an
+   earlier line's marker may still be in the buffer. */
+function takeCwd(text) {
+  const at = text.lastIndexOf(CWD_MARK);
+  if (at < 0) return [text, ""];
+  const end = text.indexOf("\n", at);
+  const cwd = text.slice(at + CWD_MARK.length, end < 0 ? undefined : end).trim();
+  // Drop the marker line and the blank line the printf put in front of it.
+  let start = at;
+  if (start > 0 && text[start - 1] === "\n") start -= 1;
+  const rest = end < 0 ? "" : text.slice(end + 1);
+  return [text.slice(0, start) + (rest ? "\n" + rest : "\n"), cwd];
+}
+
+/* What the prompt reads: the job, and where the next line will run once that is known. */
+const shellPrompt = () =>
+  shellUI.cwd ? `${shellUI.jobKey}:${shellUI.cwd}$` : `${shellUI.jobKey}$`;
 
 function shellAppend(text) {
   const out = $("d-shell-out");
@@ -655,17 +709,19 @@ function shellAppend(text) {
 
 /* One line, one round trip. Returns nothing — everything it has to say it says
    in the output pane, because that is where the person is looking. */
-async function shellRun(line) {
+async function shellRun(line, quiet) {
   const key = shellUI.jobKey;
   const input = $("d-shell-input");
   if (!key || shellUI.busy) return;
   shellUI.busy = true;
   if (input) { input.disabled = true; }
-  shellAppend(`\n${key}$ ${line}\n`);
+  // `quiet` is the probe drawShell sends on mount to learn the starting directory. It echoes
+  // nothing, because a `:` the person did not type has no business in their transcript.
+  if (!quiet) shellAppend(`\n${shellPrompt()} ${line}\n`);
 
   const send = (seq) => call(`/v1/jobs/${encodeURIComponent(key)}/exec`, {
     method: "POST",
-    body: JSON.stringify({ command: line, session: true, seq }),
+    body: JSON.stringify({ command: withCwdProbe(line), session: true, seq }),
   });
 
   try {
@@ -681,6 +737,7 @@ async function shellRun(line) {
       // starts from nothing.
       if (!/no session/i.test(err.message)) throw err;
       shellUI.seq = 0;
+      shellUI.cwd = "";   // a new shell starts wherever the image starts, not where we were
       shellAppend("(the session had closed; reopening — cd and variables from before are gone)\n");
       answer = await send(0);
     }
@@ -691,7 +748,15 @@ async function shellRun(line) {
     if (answer.lost) {
       shellAppend("(some output was dropped: the driver pod's buffer is a ring with a byte cap)\n");
     }
-    shellAppend(answer.output || "");
+    // The marker the probe printed is ours, not the workload's, so it comes out of the text
+    // before anything is shown and updates the prompt instead (DDPSRUN-SHELL-CWD).
+    const [text, cwd] = takeCwd(answer.output || "");
+    if (cwd) {
+      shellUI.cwd = cwd;
+      const label = $("d-shell-prompt");
+      if (label) label.textContent = shellPrompt();
+    }
+    if (!quiet || text.trim()) shellAppend(text);
     if (answer.note) shellAppend(`(${answer.note})\n`);
   } catch (err) {
     // Shown, not thrown. The server writes these for a person to read — "exec
@@ -740,15 +805,22 @@ function drawShell(jobId, job) {
   shellUI.history = [];
   shellUI.hpos = 0;
 
+  // ★ ONE PANE, AND THE PROMPT IS PART OF IT. The transcript and the input used to be two
+  // boxes with a Run button between them, which reads as a form and not as a terminal -- and
+  // Enter already ran the line, so the button was the only thing on screen saying how to
+  // submit while being the slower of the two ways. The input now sits inside the same bordered
+  // pane as the output, directly under the last line, with the prompt to its left; Enter runs
+  // it and the header line says so. Up and down still walk the history.
   $("d-shell").innerHTML =
-    `<pre class="log" id="d-shell-out">one line per round trip, about a second each. ` +
-    `cd and exported variables survive between lines. Not a TTY — no vim, no top.\n</pre>` +
+    `<div class="shell">` +
+    `<pre class="shell-out" id="d-shell-out">one line per round trip, about a second each. ` +
+    `Enter runs it, up and down walk what you have typed. cd and exported variables survive ` +
+    `between lines. Not a TTY — no vim, no top.\n</pre>` +
     `<div class="shell-row">` +
-    `<span class="shell-prompt mono">${esc(key)}$</span>` +
+    `<span class="shell-prompt mono" id="d-shell-prompt">${esc(key)}$</span>` +
     `<input id="d-shell-input" class="shell-input mono" type="text" autocomplete="off" ` +
     `autocapitalize="off" spellcheck="false" placeholder="nvidia-smi">` +
-    `<button id="d-shell-send" class="go">Run</button>` +
-    `</div>` +
+    `</div></div>` +
     `<p class="dim tiny">The same shell from any terminal, which is where you want to be for ` +
     `anything long: <span class="mono">pip install hyperun</span> · ` +
     `<span class="mono">hyperun login --server ${esc(store.server)}</span> · ` +
@@ -764,7 +836,6 @@ function drawShell(jobId, job) {
     shellUI.hpos = shellUI.history.length;
     shellRun(line);
   };
-  $("d-shell-send").addEventListener("click", submit);
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); submit(); return; }
     // Up and down walk what has been typed. Cheap, and its absence is the first
@@ -779,7 +850,16 @@ function drawShell(jobId, job) {
       input.value = shellUI.history[shellUI.hpos] || "";
     }
   });
+  // Clicking anywhere in the pane puts the caret in the input, which is what a terminal does.
+  $("d-shell").querySelector(".shell").addEventListener("click", (e) => {
+    if (!window.getSelection().toString()) input.focus();
+  });
   input.focus();
+
+  // One round trip on mount to learn where this shell starts, so the prompt is right before the
+  // first command rather than after it. `:` is the shell's own no-op and prints nothing; what
+  // comes back is the probe's $PWD (DDPSRUN-SHELL-CWD).
+  shellRun(":", true);
 }
 
 /* The Result files panel: GET /v1/jobs/{id}/artifacts, drawn as a table with
