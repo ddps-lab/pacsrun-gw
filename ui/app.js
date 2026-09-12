@@ -1736,7 +1736,10 @@ $("s1-reset").onclick = () => {
   $("f-gpucount").value = 1;
   $("f-parallelism").value = 1;
   $("f-gpu").value = "";
-  $("f-capacity").value = "spot";
+  // Same default the markup ships (DDPSRUN-CAPACITY-DEFAULT). Clear must land on the form's
+  // default, not on the one it used to have -- otherwise pressing Clear silently changes what
+  // the next submission buys.
+  $("f-capacity").value = "on-demand";
   $("f-mode").value = "";
   document.querySelectorAll("#view-submit [data-vendor]").forEach((b) => { b.checked = false; });
   vendorRules();

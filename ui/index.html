@@ -422,9 +422,16 @@
       <label><span><b>Parallelism</b> <span class="dim">how many independent pods</span></span>
         <input id="f-parallelism" type="number" min="1" max="256" value="1"></label>
       <label><span><b>Capacity type</b></span>
+        <!-- DDPSRUN-CAPACITY-DEFAULT. on-demand, changed from spot 2026-09-12. Neither the
+             server nor the CLI has a default at all -- SubmitRequest.capacity_type defaults to
+             None and the CLI makes you pass --capacity-type -- so this box's default is this
+             screen's own choice and nothing else disagrees with it. A reclaimed machine costs a
+             run that was already hours in, and the person most likely to accept the default is
+             the one least able to judge that trade; spot stays one click away for whoever has
+             judged it. -->
         <select id="f-capacity">
+          <option value="on-demand" selected>on-demand (dearer, never reclaimed)</option>
           <option value="spot">spot (cheaper, can be reclaimed)</option>
-          <option value="on-demand">on-demand (dearer, never reclaimed)</option>
         </select></label>
       <!-- DDPSRUN-UI-NO-RESULT-PATH. There was a "Result path" input here and the server has
            no field for it: /v1/explain says "Where the output goes, which identity the job runs
@@ -441,13 +448,18 @@
          spec.placement.mode all along and this gateway wrote neither: it sent
          `placement: {capacityType}` and nothing else, so "run this on RunPod" and "price every
          vendor and buy nothing" could not be said through the screen at all.
-         The two groups are separated because they are not the same kind of thing: aws and
-         runpod have an execution path, while the other four are answered from catalogue CSVs
-         and no actuator here understands their machine names. -->
+         The two groups are separated because they are not the same kind of thing: aws, runpod
+         and shadeform have an execution path, while the other four are answered from catalogue
+         CSVs and no actuator here understands their machine names. The split is
+         models.RUNNABLE_VENDORS / PRICE_ONLY_VENDORS, and shadeform was missing from this row
+         until 2026-09-12 although it joined the runnable list on 2026-09-10 and has completed
+         live runs since -- so a job could be sold by a vendor this form would not let you ask
+         for. -->
     <label><span><b>Vendors</b> <span class="dim">none checked = no restriction, which is what every job did before</span></span>
       <div class="row" id="f-vendors">
         <label class="chk"><input type="checkbox" data-vendor="aws"> aws</label>
         <label class="chk"><input type="checkbox" data-vendor="runpod"> runpod</label>
+        <label class="chk"><input type="checkbox" data-vendor="shadeform"> shadeform</label>
       </div>
       <div class="row" id="f-vendors-priced">
         <span class="dim small">price only, needs Compare:</span>

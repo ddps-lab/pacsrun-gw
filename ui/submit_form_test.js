@@ -60,6 +60,7 @@ const modeOptions = [{ value: "" }, { value: "cheapest" }, { value: "compare" }]
 const vendorBoxes = [
   { dataset: { vendor: "aws" }, checked: false },
   { dataset: { vendor: "runpod" }, checked: false },
+  { dataset: { vendor: "shadeform" }, checked: false },
   { dataset: { vendor: "gcp", priced: "" }, checked: false },
   { dataset: { vendor: "azure", priced: "" }, checked: false },
   { dataset: { vendor: "lambda", priced: "" }, checked: false },
@@ -605,6 +606,33 @@ check(SRC.includes('setInterval(pollDeployedVersion'),
 check(/url\.searchParams\.set\("v"/.test(SRC),
       "the Reload button changes the URL rather than calling location.reload(), which some "
       + "browsers serve from cache");
+
+// ---------------------------------------------------------------------------------------------
+// The two defaults the markup ships, and the vendor list it offers. Source checks on
+// index.html, because both are decided before any handler runs.
+// ---------------------------------------------------------------------------------------------
+
+// DDPSRUN-CAPACITY-DEFAULT. Neither the server nor the CLI has a default -- capacity_type is
+// None in SubmitRequest and --capacity-type is one you must pass -- so the box's default is
+// this screen's own decision, and a reclaimed machine costs a run already hours in.
+check(/<option value="on-demand" selected>/.test(HTML),
+      "the capacity box defaults to on-demand, so accepting the default cannot lose a long run "
+      + "to a reclaim");
+
+check(SRC.includes('$("f-capacity").value = "on-demand"'),
+      "and Clear lands on that same default, rather than silently putting the form back on spot");
+
+// shadeform joined models.RUNNABLE_VENDORS on 2026-09-10 and has completed live runs; this row
+// still offered aws and runpod only, so a vendor that sells to us could not be asked for.
+check(/data-vendor="shadeform"(?![^>]*data-priced)/.test(HTML),
+      "shadeform is offered in the runnable vendor row, not the price-only one");
+
+{
+  const runnable = HTML.slice(HTML.indexOf('id="f-vendors"'), HTML.indexOf('id="f-vendors-priced"'));
+  const offered = [...runnable.matchAll(/data-vendor="([a-z]+)"/g)].map((m) => m[1]);
+  check(JSON.stringify(offered) === JSON.stringify(["aws", "runpod", "shadeform"]),
+        "and the runnable row is exactly models.RUNNABLE_VENDORS -- aws, runpod, shadeform");
+}
 
 // ---------------------------------------------------------------------------------------------
 console.log();
