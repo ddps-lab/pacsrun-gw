@@ -391,42 +391,22 @@ textarea { font-family: var(--mono); font-size: 13px; resize: vertical; min-heig
    The prompt, the line and the button sit on one row so the pane above reads as
    the transcript and this reads as the place you type -- the same arrangement a
    terminal has, without pretending to be one. */
-/* DDPSRUN-SHELL-ONE-PANE. The transcript and the input are ONE bordered box, with the input
-   sitting under the last line of output exactly where a terminal's cursor would be. They used to
-   be two boxes with a Run button between them, which reads as a form. The border and background
-   live here, on the wrapper, and the two children inside it carry neither. */
-.shell {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  overflow: hidden;
-  cursor: text;                 /* clicking the pane focuses the input, as a terminal does */
-}
-.shell:focus-within { border-color: var(--accent); }
-.shell-out {
-  margin: 0;
-  border: 0;
-  background: none;
-  padding: 10px 12px 0;
-  font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.55;
-}
-.shell-row { display: flex; gap: 8px; align-items: center; padding: 2px 12px 10px; }
+.shell-row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+/* Carries the working directory since 2026-09-12 (DDPSRUN-SHELL-CWD), so it can get long:
+   `min-width: 0` on the input next to it is what stops a deep path pushing the button off the
+   panel, and the prompt itself still refuses to wrap mid-path. */
 .shell-prompt { color: var(--ink-dim); white-space: nowrap; }
 .shell-input {
   flex: 1;
-  min-width: 0;                 /* without this a long line widens the pane instead of scrolling */
-  padding: 0;
-  background: none;
+  min-width: 0;                 /* without this a long line pushes the button off the panel */
+  padding: 8px 10px;
+  background: var(--panel);
   color: var(--ink);
-  border: 0;
-  /* The same size as the transcript above it: in one pane, a line being typed and the same line
-     a second later in the history must not change size. */
-  font-size: 12.5px;
-  line-height: 1.55;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 14px;
 }
-.shell-input:focus { outline: none; }
+.shell-input:focus { outline: none; border-color: var(--accent); }
 /* Disabled while a line is in flight: one round trip at a time, so a second
    Enter cannot interleave two lines into one shell. */
 .shell-input:disabled { opacity: 0.6; }

@@ -692,13 +692,10 @@ check(/shellUI\.cwd = "";/.test(SRC),
       "and a reopened session forgets the directory, because a new shell starts where the image "
       + "does and not where the old one was");
 
-// DDPSRUN-SHELL-ONE-PANE.
-check(!SRC.includes('d-shell-send'),
-      "there is no Run button: Enter already ran the line and the button was the slower of the "
-      + "two ways while being the only one the screen mentioned");
-
-check(SRC.includes("Enter runs it, up and down walk what you have typed"),
-      "and the pane says so, which is what the button was standing in for");
+// The layout is the one that was already there and the reporter asked to keep: transcript,
+// prompt, input, Run button. Enter runs the line too, and always did.
+check(SRC.includes('$("d-shell-send").addEventListener("click", submit)'),
+      "the Run button is still wired -- only the prompt changed");
 
 // ---------------------------------------------------------------------------------------------
 console.log();

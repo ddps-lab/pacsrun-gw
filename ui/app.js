@@ -805,22 +805,18 @@ function drawShell(jobId, job) {
   shellUI.history = [];
   shellUI.hpos = 0;
 
-  // ★ ONE PANE, AND THE PROMPT IS PART OF IT. The transcript and the input used to be two
-  // boxes with a Run button between them, which reads as a form and not as a terminal -- and
-  // Enter already ran the line, so the button was the only thing on screen saying how to
-  // submit while being the slower of the two ways. The input now sits inside the same bordered
-  // pane as the output, directly under the last line, with the prompt to its left; Enter runs
-  // it and the header line says so. Up and down still walk the history.
+  // The layout is the one that was already here: transcript, a prompt, an input, a Run button.
+  // Only the PROMPT changed -- it carries the working directory now (DDPSRUN-SHELL-CWD), so it
+  // has an id for shellRun to rewrite.
   $("d-shell").innerHTML =
-    `<div class="shell">` +
-    `<pre class="shell-out" id="d-shell-out">one line per round trip, about a second each. ` +
-    `Enter runs it, up and down walk what you have typed. cd and exported variables survive ` +
-    `between lines. Not a TTY — no vim, no top.\n</pre>` +
+    `<pre class="log" id="d-shell-out">one line per round trip, about a second each. ` +
+    `cd and exported variables survive between lines. Not a TTY — no vim, no top.\n</pre>` +
     `<div class="shell-row">` +
     `<span class="shell-prompt mono" id="d-shell-prompt">${esc(key)}$</span>` +
     `<input id="d-shell-input" class="shell-input mono" type="text" autocomplete="off" ` +
     `autocapitalize="off" spellcheck="false" placeholder="nvidia-smi">` +
-    `</div></div>` +
+    `<button id="d-shell-send" class="go">Run</button>` +
+    `</div>` +
     `<p class="dim tiny">The same shell from any terminal, which is where you want to be for ` +
     `anything long: <span class="mono">pip install hyperun</span> · ` +
     `<span class="mono">hyperun login --server ${esc(store.server)}</span> · ` +
@@ -836,6 +832,7 @@ function drawShell(jobId, job) {
     shellUI.hpos = shellUI.history.length;
     shellRun(line);
   };
+  $("d-shell-send").addEventListener("click", submit);
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); submit(); return; }
     // Up and down walk what has been typed. Cheap, and its absence is the first
@@ -849,10 +846,6 @@ function drawShell(jobId, job) {
       shellUI.hpos += 1;
       input.value = shellUI.history[shellUI.hpos] || "";
     }
-  });
-  // Clicking anywhere in the pane puts the caret in the input, which is what a terminal does.
-  $("d-shell").querySelector(".shell").addEventListener("click", (e) => {
-    if (!window.getSelection().toString()) input.focus();
   });
   input.focus();
 
