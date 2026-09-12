@@ -475,6 +475,39 @@ def test_watch_prints_progress_and_gpu(fake, capsys):
     assert "samples        120" in printed
 
 
+def test_samples_counts_the_readings_taken_not_the_chart_points(fake, capsys):
+    # ★ THE SAME DEFECT THE SCREEN HAD. The server thins the series to at most
+    # 400 points so a chart can draw it; job-66b46719b854 printed 785 readings
+    # per card and both surfaces counted the 393 that survived. The mean and the
+    # peak are computed over all 785, so the count beside them has to be 785.
+    fake.metrics_result = {
+        "latest_gpu": {"utilization_percent": 94, "memory_used_mib": 38200,
+                       "memory_total_mib": 45440, "memory_percent": 84.1,
+                       "temperature_c": 71, "power_w": 298.5},
+        "gpu_series": [{}] * 393,
+        "sample_count": 785,
+        "window_seconds": 604800, "note": "",
+    }
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    assert "samples        785" in printed
+    assert "samples        393" not in printed
+
+
+def test_a_server_too_old_to_send_the_count_still_prints_one(fake, capsys):
+    # The field arrived on 2026-09-12. Against a server that predates it the
+    # thinned length is the only number there is, and a blank is worse.
+    fake.metrics_result = {
+        "latest_gpu": {"utilization_percent": 10, "memory_used_mib": 1,
+                       "memory_total_mib": 2, "memory_percent": 50.0,
+                       "temperature_c": 40, "power_w": 50.0},
+        "gpu_series": [{}] * 12,
+        "window_seconds": 3600, "note": "",
+    }
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    assert "samples        12" in capsys.readouterr().out
+
+
 def test_an_unsettled_projection_is_labelled_rather_than_stated(fake, capsys):
     fake.metrics_result = {
         "progress": {"step": 5, "total_steps": 556, "percent": 0.9,

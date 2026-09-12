@@ -1115,8 +1115,13 @@ def cmd_watch(args: argparse.Namespace) -> int:
               f"{gpu['memory_used_mib']:,} / {gpu['memory_total_mib']:,} MiB "
               f"({gpu['memory_percent']}%)")
         print(f"  temp, power    {gpu['temperature_c']} C, {gpu['power_w']} W")
-        print(f"  samples        {len(result.get('gpu_series', []))}, "
-              f"last {result['window_seconds']}s")
+        # `sample_count`, not len(gpu_series): the server thins the series to at
+        # most 400 points so a chart can draw it, and job-66b46719b854 printed
+        # 785 readings per card while this line said 393. The screen had the same
+        # defect and was fixed on 2026-09-12. A server too old to send the count
+        # falls back to the thinned length, which is the only number it has.
+        taken = result.get("sample_count") or len(result.get("gpu_series", []))
+        print(f"  samples        {taken}, last {result['window_seconds']}s")
 
     if result.get("note"):
         print(f"  note           {result['note']}")

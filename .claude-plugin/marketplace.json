@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "DDPS lab's hyperun agent skill: turn a researcher's own repository into a submitted GPU job, with the runtime and cost answered by the server rather than guessed",
-    "version": "0.1.0"
+    "version": "0.1.1"
   },
   "plugins": [
     {
       "name": "hyperun",
       "source": "./agent",
       "description": "DDPS lab's agent skill for hyperun: read the user's repository -> build run.sh -> ask the server for an estimate and a validation -> submit after the user approves -> follow the job",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "DDPS Lab"
       },
