@@ -269,6 +269,17 @@ jobs:
           # holds and CloudFront answers 304 from the edge, so the cost is one
           # conditional request per file per load, not a re-download.
           aws s3 sync ui/ "s3://${{ vars.UI_BUCKET }}/" --delete --cache-control no-cache
+          # ★ index.html AND config.json GET `no-store`, WHICH IS STRONGER THAN `no-cache`.
+          # `no-cache` means "you may keep a copy, but revalidate before using it"; a browser
+          # that cached the file BEFORE that header existed never revalidates and serves its own
+          # copy forever. `no-store` means "do not keep a copy at all", so the next load after
+          # one fetch under this header can never be stale again. Three readings on 2026-09-11
+          # and 2026-09-12 were of an index.html from the previous day -- a folded Training size
+          # box, an on-demand default and a shadeform checkbox were all live and none of them
+          # were on the screen. The versioned assets keep `no-cache`: their URL changes every
+          # deploy, so a cached copy can only ever be the right one.
+          aws s3 cp ui/index.html "s3://${{ vars.UI_BUCKET }}/index.html" --cache-control no-store
+          aws s3 cp ui/config.json "s3://${{ vars.UI_BUCKET }}/config.json" --cache-control no-store
           # CloudFront caches aggressively and these files change on every
           # deploy, so the cache has to be told. Three files, so a blanket
           # invalidation is cheaper to reason about than a per-path one.
