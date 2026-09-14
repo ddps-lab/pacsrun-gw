@@ -184,9 +184,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # 빌드만 하고 push 하지 않는다. registry 를 아직 안 정했다
-      # (docs/08-plan.md 미결 항목 13). 여기서 빌드해 두는 이유는 Dockerfile 이
-      # 깨진 것을 배포하는 날에 처음 알게 되지 않도록 하려는 것이다.
+      # 여기서는 빌드만 한다. **push 는 release.yml 의 `image` job 이 한다**
+      # (HYPERUN-GW-IMAGE, 2026-09-14). 두 곳으로 나눈 이유는 gate 가 다르기
+      # 때문이다: 이 job 은 PR 에서도 돌아 Dockerfile 이 깨진 것을 merge 전에
+      # 잡고, push 는 main 의 tip 이면서 서버 test 를 통과했을 때만 한다 —
+      # ECR 에 올라간 image 는 `kubectl set image` 한 번이면 cluster 에 들어가므로
+      # test 를 안 지난 것이 거기 있으면 안 된다.
       # 이미지는 로컬 docker daemon 으로 절대 굽지 않는다 — CI 가 유일한 빌더다.
       - name: docker build
         working-directory: server

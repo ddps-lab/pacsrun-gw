@@ -42,6 +42,7 @@ import json
 import logging
 import pathlib
 import re
+import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -58,6 +59,7 @@ from . import notify
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
 from . import secret_expiry
+from . import servermetrics    # HYPERUN-SERVER-METRICS
 from . import tokens_source   # HYPERUN-TOKENS-SOURCE
 from .k8s import Cluster, ClusterError, NotFound
 from . import estimate as estimator
@@ -501,6 +503,47 @@ def healthz() -> dict[str, str]:
     """Liveness probe. Deliberately does not touch kube-apiserver: a probe that
     fails when the cluster is briefly busy would restart a server that is fine."""
     return {"status": "ok"}
+
+
+# HYPERUN-SERVER-METRICS. Count every finished request, keyed by the ROUTE
+# TEMPLATE rather than the URL -- `/v1/jobs/{job_id}/logs`, never
+# `/v1/jobs/job-66b46719b854/logs`. A label carrying a job id makes one time
+# series per job, and Prometheus's memory then grows with every job anybody has
+# ever run.
+#
+# `request.scope["route"]` is set by Starlette only AFTER routing, so a request
+# that matched nothing has none; those are counted under "<unmatched>" and not
+# under their raw path, for the same cardinality reason -- a scanner hitting
+# random URLs would otherwise create a series each.
+@app.middleware("http")
+async def count_requests(request: Request, call_next):
+    started = time.monotonic()
+    response = await call_next(request)
+    route = request.scope.get("route")
+    servermetrics.count_request(
+        getattr(route, "path", None) or "<unmatched>",
+        request.method,
+        response.status_code,
+        time.monotonic() - started,
+    )
+    return response
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> PlainTextResponse:
+    """What Prometheus scrapes.
+
+    ★ NO AUTHENTICATION, AND THAT IS A DECISION. Prometheus has no credential of
+    this service's and giving it one would mean a token in a scrape config. What
+    leaks instead is request counts per route -- no job name, no namespace, no
+    user, no value (see servermetrics for what is deliberately not counted). The
+    Service is ClusterIP, so only something already inside the cluster can reach
+    it; the Gateway in front routes `/v1/*` and not this.
+    """
+    return PlainTextResponse(
+        servermetrics.render(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/v1/explain", response_class=PlainTextResponse)

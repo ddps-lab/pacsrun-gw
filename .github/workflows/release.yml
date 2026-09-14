@@ -176,6 +176,79 @@ jobs:
           aws lambda wait function-updated-v2 --function-name "${{ vars.LAMBDA_FUNCTION }}"
           echo "::notice::published ${{ github.sha }} to ${{ vars.LAMBDA_FUNCTION }}"
 
+  # HYPERUN-GW-IMAGE. Build the server image and push it to ECR.
+  #
+  # WHY THIS EXISTS NOW. The gateway is moving off Lambda and into a pod in the
+  # cluster it already talks to -- a Lambda cannot hold the WebSocket a browser
+  # terminal needs, and its execution ends with its response so nothing is alive
+  # between two of a person's keystrokes (k8s.py, exec_in_driver). A pod is
+  # deployed as an image, and until now CI only ran `docker build` and threw the
+  # result away (ci.yml, the `server-image` job), because no registry had been
+  # chosen. The repository has existed since 2026-09-01 and the publish role
+  # already carries exactly the eight ECR actions a push needs, scoped to this
+  # one repository.
+  #
+  # GATED ON THE SAME SUITE AS THE ZIP. An image that reaches ECR is one a
+  # `kubectl set image` can put into the cluster; it must not exist unless the
+  # tests passed. See the note on the `test` job for the nine-hour outage that
+  # added that rule.
+  #
+  # THE TAG IS THE COMMIT AND `latest` IS NOT WRITTEN. A Deployment pinned to a
+  # sha names exactly one build; `latest` names whatever was pushed most recently
+  # and makes "what is running" unanswerable after the fact. The Deployment is
+  # updated with the sha, deliberately by hand for now.
+  image:
+    name: build the image and push it to ECR
+    runs-on: ubuntu-latest
+    needs: test
+    # Skip rather than fail when the registry is not configured, the same guard
+    # the screen job uses: an unset variable would otherwise expand to an empty
+    # string and die on a malformed repository name, which reads as a broken
+    # pipeline rather than as configuration nobody has done yet.
+    if: vars.ECR_REGION != '' && vars.ECR_REPOSITORY != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: assume the publish role over OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.ECR_REGION }}
+
+      - name: log in to ECR
+        id: ecr
+        run: |
+          set -euo pipefail
+          REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ vars.ECR_REGION }}.amazonaws.com
+          aws ecr get-login-password --region ${{ vars.ECR_REGION }} \
+            | docker login --username AWS --password-stdin "$REGISTRY"
+          # The account id is written to the step's output and never to the log:
+          # this repository is public and CI refuses a twelve-digit number in the
+          # tree (ci.yml, the no-identifiers job).
+          echo "registry=$REGISTRY" >> "$GITHUB_OUTPUT"
+
+      - name: refuse to push anything but the current tip of main
+        run: |
+          set -euo pipefail
+          TIP=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq .object.sha)
+          if [ "$TIP" != "${{ github.sha }}" ]; then
+            echo "::error::this commit is not the tip of main. Refusing to push its image."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: build and push
+        working-directory: server
+        run: |
+          set -euo pipefail
+          IMAGE="${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          # Printed so the deploy step can be copied out of the run's log. The
+          # tag is the whole sha; `config/deploy/server.yaml` takes it verbatim.
+          echo "::notice::pushed ${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
+
   screen:
     name: upload the screen to S3
     runs-on: ubuntu-latest
