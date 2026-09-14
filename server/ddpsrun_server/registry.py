@@ -14,9 +14,11 @@ END-TO-END FLOW of one `GET /v1/images`:
   3. For each repository, `DescribeImages` returns its images; the tagged ones are sorted newest
      first and the newest few are kept (TAGS_PER_REPO).
   4. Each repository becomes one row: its pullable address, its tags, and when the newest one was
-     pushed. The screen puts the addresses in a datalist behind the Image box, so typing filters
-     them and the box still accepts anything -- a public image like
-     `runpod/pytorch:...` is not in ECR and must stay typeable.
+     pushed. The screen draws them as a picker under the Image box, one block per repository with
+     its tags as buttons, and clicking one fills the box. There is no datalist as of 2026-09-14
+     (ui/index.html, DDPSRUN-IMAGES): a dropdown of full addresses is a column of one repeated
+     account id. The box still accepts anything -- a public image like `runpod/pytorch:...` is
+     not in ECR and must stay typeable.
 
 WHAT IT DOES NOT DO, and why each is deliberate.
 
@@ -55,7 +57,7 @@ from dataclasses import dataclass, field
 
 # How many tags one repository contributes. A repository accumulates a tag per build -- the
 # operator's has one per commit -- and the useful ones are the newest. Showing all of them would
-# make the Image datalist thousands of entries long for one repository.
+# make the Image picker thousands of buttons long for one repository.
 TAGS_PER_REPO = 8
 
 # One DescribeRepositories page. See "IT DOES NOT PAGINATE" above.

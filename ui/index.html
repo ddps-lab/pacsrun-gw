@@ -315,20 +315,25 @@
     <div class="grid2">
       <label><span><b>Name</b></span>
         <input id="f-name" placeholder="bank-exp3"></label>
-      <!-- DDPSRUN-IMAGES. A datalist and NOT a select: the addresses this lab has built are
-           offered, and anything else stays typeable. A select would make a public image
-           (runpod/pytorch:...) unreachable, and those are not in our registry at all. -->
-      <!-- DDPSRUN-IMAGES. A datalist ALONE was not enough and that is a measured judgement, not
-           a preference: the popup is a native widget that does not appear in a screenshot, and
-           the only thing telling a first-time user the list exists was the note beside the label
-           and a small arrow inside the box. So the addresses are also drawn as a visible list
-           below, and clicking one fills the box. The datalist stays because it filters as you
-           type, and the box stays free text because a public image (nvidia/cuda:..., runpod/...)
-           is not in our registry and must remain typeable. -->
+      <!-- DDPSRUN-IMAGES. A free-text box plus a VISIBLE picker, and deliberately no datalist.
+           The box is not a select because a public image (nvidia/cuda:..., runpod/pytorch:...)
+           is not in our registry at all and must stay typeable.
+
+           WHY THE DATALIST WENT (2026-09-14, asked for). Clicking the box opened a native
+           dropdown of full ECR addresses, and an ECR address begins with the twelve digits of
+           the AWS account id: `<ACCOUNT_ID>.dkr.ecr.<region>.amazonaws.com/<repository>:<tag>`.
+           Nineteen repositories' worth of that is a wall of one repeated number, it is
+           the account number on a screen anyone in the lab can open, and it is the part of the
+           string a reader cannot use to tell one image from another. The picker below already
+           shows what distinguishes them -- the repository name and the tag -- so the dropdown
+           was removed and the button is the way in.
+
+           THE ADDRESS ITSELF IS NOT HIDDEN. Picking one still fills this box with the whole
+           pullable address, because that is the string the job is submitted with and a field
+           that shows something other than what it sends is worse than a long field. -->
       <label><span><b>Image *</b> <span class="dim" id="f-image-note"></span></span>
-        <input id="f-image" list="f-image-list" autocomplete="off"
-               placeholder="type, or pick one below">
-        <datalist id="f-image-list"></datalist>
+        <input id="f-image" autocomplete="off"
+               placeholder="type, or use the button below">
         <div class="row" style="margin-top:2px">
           <button class="flat tiny" id="f-image-toggle" type="button" style="padding:4px 10px">Browse this lab's images</button>
         </div>
@@ -468,10 +473,32 @@
         <label class="chk"><input type="checkbox" data-vendor="lambda" data-priced> lambda</label>
         <label class="chk"><input type="checkbox" data-vendor="nebius" data-priced> nebius</label>
       </div></label>
+    <!-- DDPSRUN-PLACEMENT-DEFAULT. cheapest, changed from ordered 2026-09-14.
+
+         WHAT THE OLD DEFAULT DID. `ordered` asks the candidates in the order written and STOPS
+         at the first that answers, so the job takes whatever the first vendor quotes and no
+         other price is ever looked at. That is the CRD's own default (config/crd,
+         placement.mode `default: ordered`) because it is what every job did before the field
+         existed, not because it is the better answer for a person filling in this form.
+
+         WHY THE SCREEN MAY DIFFER FROM THE CRD. Same reasoning as DDPSRUN-CAPACITY-DEFAULT
+         above: a default is a decision made on behalf of whoever does not change it, and the
+         person least able to judge the walk order is the one most likely to accept it. Asking
+         every candidate and buying the cheapest costs one solve and can only lower the bill.
+
+         WHAT IT IS NOT. It is not a promise about which vendor wins: `cheapest` ranks the
+         candidates the deciders produce, and a vendor nobody can rent from is still filtered by
+         the Vendors row below (DDPSRUN-VENDOR-CHOICE). Every `cheapest` job submitted so far
+         landed on RunPod and finished (15 of them, 2026-08-24 to 2026-09-07; the sixteenth is
+         Pending for a reason that has nothing to do with the mode).
+
+         `ordered` keeps its place in the list for anyone who wants the old walk, and it is the
+         only option whose value is empty -- readForm sends no `placement_mode` for it, which is
+         byte-for-byte what jobs sent before this box existed. -->
     <label><span><b>Placement</b> <span class="dim">what to do with the candidates</span></span>
       <select id="f-mode">
-        <option value="">ordered - stop at the first that answers (default)</option>
-        <option value="cheapest">cheapest - ask every candidate, buy the cheapest</option>
+        <option value="cheapest" selected>cheapest - ask every candidate, buy the cheapest (default)</option>
+        <option value="">ordered - stop at the first that answers</option>
         <option value="compare">compare - ask every candidate, buy NOTHING</option>
       </select></label>
     <div id="f-mode-note"></div>

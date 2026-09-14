@@ -622,6 +622,40 @@ check(/<option value="on-demand" selected>/.test(HTML),
 check(SRC.includes('$("f-capacity").value = "on-demand"'),
       "and Clear lands on that same default, rather than silently putting the form back on spot");
 
+// DDPSRUN-PLACEMENT-DEFAULT. `ordered` stops at the first candidate that answers, so accepting it
+// meant no other price was ever looked at. The option is still there and its value is still the
+// empty string, which is what makes readForm send no `placement_mode` for it.
+check(/<option value="cheapest" selected>/.test(HTML),
+      "the placement box defaults to cheapest, so accepting the default asks every candidate "
+      + "instead of buying from the first one that answers");
+
+check(/<option value="">ordered/.test(HTML),
+      "and ordered is still offered, with the empty value that sends no placement_mode at all");
+
+check(SRC.includes('$("f-mode").value = "cheapest"'),
+      "Clear lands on cheapest too, rather than putting the next submission back on ordered");
+
+{
+  // The default has to survive readForm, or the box would say cheapest and the job would be
+  // submitted without a mode. This is the half that reaches the server.
+  setForm({ image: IMAGE, mode: "cheapest" });
+  check(readForm().placement_mode === "cheapest",
+        "and a form left on that default submits placement_mode cheapest, which is the half of "
+        + "the default that reaches the PacsJob");
+}
+
+// DDPSRUN-IMAGES-NO-DATALIST. The Image box's dropdown listed full ECR addresses, every one of
+// them beginning with the same twelve-digit account id. The picker below shows the repository and
+// the tag, which are the parts that differ.
+check(!/id="f-image-list"/.test(HTML) && !/list="f-image-list"/.test(HTML),
+      "the Image box has no datalist: neither the element nor the list= attribute that names it");
+
+check(!SRC.includes('$("f-image-list")'),
+      "and nothing in app.js still fills one, so the fetched addresses reach the picker only");
+
+check(/id="f-image-toggle"/.test(HTML) && /id="f-image-picker"/.test(HTML),
+      "Browse this lab's images and its picker are still the way in");
+
 // shadeform joined models.RUNNABLE_VENDORS on 2026-09-10 and has completed live runs; this row
 // still offered aws and runpod only, so a vendor that sells to us could not be asked for.
 check(/data-vendor="shadeform"(?![^>]*data-priced)/.test(HTML),

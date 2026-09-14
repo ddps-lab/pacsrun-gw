@@ -1498,16 +1498,17 @@ function readForm() {
   return body;
 }
 
-/* DDPSRUN-IMAGES. Fill the Image box's datalist with what this lab has already built.
+/* DDPSRUN-IMAGES. Draw the images this lab has already built, so nobody types a 70-character
+   address from memory.
 
    WHY IT IS FETCHED WHEN THE SCREEN OPENS AND CACHED. The list changes when somebody pushes an
    image, which is not while a form is being filled in; asking once per visit costs one Lambda
    call against a form that takes minutes to complete.
 
-   A FAILURE HERE CHANGES NOTHING ABOUT THE FORM. The box is a free-text input with a datalist,
-   not a select, so an empty list leaves it exactly as usable as it was before this existed -- and
-   a public image (runpod/pytorch:...) was never in the list anyway, because it is not in our
-   registry. So the catch says what happened in the note beside the label and moves on.
+   A FAILURE HERE CHANGES NOTHING ABOUT THE FORM. The box is a free-text input and not a select,
+   so an empty list leaves it exactly as usable as it was before this existed -- and a public
+   image (runpod/pytorch:...) was never in the list anyway, because it is not in our registry. So
+   the catch says what happened in the note beside the label and moves on.
 
    THE NOTE IS THE PART THAT MATTERS ON A FAILURE. The server answers 200 with a `note` rather
    than 502 for exactly this reason: an empty list with no explanation reads as "this lab has
@@ -1556,23 +1557,25 @@ async function drawImages(force) {
     return;
   }
   const rows = answer.images || [];
-  const options = [];
-  rows.forEach((r) => (r.addresses || []).forEach((a) => options.push([a, r.pushed_at])));
-  // A datalist option's `label` is what the browser shows beside the value, so the push date
-  // rides along without becoming part of what gets typed into the box.
-  $("f-image-list").innerHTML = options
-    .map(([value, pushed]) => `<option value="${esc(value)}"${pushed ? ` label="${esc(String(pushed).slice(0, 10))}"` : ""}></option>`)
-    .join("");
+  // DDPSRUN-IMAGES-NO-DATALIST (2026-09-14). These addresses used to also fill a datalist behind
+  // the Image box, and the box's dropdown was then a column of `<ACCOUNT_ID>.dkr.ecr...` strings
+  // whose first forty characters are identical on every row. The count is still drawn -- it is
+  // the only thing that distinguishes "this lab has built nothing" from "the registry call
+  // failed" -- but the addresses themselves now appear only in the picker below, keyed by the
+  // repository name and the tag, which is what tells them apart. See index.html, DDPSRUN-IMAGES.
+  const tagCount = rows.reduce((n, r) => n + (r.addresses || []).length, 0);
   const repos = rows.filter((r) => (r.addresses || []).length).length;
   $("f-image-note").textContent = answer.note
     ? answer.note
-    : options.length
-      ? `${options.length} from ${repos} ${repos === 1 ? "repository" : "repositories"} this lab has built` +
+    : tagCount
+      ? `${tagCount} from ${repos} ${repos === 1 ? "repository" : "repositories"} this lab has built` +
         (answer.truncated ? ", and more than one page exists" : "")
       : "";
 
-  /* The visible half. One block per repository, newest push first, its tags as buttons -- so
-     the list can be READ without knowing a datalist is there, and a screenshot shows it.
+  /* The picker. One block per repository, newest push first, its tags as buttons. Since
+     2026-09-14 it is the ONLY place these addresses appear (DDPSRUN-IMAGES-NO-DATALIST above):
+     it can be read without knowing a native popup is there, it shows in a screenshot, and it is
+     keyed by the two parts that differ between images rather than by the account id they share.
 
      DDPSRUN-IMAGES-TRIM. Only the three newest tags per repository are drawn, and the rest sit
      behind a "+N more" button. Every tag of every repository came to 55 buttons on this account
@@ -1813,7 +1816,10 @@ $("s1-reset").onclick = () => {
   // default, not on the one it used to have -- otherwise pressing Clear silently changes what
   // the next submission buys.
   $("f-capacity").value = "on-demand";
-  $("f-mode").value = "";
+  // DDPSRUN-PLACEMENT-DEFAULT. Same rule as the capacity box on the line above: Clear has to land
+  // on the default the markup ships, not on the one this form used to have. Landing on "" would
+  // put the next submission back on `ordered` without saying so.
+  $("f-mode").value = "cheapest";
   document.querySelectorAll("#view-submit [data-vendor]").forEach((b) => { b.checked = false; });
   vendorRules();
   $("s1-err").innerHTML = "";
