@@ -40,6 +40,11 @@ import os
 import pathlib
 import sys
 
+# An ABSOLUTE import, not `from . import`. Lambda loads this file as a top-level
+# module by path, so it has no parent package and a relative import raises
+# ImportError before the handler is ever called.
+from ddpsrun_server import tokens_source
+
 TMP = pathlib.Path("/tmp")
 TOKENS_PATH = TMP / "ddpsrun-tokens.json"
 KUBECONFIG_PATH = TMP / "ddpsrun-kubeconfig.yaml"
@@ -47,31 +52,26 @@ CA_PATH = TMP / "ddpsrun-cluster-ca.crt"
 
 
 def _write_token_file() -> None:
-    """Fetch the token list from Secrets Manager and put it where the server looks.
+    """Fetch the directory from Secrets Manager and put it where the server looks.
+
+    THE WORK MOVED TO `tokens_source` ON 2026-09-14 and this is the Lambda's call
+    into it. Nothing in it was ever Lambda-specific -- it reads a secret with
+    boto3 and writes a file -- and the pod deployment needs exactly the same
+    thing. Two copies of "who is allowed in" is the one duplication this system
+    must not have, and for the length of the migration a Lambda and a pod answer
+    requests side by side.
 
     Raises:
-        RuntimeError: the secret is unreadable. Failing here rather than at the
-            first request means the reason appears in the function's own logs
-            instead of as a 500 nobody can explain.
+        RuntimeError: the secret id is unset, or the secret is unreadable.
+            Failing here rather than at the first request means the reason
+            appears in the function's own logs instead of as a 500 nobody can
+            explain.
     """
-    secret_id = os.environ.get("DDPSRUN_TOKENS_SECRET_ID", "").strip()
-    if not secret_id:
+    if not tokens_source.fetch_to_file(TOKENS_PATH):
         raise RuntimeError(
-            "DDPSRUN_TOKENS_SECRET_ID is not set. On Lambda the token list comes "
+            "HYPERUN_TOKENS_SECRET_ID is not set. On Lambda the directory comes "
             "from Secrets Manager; there is no file to mount."
         )
-    import boto3  # provided by the Lambda runtime, so it is not in our package
-
-    try:
-        response = boto3.client("secretsmanager").get_secret_value(SecretId=secret_id)
-    except Exception as exc:  # noqa: BLE001 - botocore raises several types here
-        raise RuntimeError(f"cannot read the token list from {secret_id}: {exc}") from exc
-
-    body = response.get("SecretString")
-    if body is None:
-        body = base64.b64decode(response["SecretBinary"]).decode("utf-8")
-    TOKENS_PATH.write_text(body, encoding="utf-8")
-    os.environ["DDPSRUN_TOKENS_PATH"] = str(TOKENS_PATH)
 
 
 def _write_kubeconfig() -> None:

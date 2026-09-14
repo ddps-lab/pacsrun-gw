@@ -12,6 +12,7 @@ with a fake boto3 instead.
 
 import base64
 import json
+import os
 import sys
 import types
 
@@ -58,8 +59,26 @@ def handler_module(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "TOKENS_PATH", tmp_path / "tokens.json")
     monkeypatch.setattr(module, "KUBECONFIG_PATH", tmp_path / "kubeconfig.yaml")
     monkeypatch.setattr(module, "CA_PATH", tmp_path / "ca.crt")
+    before = {k: os.environ[k] for k in ("HYPERUN_TOKENS_PATH", "DDPSRUN_TOKENS_PATH")
+              if k in os.environ}
     module._calls = calls
-    return module
+    yield module
+    # ★ PUT THE PATH VARIABLES BACK. The handler writes them into the real
+    # `os.environ` on purpose -- that is how `Settings.from_env` finds the file it
+    # just fetched -- so a test that runs it leaves them pointing at a tmp_path
+    # that is about to be deleted. On 2026-09-14 that was 124 failures whose only
+    # cause was test order: later tests set `DDPSRUN_TOKENS_PATH` and the leaked
+    # `HYPERUN_TOKENS_PATH` is read first (HYPERUN-ENV-RENAME), so they all
+    # authenticated against a directory from a test that had already finished.
+    #
+    # NOT `monkeypatch.delenv(..., raising=False)`, which was the first attempt
+    # and restores nothing: monkeypatch records an undo entry only for a name
+    # that was ALREADY set, and these two are set later, inside the test body.
+    for name in ("HYPERUN_TOKENS_PATH", "DDPSRUN_TOKENS_PATH"):
+        if name in before:
+            os.environ[name] = before[name]
+        else:
+            os.environ.pop(name, None)
 
 
 def test_the_token_list_comes_from_secrets_manager_and_lands_where_the_server_looks(
@@ -70,6 +89,8 @@ def test_the_token_list_comes_from_secrets_manager_and_lands_where_the_server_lo
     handler_module._write_token_file()
     assert handler_module._calls["secret"] == "ddpsrun-gw/tokens"
     # config.Settings reads this path; the handler is what points it at /tmp.
+    # Both names, so a deployment part-way through the rename finds it either way.
+    assert os.environ["HYPERUN_TOKENS_PATH"] == str(handler_module.TOKENS_PATH)
     assert os.environ["DDPSRUN_TOKENS_PATH"] == str(handler_module.TOKENS_PATH)
     written = json.loads(handler_module.TOKENS_PATH.read_text())
     assert written["tokens"][0]["namespace"] == "ddps-alice"
@@ -81,7 +102,10 @@ def test_a_missing_secret_id_fails_at_cold_start_not_at_the_first_request(
     # A 500 from inside a Lambda is far harder to explain than a startup crash
     # that names the variable in the function's own log.
     monkeypatch.delenv("DDPSRUN_TOKENS_SECRET_ID")
-    with pytest.raises(RuntimeError, match="DDPSRUN_TOKENS_SECRET_ID"):
+    monkeypatch.delenv("HYPERUN_TOKENS_SECRET_ID", raising=False)
+    # The message names the variable an operator is supposed to set NOW
+    # (HYPERUN-ENV-RENAME), not the one being retired.
+    with pytest.raises(RuntimeError, match="HYPERUN_TOKENS_SECRET_ID"):
         handler_module._write_token_file()
 
 

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import pathlib
 import re
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -57,6 +58,7 @@ from . import notify
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
 from . import secret_expiry
+from . import tokens_source   # HYPERUN-TOKENS-SOURCE
 from .k8s import Cluster, ClusterError, NotFound
 from . import estimate as estimator
 from . import metrics as metrics_reader
@@ -176,10 +178,42 @@ def build_state(app: FastAPI, force: bool = False) -> None:
     app.state.ready = True
 
 
+# Where a pod writes the directory it fetched. The container's root filesystem is
+# read-only (config/deploy/server.yaml), so it has to be a writable mount; /tmp is
+# the one the Deployment provides, and it is also what the Lambda uses.
+TOKENS_CACHE = pathlib.Path("/tmp/hyperun-tokens.json")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """What uvicorn runs once, around the life of the process."""
+    """What uvicorn runs once, around the life of the process.
+
+    HYPERUN-TOKENS-SOURCE. Two things happen here that the Lambda path does
+    elsewhere, and both exist because this process does not restart.
+
+      1. The directory is fetched from Secrets Manager BEFORE `build_state`, so
+         the file `Settings.from_env` is about to read exists. A deployment that
+         mounts the file instead sets no secret id, `fetch_to_file` returns False,
+         and nothing happens -- which is what a local run and the tests do.
+      2. It is then re-fetched on an interval. A Lambda re-read it on every cold
+         start, so registering somebody took effect within minutes without anybody
+         arranging it; a pod that stays up for weeks would read it once and never
+         see a new person again.
+
+    The reload swaps in a new `TokenStore` only if the fetched document parses.
+    A malformed one leaves the working directory in place and says so in the log,
+    because refusing every request is a worse answer than being a minute stale.
+    """
+    tokens_source.fetch_to_file(TOKENS_CACHE)
     build_state(app, force=True)
+
+    def reload_directory() -> None:
+        try:
+            app.state.tokens = TokenStore.load(app.state.settings.tokens_path)
+        except Exception as exc:  # noqa: BLE001 - see the docstring
+            logger.warning("the refreshed directory did not parse, keeping the old one: %s", exc)
+
+    tokens_source.refresh_forever(TOKENS_CACHE, reload_directory)
     yield
 
 

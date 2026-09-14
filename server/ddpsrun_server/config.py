@@ -142,47 +142,66 @@ class Settings:
         """
         env = dict(os.environ) if env is None else env
 
+        # HYPERUN-ENV-RENAME. Every variable is read as `HYPERUN_<NAME>` first and
+        # `DDPSRUN_<NAME>` second.
+        #
+        # WHY BOTH, AND WHY NOT A FLAG DAY. The product is called hyperun -- the CLI
+        # and the PyPI package already are -- and `ddpsrun` is the name the
+        # infrastructure kept. The names are being brought together, but the Lambda
+        # that serves every request today is configured with the old ones, and
+        # renaming its variables and moving it to a pod in one step would leave no
+        # way to tell which half broke. So the new deployment is written with
+        # `HYPERUN_*` and the running one is not touched. When nothing sets the old
+        # names any more, drop `"DDPSRUN_"` from the tuple below and this comment
+        # with it.
+        def setting(name: str, default: str = "") -> str:
+            for prefix_ in ("HYPERUN_", "DDPSRUN_"):
+                value = env.get(prefix_ + name)
+                if value is not None:
+                    return value
+            return default
+
         def required(name: str) -> str:
-            value = env.get(name, "").strip()
+            value = setting(name).strip()
             if not value:
                 raise ConfigError(
-                    f"{name} is not set. The server cannot fill in a job's "
+                    f"HYPERUN_{name} is not set. The server cannot fill in a job's "
                     f"resultPath without it, and a job with no resultPath "
                     f"silently produces nothing to collect."
                 )
             return value
 
-        prefix = env.get("DDPSRUN_RESULT_PREFIX", "pacsrun/").strip()
+        prefix = setting("RESULT_PREFIX", "pacsrun/").strip()
         # The trailing slash is load-bearing, exactly as it is in PACSrun's
         # tenancy guard: without it the prefix `pacsrun/lab-a` also matches
         # `pacsrun/lab-arthur/...`.
         if prefix and not prefix.endswith("/"):
             prefix += "/"
 
-        raw_secrets = env.get("DDPSRUN_SECRET_BINDINGS", "{}").strip() or "{}"
+        raw_secrets = setting("SECRET_BINDINGS", "{}").strip() or "{}"
         try:
             parsed = json.loads(raw_secrets)
         except json.JSONDecodeError as exc:
-            raise ConfigError(f"DDPSRUN_SECRET_BINDINGS is not valid JSON: {exc}") from exc
+            raise ConfigError(f"HYPERUN_SECRET_BINDINGS is not valid JSON: {exc}") from exc
         if not isinstance(parsed, dict):
-            raise ConfigError("DDPSRUN_SECRET_BINDINGS must be a JSON object")
+            raise ConfigError("HYPERUN_SECRET_BINDINGS must be a JSON object")
 
         bindings: dict[str, SecretBinding] = {}
         for public_name, where in parsed.items():
             if not isinstance(where, dict) or "name" not in where or "key" not in where:
                 raise ConfigError(
-                    f'DDPSRUN_SECRET_BINDINGS["{public_name}"] must be '
+                    f'HYPERUN_SECRET_BINDINGS["{public_name}"] must be '
                     f'{{"name": "<secret>", "key": "<key>"}}'
                 )
             bindings[public_name] = SecretBinding(str(where["name"]), str(where["key"]))
 
         try:
-            tail = int(env.get("DDPSRUN_LOG_TAIL_LINES", "2000"))
+            tail = int(setting("LOG_TAIL_LINES", "2000"))
         except ValueError as exc:
-            raise ConfigError("DDPSRUN_LOG_TAIL_LINES must be an integer") from exc
+            raise ConfigError("HYPERUN_LOG_TAIL_LINES must be an integer") from exc
 
         return Settings(
-            result_bucket=required("DDPSRUN_RESULT_BUCKET"),
+            result_bucket=required("RESULT_BUCKET"),
             result_prefix=prefix,
             # DDPSRUN-WORKLOAD-SA. The default is the ServiceAccount PACSrun's own terraform
             # wired to the EC2/STS role, because that role's trust policy names exactly one
@@ -190,28 +209,26 @@ class Settings:
             # which is the ROLE's name, not the ServiceAccount's -- and every AWS job then
             # died with "Not authorized to perform sts:AssumeRoleWithWebIdentity", exit 10,
             # before renting anything. See terraform/lambda/variables.tf for the measurement.
-            service_account=env.get("DDPSRUN_SERVICE_ACCOUNT", "pacsjob-writer").strip(),
-            tokens_path=required("DDPSRUN_TOKENS_PATH"),
+            service_account=setting("SERVICE_ACCOUNT", "pacsjob-writer").strip(),
+            tokens_path=required("TOKENS_PATH"),
             secret_bindings=bindings,
             log_tail_lines=tail,
             # DDPSRUN-REGISTER. From defaults to To rather than to a made-up
             # no-reply address: an unverified sender is refused by SES in the
             # sandbox, so a default nobody verified would make the button fail
             # on every deployment that set only one of the two.
-            register_notify_to=env.get("DDPSRUN_REGISTER_NOTIFY_TO", "").strip(),
+            register_notify_to=setting("REGISTER_NOTIFY_TO").strip(),
             register_notify_from=(
-                env.get("DDPSRUN_REGISTER_NOTIFY_FROM", "").strip()
-                or env.get("DDPSRUN_REGISTER_NOTIFY_TO", "").strip()),
+                setting("REGISTER_NOTIFY_FROM").strip()
+                or setting("REGISTER_NOTIFY_TO").strip()),
             # All three empty means no Cognito. That is a supported state, not a
             # broken one: the server then accepts static tokens only, which is
             # exactly what it did before Cognito existed and is what a local run
             # or a test wants (`docs/16-login.md` 16.3).
-            cognito_pool_id=env.get("DDPSRUN_COGNITO_POOL_ID", "").strip(),
-            cognito_client_id=env.get("DDPSRUN_COGNITO_CLIENT_ID", "").strip(),
-            cognito_region=env.get(
-                "DDPSRUN_COGNITO_REGION", env.get("AWS_REGION", "")
-            ).strip(),
-            cognito_login_domain=env.get("DDPSRUN_COGNITO_LOGIN_DOMAIN", "").rstrip("/"),
+            cognito_pool_id=setting("COGNITO_POOL_ID").strip(),
+            cognito_client_id=setting("COGNITO_CLIENT_ID").strip(),
+            cognito_region=(setting("COGNITO_REGION") or env.get("AWS_REGION", "")).strip(),
+            cognito_login_domain=setting("COGNITO_LOGIN_DOMAIN").rstrip("/"),
         )
 
 # DDPSRUN-PROMETHEUS-PROXY. Where the Prometheus this server queries lives.

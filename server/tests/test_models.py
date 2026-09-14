@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from ddpsrun_server import naming
 from ddpsrun_server.auth import Principal
-from ddpsrun_server.config import SecretBinding, Settings
+from ddpsrun_server.config import ConfigError, SecretBinding, Settings
 from ddpsrun_server.models import (
     KNOWN_VENDORS,
     JobView,
@@ -35,6 +35,54 @@ def minimal(**overrides):
     body = {"name": "bank-exp2", "image": "runpod/pytorch:1.1.0"}
     body.update(overrides)
     return SubmitRequest(**body)
+
+
+# ---------------------------------------------------------------- HYPERUN-ENV-RENAME
+
+
+def test_a_hyperun_variable_is_read():
+    # The name the product actually has. Everything new is configured with these.
+    s = Settings.from_env({"HYPERUN_RESULT_BUCKET": "b", "HYPERUN_TOKENS_PATH": "t"})
+    assert s.result_bucket == "b" and s.tokens_path == "t"
+
+
+def test_a_ddpsrun_variable_still_works():
+    # The Lambda that serves every request today is configured with these, and it
+    # is not being touched while the pod is proven beside it.
+    s = Settings.from_env({"DDPSRUN_RESULT_BUCKET": "b", "DDPSRUN_TOKENS_PATH": "t"})
+    assert s.result_bucket == "b" and s.tokens_path == "t"
+
+
+def test_hyperun_wins_when_both_are_set():
+    # ★ THE ORDER MATTERS AND IS NOT ALPHABETICAL. A deployment part-way through
+    # the rename will have both set for a while; the new one is the intent and
+    # the old one is what is being left behind.
+    s = Settings.from_env({
+        "HYPERUN_RESULT_BUCKET": "new", "DDPSRUN_RESULT_BUCKET": "old",
+        "HYPERUN_TOKENS_PATH": "t",
+    })
+    assert s.result_bucket == "new"
+
+
+def test_an_empty_hyperun_value_is_not_skipped_for_the_old_name():
+    # Set-but-empty is a deliberate "off", not an absence. Falling through to the
+    # old name here would resurrect a value the operator meant to clear.
+    s = Settings.from_env({
+        "HYPERUN_RESULT_BUCKET": "b", "HYPERUN_TOKENS_PATH": "t",
+        "HYPERUN_COGNITO_POOL_ID": "", "DDPSRUN_COGNITO_POOL_ID": "us-west-2_old",
+    })
+    assert s.cognito_pool_id == ""
+
+
+def test_the_missing_variable_message_names_the_new_prefix():
+    # The message is what an operator reads at 2am; it must name the variable
+    # they are supposed to set now, not the one being retired.
+    try:
+        Settings.from_env({})
+    except ConfigError as exc:
+        assert "HYPERUN_RESULT_BUCKET" in str(exc)
+    else:
+        raise AssertionError("a missing bucket must raise")
 
 
 def test_the_server_fills_the_four_fields_the_user_cannot_send():
