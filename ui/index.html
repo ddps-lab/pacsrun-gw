@@ -41,7 +41,14 @@
 <div id="stale" hidden></div>
 
 <header hidden id="bar">
-  <div class="brand">ddps<span>run</span></div>
+  <!-- DDPSRUN-BRAND. The word on screen is `hyperun`, split so the accent lands on `run` exactly
+       where it did before: `hype` + `run` spells hyperun, because the name is hyper and run
+       sharing one r. The tab title (<title> at the top of this file) has said hyperun since the
+       rename; this line and the sign-in heading below were the two places the old word survived,
+       and they are the two a person actually looks at. The localStorage keys in app.js
+       (`ddpsrun.server`, `ddpsrun.token`) are NOT renamed with them: those are live state in
+       somebody's browser, and changing a key signs every token user out. -->
+  <div class="brand">hype<span>run</span></div>
   <nav>
     <button data-view="home" class="on">Home</button>
     <button data-view="jobs">Jobs</button>
@@ -61,7 +68,7 @@
 
 <div id="login">
   <div>
-    <h1 class="brand" style="font-size:24px">ddps<span>run</span></h1>
+    <h1 class="brand" style="font-size:24px">hype<span>run</span></h1>
     <p class="dim small">Sign in to submit jobs and watch them run.</p>
   </div>
 

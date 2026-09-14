@@ -656,6 +656,22 @@ check(!SRC.includes('$("f-image-list")'),
 check(/id="f-image-toggle"/.test(HTML) && /id="f-image-picker"/.test(HTML),
       "Browse this lab's images and its picker are still the way in");
 
+// DDPSRUN-BRAND. The product is called hyperun: the command is `pip install hyperun`, the plugin
+// is `/plugin install hyperun`, and the tab title has said hyperun since the rename. The two
+// places a person actually reads -- the bar across the top and the sign-in heading -- still said
+// ddpsrun, so the screen introduced itself by a name that appears nowhere else.
+{
+  const brands = [...HTML.matchAll(/class="brand"[^>]*>(.*?)<\/(?:div|h1)>/g)]
+    .map((m) => m[1].replace(/<[^>]*>/g, ""));
+  check(brands.length === 2, "there are exactly two brand elements: the top bar and the sign-in heading");
+  check(brands.every((b) => b === "hyperun"),
+        "and both spell hyperun once the accent span is stripped, so no screen introduces itself "
+        + "as ddpsrun");
+}
+
+check(/<title>hyperun<\/title>/.test(HTML),
+      "the tab title agrees with them");
+
 // shadeform joined models.RUNNABLE_VENDORS on 2026-09-10 and has completed live runs; this row
 // still offered aws and runpod only, so a vendor that sells to us could not be asked for.
 check(/data-vendor="shadeform"(?![^>]*data-priced)/.test(HTML),
