@@ -34,13 +34,14 @@ set -euo pipefail
 # Measured 2026-09-15 from `git ls-files`. 702 at first; deleting the dead Lambda job in
 # release.yml took it to 699; the monitor put it back to 707, and every one of those eight is
 # a live identifier -- the three `<oldname>.io/*` labels PACSrun writes on every job, and the
-# python package's own directory name. Both are on the list above that a file edit cannot
+# python package's own directory name, and one more for the owner label in the analysis
+# route's owner-gate test. All on the list above that a file edit cannot
 # change, which is the case this file says out loud is worth a conversation.
 #
 # Lower it, never raise it without one. The easiest 29 to remove are in terraform/lambda/
 # main.tf, whose `aws_lambda_function` and `aws_lambda_function_url` blocks now describe
 # something that no longer exists -- and would rebuild it on the next apply.
-BASELINE=707
+BASELINE=708
 
 # ★ `git ls-files` AND NOT `grep -r .`, and the difference is the whole check.
 # A recursive grep counts what is on the DISK: a virtualenv, a build directory,

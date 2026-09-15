@@ -2152,3 +2152,130 @@ def test_the_note_appears_when_the_list_really_is_empty(client, cluster):
             "빌 때는 무엇을 하면 되는지가 문장으로 나온다")
     finally:
         client.app.state.settings = live
+
+
+# ------------------------------------------------- HYPERUN-MONITOR: /v1/jobs/{id}/analysis
+
+ANALYSIS_SCORES = [2.4413, 2.7344, 3.6300, 3.0712, 2.3713, 2.4700, 2.2800, 3.1000,
+                   2.4000, 3.3800, 2.9400, 3.4100, 3.0800, 2.8100, 3.4400, 1.5100,
+                   3.0000, 1.5400, 2.2800, 2.3700]
+
+
+def _metric_log(values, series="bank/adapters/AD/iter_1"):
+    import json as _json
+    import time as _time
+    out = []
+    for i, value in enumerate(values, start=1):
+        row = {"_series": series, "step": i, "score": value}
+        stamp = _time.strftime("%Y-%m-%dT%H:%M:%S", _time.gmtime(_time.time() - 60 + i))
+        out.append(stamp + ".000000000Z PACSRUN_METRIC=" +
+                   _json.dumps(row, separators=(",", ":")))
+    return out
+
+
+def _running_job(cluster, name):
+    cluster.objects[("default", name)] = {
+        "metadata": {"name": name},
+        "spec": {"parallelism": 1},
+        "status": {"phase": "Running"},
+    }
+
+
+def test_analysis_reports_the_run_that_went_backwards(client, cluster, monkeypatch):
+    # The real numbers from the job that finished `Succeeded` while one of its
+    # nine trainings ran 25% downhill.
+    _running_job(cluster, "analysis-bad")
+    monkeypatch.setattr(cluster, "recent_log_lines",
+                        lambda ns, name, window: _metric_log(ANALYSIS_SCORES))
+
+    body = as_root(client, "GET", "/v1/jobs/analysis-bad/analysis").json()
+    assert [f["rule"] for f in body["findings"]] == ["regression"]
+    assert body["findings"][0]["series"] == "bank/adapters/AD/iter_1"
+    assert body["findings"][0]["change_ratio"] == pytest.approx(-0.249, abs=0.002)
+    assert "regression" in body["checked"] and "nan" in body["checked"]
+
+
+def test_analysis_of_a_healthy_run_is_empty_and_says_what_it_checked(client, cluster,
+                                                                     monkeypatch):
+    _running_job(cluster, "analysis-ok")
+    monkeypatch.setattr(cluster, "recent_log_lines",
+                        lambda ns, name, window: _metric_log(
+                            [3.0 - 2.0 / (i + 1) for i in range(30)]))
+
+    body = as_root(client, "GET", "/v1/jobs/analysis-ok/analysis").json()
+    assert body["findings"] == []
+    assert body["note"] == ""
+
+
+def test_a_job_with_no_metric_lines_says_so_rather_than_looking_clean(client, cluster,
+                                                                      monkeypatch):
+    # ★ AN EMPTY `findings` ON AN UNCHECKABLE JOB LOOKS EXACTLY LIKE A CLEAN BILL
+    # OF HEALTH. The difference matters most on the job somebody is worried about,
+    # so `checked` and `note` say which rules could actually run.
+    _running_job(cluster, "analysis-quiet")
+    import time as _time
+    stamp = _time.strftime("%Y-%m-%dT%H:%M:%S", _time.gmtime(_time.time() - 10))
+    monkeypatch.setattr(cluster, "recent_log_lines",
+                        lambda ns, name, window: [stamp + ".000000000Z epoch 1 done"])
+
+    body = as_root(client, "GET", "/v1/jobs/analysis-quiet/analysis").json()
+    assert body["findings"] == []
+    assert body["checked"] == ["silence", "crash"]
+    assert "no training metrics" in body["note"]
+
+
+def test_the_model_is_not_called_unless_it_is_asked_for(client, cluster, monkeypatch):
+    # ★ A PAGE LOAD MUST NOT SPEND MONEY. `explain` is false by default, so
+    # opening a job costs one log read and no model call.
+    _running_job(cluster, "analysis-cost")
+    monkeypatch.setattr(cluster, "recent_log_lines",
+                        lambda ns, name, window: _metric_log(ANALYSIS_SCORES))
+
+    def explode(*args, **kwargs):
+        raise AssertionError("the model was called without explain=true")
+
+    monkeypatch.setattr(main.monitor, "explain", explode)
+    body = as_root(client, "GET", "/v1/jobs/analysis-cost/analysis").json()
+    assert body["findings"]
+    assert body["explanation"] == ""
+
+
+def test_asking_for_an_explanation_calls_the_model_once(client, cluster, monkeypatch):
+    _running_job(cluster, "analysis-explain")
+    monkeypatch.setattr(cluster, "recent_log_lines",
+                        lambda ns, name, window: _metric_log(ANALYSIS_SCORES))
+    calls = []
+    monkeypatch.setattr(main.monitor, "explain",
+                        lambda f, s, key: calls.append(1) or "점수가 25% 떨어졌습니다.")
+
+    body = as_root(client, "GET",
+                   "/v1/jobs/analysis-explain/analysis?explain=true").json()
+    assert len(calls) == 1
+    assert "25%" in body["explanation"]
+
+
+def test_a_clean_job_does_not_pay_for_an_explanation_of_nothing(client, cluster, monkeypatch):
+    # explain=true with no findings still makes no call: there is nothing to
+    # explain, and a model asked to explain an empty list will invent something.
+    _running_job(cluster, "analysis-clean")
+    monkeypatch.setattr(cluster, "recent_log_lines",
+                        lambda ns, name, window: _metric_log(
+                            [3.0 - 2.0 / (i + 1) for i in range(30)]))
+
+    def explode(*args, **kwargs):
+        raise AssertionError("the model was asked to explain an empty findings list")
+
+    monkeypatch.setattr(main.monitor, "explain", explode)
+    assert as_root(client, "GET",
+                   "/v1/jobs/analysis-clean/analysis?explain=true").json()["findings"] == []
+
+
+def test_analysis_of_someone_elses_job_is_refused(client, cluster, monkeypatch):
+    # Same owner gate as /metrics and /logs: the rules read another person's
+    # training output, so the job has to be fetched to know whose it is.
+    cluster.objects[("lab-bob", "bobs-run")] = {
+        "metadata": {"name": "bobs-run", "labels": {"ddpsrun.io/owner": "bob"}},
+        "spec": {"parallelism": 1},
+        "status": {"phase": "Running"},
+    }
+    assert as_alice(client, "GET", "/v1/jobs/bobs-run/analysis").status_code in (403, 404)

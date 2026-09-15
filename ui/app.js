@@ -548,6 +548,7 @@ async function drawDetail(jobId, ns = "") {
      one transient 502. Resetting on open is what fixes navigating between jobs,
      which is the only way the stale render was reachable. */
   $("d-gpu-panel").hidden = true;
+  $("d-learning-panel").hidden = true;
   $("d-progress-panel").hidden = true;
 
   // Once per open, not per poll — see the panel's comment in index.html.
@@ -908,6 +909,97 @@ function humanSize(n) {
   return `${v.toFixed(1)} PiB`;
 }
 
+/* HYPERUN-MONITOR. The training's OWN numbers, and what arithmetic says about them.
+
+   WHY THIS PANEL EXISTS AND WHY IT IS NOT PART OF `Progress`. Progress says how
+   far a run has got. GPU says the cards are busy. NEITHER says whether the model
+   is learning, and on 2026-09-15 a job finished Succeeded with a perfect progress
+   bar while one of its nine trainings ran its objective from an average of 2.850
+   down to 2.140 — 25% — and every log it uploaded contained the word `loss` zero
+   times. The numbers were in a file. `metric-watch.sh` now copies them onto the
+   log and this is where they are read.
+
+   ONE BLOCK PER TRAINING, not one per job. A job that trains nine adapters has
+   nine series, each with its own steps from 1; averaged together they look fine,
+   which is exactly how the bad one hid.
+
+   THE VERDICT IS ARITHMETIC AND ARRIVES WITH THE PANEL. The SENTENCE is a model's
+   and costs about $0.0002, so it is behind a button — opening a job must not
+   spend money. Measured the same day: asked to judge that series, the model
+   answered "the run is learning and improving". It had found a mid-run peak and
+   called it the end. So it is never asked to judge, only to explain. */
+function trendLabel(t) {
+  if (!t) return "";
+  if (t.has_nan) return `<span class="wrong">NaN</span>`;
+  if (t.change_ratio == null) return "-";
+  const pct = (t.change_ratio * 100).toFixed(1);
+  return `${t.change_ratio >= 0 ? "+" : ""}${pct}%`;
+}
+
+async function drawLearning(jobId, m, query) {
+  const series = m.metric_series || [];
+  $("d-learning-panel").hidden = !series.length;
+  $("d-explanation").textContent = "";
+  $("d-explain-note").textContent = "";
+  if (!series.length) return;
+
+  const rows = series.map(s => {
+    // The objective first when the field's NAME says which way is better, so a
+    // reader's eye lands on the number that matters. The rest follow in the
+    // order the training wrote them.
+    const named = s.fields.filter(f => /loss|score|reward|acc|f1|err|perplexity/i.test(f));
+    const shown = (named.length ? named : s.fields).slice(0, 4);
+    const cells = shown.map(f => {
+      const t = s.trends[f];
+      if (!t) return `<td>${esc(f)}</td><td class="dim">-</td><td class="dim">-</td>`;
+      return `<td>${esc(f)}</td>` +
+             `<td class="mono">${t.head.toPrecision(4)} → ${t.tail.toPrecision(4)}</td>` +
+             `<td>${trendLabel(t)}</td>`;
+    }).join("</tr><tr><td></td>");
+    return `<tr><td class="mono">${esc(s.name || "(unnamed)")}</td>` +
+           `<td class="dim">step ${s.first_step}–${s.last_step}</td>` + cells + `</tr>`;
+  }).join("");
+
+  $("d-learning").innerHTML =
+    `<table><thead><tr><th>training</th><th>steps</th>` +
+    `<th>metric</th><th>first → last</th><th>change</th></tr></thead>` +
+    `<tbody>${rows}</tbody></table>`;
+  $("d-learning-note").textContent =
+    `${series.length} training${series.length === 1 ? "" : "s"}, ` +
+    `${series.reduce((n, s) => n + s.row_count, 0)} steps read from the log`;
+
+  // The rules, from the server. Free, so it runs on every poll; `explain=true`
+  // is not passed, so no model is called here.
+  // The same window `drawMetrics` used, so the panel and the rules are reading
+  // the same stretch of log. A finished job's readings are at the END of its
+  // life, so its window has already been widened to reach them.
+  let a;
+  try { a = await call(`/v1/jobs/${jobId}/analysis` + query); }
+  catch { return; }
+
+  const found = a.findings || [];
+  $("d-learning-findings").innerHTML = found.length
+    ? `<ul class="findings">` + found.map(f =>
+        `<li>${esc(f.detail)}</li>`).join("") + `</ul>`
+    : `<p class="dim small">Checks passed: ${(a.checked || []).join(", ")}.` +
+      (a.note ? ` ${esc(a.note)}` : "") + `</p>`;
+
+  $("d-explain").disabled = !found.length;
+  $("d-explain").onclick = async () => {
+    $("d-explain").disabled = true;
+    $("d-explain-note").textContent = "asking…";
+    try {
+      const full = await call(`/v1/jobs/${jobId}/analysis?explain=true` + nsQuery("&"));
+      $("d-explanation").textContent = full.explanation ||
+        "The model could not be reached. The numbers above stand without it.";
+    } catch {
+      $("d-explanation").textContent = "The model could not be reached. The numbers above stand without it.";
+    }
+    $("d-explain-note").textContent = "";
+    $("d-explain").disabled = false;
+  };
+}
+
 async function drawMetrics(jobId, job) {
   // The server's window is measured back from NOW, and a finished job's
   // readings sit at the END of its life — possibly days ago. So for a
@@ -923,6 +1015,8 @@ async function drawMetrics(jobId, job) {
   let m;
   try { m = await call(`/v1/jobs/${jobId}/metrics` + query); }
   catch { return; }   // 404 while the pod does not exist yet. Normal; stay quiet.
+
+  drawLearning(jobId, m, query);
 
   const p = m.progress;
   $("d-progress-panel").hidden = !p;

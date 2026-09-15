@@ -175,6 +175,11 @@ jobs:
         # app.js 에서 함수를 이름으로 꺼내 stub document 위에서 돌린다. 다시 구현하지
         # 않으므로, 통과하면 배포되는 그 함수가 통과한 것이다.
         run: node ui/submit_form_test.js
+      # Learning 패널. 학습이 잘 되고 있는지를 말하는 유일한 자리이고, 여기서 지키는 것
+      # 둘은 **학습마다 한 줄**(아홉 개를 평균 내면 나쁜 하나가 숨는다)과 **화면을 열 때
+      # 모델을 안 부른다**(판정은 산수라서 공짜, 문장은 호출당 약 $0.0002).
+      - name: Learning 패널이 그리는 것과 안 쓰는 돈
+        run: node ui/learning_panel_test.js
 
   references-current:
     name: agent reference 가 코드와 맞는지

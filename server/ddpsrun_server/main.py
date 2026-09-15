@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import pathlib
 import re
 import threading
@@ -56,6 +57,7 @@ from . import naming
 from . import registry      # DDPSRUN-IMAGES: the container images this lab has built
 from . import cognito
 from . import measurements
+from . import monitor   # HYPERUN-MONITOR: the rules, shared with the CronJob
 from . import notify
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
@@ -100,6 +102,8 @@ from .models import (
     LogsResponse,
     CardMetricsView,
     MemberTotalsView,
+    AnalysisResponse,
+    MonitorFindingView,
     MetricSeriesView,
     MetricTrendView,
     MetricsResponse,
@@ -2022,6 +2026,107 @@ def query_metrics(
         return cluster.prometheus_query(expr)
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/v1/jobs/{job_id}/analysis", response_model=AnalysisResponse)
+def get_analysis(
+    request: Request,
+    job_id: str,
+    principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
+    window_seconds: int = Query(
+        default=21600, ge=60, le=604800,
+        description="How far back to read. Six hours by default, not the hour the GPU chart "
+        "reads: a trend measured over ten minutes of a nine-hour run is noise.",
+    ),
+    explain: bool = Query(
+        default=False,
+        description="Ask a model to put the findings into a sentence. FALSE BY DEFAULT "
+        "because it costs money and the findings do not: a page that loads this route "
+        "should not spend anything, and a person who wants the sentence asks for it. "
+        "Measured: about $0.0002 a call.",
+    ),
+) -> AnalysisResponse:
+    """Is this run still worth paying for.
+
+    ★ THE SAME RULES THE MONITOR USES, imported rather than reimplemented. The
+    CronJob that sends Slack DMs and this route must never disagree about
+    whether a job is in trouble, and two copies of a threshold eventually do.
+
+    WHY THIS IS NOT PART OF /metrics. That route answers "what are the numbers",
+    which is data; this one answers "is something wrong", which is a judgement
+    with thresholds in it. Folding the second into the first would make every
+    chart redraw re-run the rules, and would make a threshold change look like a
+    change to the data.
+
+    WHAT THE MODEL IS AND IS NOT ASKED. It is handed findings that are already
+    decided and asked to explain them. It is never asked whether the run is
+    healthy: shown a series whose slope is -0.0269 per step and whose last rows
+    average 25% below its first, `solar-pro3` answered "the run is learning and
+    improving" (measured 2026-09-15).
+
+    Args:
+        job_id: an id this server issued.
+        window_seconds: how far back to read the log.
+        explain: whether to spend a model call on a sentence.
+
+    Raises:
+        HTTPException: 404 for an unknown id or a job with no container yet;
+            502 on a cluster error.
+    """
+    cluster: Cluster = request.app.state.cluster
+    name = resolve_object_name(job_id)
+    where = namespace_for(principal, namespace)
+    try:
+        require_owner(cluster.get_job(where, name), principal)
+        lines = cluster.recent_log_lines(where, name, window_seconds)
+    except NotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="nothing to analyse: the job has not started a container",
+        ) from exc
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    reading = metrics_reader.scan(lines, window_seconds)
+    found = monitor.findings_for(
+        reading, lines, time.time(), monitor._last_line_time(lines))
+
+    # WHICH CHECKS COULD RUN, said out loud. An empty `findings` on a job that
+    # printed no metric lines looks exactly like a clean bill of health and is
+    # not one, and the difference matters most on the job somebody is worried
+    # about.
+    checked = ["silence", "crash"]
+    note = ""
+    if reading.metric_series:
+        checked += ["regression", "nan"]
+    else:
+        note = ("this job has printed no training metrics, so only its silence and its "
+                "output were checked. A run that keeps its numbers in memory until the "
+                "end cannot be read from outside; one whose image has no python3 cannot "
+                "either.")
+
+    explanation = ""
+    if explain and found:
+        explanation = monitor.explain(
+            found, reading.metric_series,
+            os.environ.get("HYPERUN_UPSTAGE_API_KEY", "").strip())
+
+    return AnalysisResponse(
+        findings=[
+            MonitorFindingView(
+                rule=f["rule"],
+                detail=f["detail"],
+                series=str(f.get("series", "")),
+                field=str(f.get("field", "")),
+                change_ratio=f.get("change_ratio"),
+            )
+            for f in found
+        ],
+        explanation=explanation,
+        checked=checked,
+        note=note,
+    )
 
 
 @app.get("/v1/jobs/{job_id}/metrics", response_model=MetricsResponse)

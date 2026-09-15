@@ -1630,6 +1630,65 @@ class MetricSeriesView(BaseModel):
     )
 
 
+class MonitorFindingView(BaseModel):
+    """One thing an automated check decided is wrong with a RUNNING job.
+
+    Not `FindingView`, which is this file's OTHER finding: that one is what
+    `validate` says about a job before it is submitted. The two are different
+    events -- "this request will not work" against "this run has stopped being
+    worth paying for" -- and sharing a name cost a whole test suite on
+    2026-09-15, because the second class silently replaced the first and every
+    validate response then failed to serialise.
+    """
+
+    rule: str = Field(
+        description="Which check fired: `silent`, `regression`, `nan` or `crash`.",
+    )
+    detail: str = Field(description="What it found, in one sentence.")
+    series: str = Field(default="", description="Which training, when the rule is about one.")
+    field: str = Field(default="", description="Which of that training's numbers.")
+    change_ratio: float | None = Field(
+        default=None,
+        description="For `regression`: (tail - head) / |head|, so -0.249 means the last rows "
+        "average 24.9% below the first.",
+    )
+
+
+class AnalysisResponse(BaseModel):
+    """What /v1/jobs/{id}/analysis returns: is this run worth continuing to pay for.
+
+    ★ `findings` IS ARITHMETIC AND `explanation` IS NOT. The findings come from
+    comparisons on the job's own numbers and are free; the explanation is a
+    sentence a model wrote ABOUT them and is only produced when asked for with
+    `?explain=true`. The split is a measurement: shown a series whose slope is
+    -0.0269 per step and whose last rows average 25% below its first,
+    `solar-pro3` answered "the run is learning and improving" -- it had picked a
+    mid-run peak and called it the end. So a model never decides here; it is
+    handed a decision and asked to put it in words.
+
+    An empty `findings` is the normal answer. It means every check passed, not
+    that nothing was checked -- `checked` says which ran.
+    """
+
+    findings: list[MonitorFindingView] = Field(
+        default_factory=list,
+        description="Empty means every check passed. Most jobs, most of the time.",
+    )
+    explanation: str = Field(
+        default="",
+        description="A model's sentence about the findings above, in Korean. Empty unless "
+        "`explain=true` was asked for, and also empty when the model could not be reached -- "
+        "which is not an error, because the findings stand without it.",
+    )
+    checked: list[str] = Field(
+        default_factory=list,
+        description="Which checks ran. A job with no metric lines cannot be checked for a "
+        "regression, and saying so is more useful than an empty findings list that looks "
+        "like a clean bill of health.",
+    )
+    note: str = Field(default="", description="Why a check could not run, in plain words.")
+
+
 class MetricsResponse(BaseModel):
     """What /v1/jobs/{id}/metrics returns.
 

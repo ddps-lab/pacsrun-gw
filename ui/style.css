@@ -440,3 +440,10 @@ textarea { font-family: var(--mono); font-size: 13px; resize: vertical; min-heig
   cursor: pointer;
 }
 #stale button:hover { background: rgba(255, 255, 255, 0.15); }
+
+/* HYPERUN-MONITOR. The findings the rules produced, and a number that is broken.
+   Red because every one of these is a reason to consider stopping a job that is
+   still being billed; the panel says nothing when there is nothing to say. */
+.findings { margin: 8px 0 0; padding-left: 18px; }
+.findings li { color: var(--bad); margin: 3px 0; }
+.wrong { color: var(--bad); font-weight: 600; }

@@ -23,6 +23,7 @@ Authorization: Bearer <your token>
 | POST | `/v1/jobs` | Submit a job. |
 | DELETE | `/v1/jobs/{job_id}` | Stop a job and take it off the list. |
 | GET | `/v1/jobs/{job_id}` | Report one job's state. |
+| GET | `/v1/jobs/{job_id}/analysis` | Is this run still worth paying for. |
 | GET | `/v1/jobs/{job_id}/artifacts` | The job's result files, each with a link that downloads it. |
 | POST | `/v1/jobs/{job_id}/exec` | Run one command inside a running job's workload container. |
 | GET | `/v1/jobs/{job_id}/logs` | One window of a job's output. Ask again for more. |
@@ -42,6 +43,17 @@ Authorization: Bearer <your token>
 | POST | `/v1/validate` | Check a job without running it. |
 
 ## Request and response shapes
+
+### AnalysisResponse
+
+What /v1/jobs/{id}/analysis returns: is this run worth continuing to pay for.
+
+| field | required | description |
+|---|---|---|
+| `checked` |  | Which checks ran. A job with no metric lines cannot be checked for a regression, and saying so is more useful than an empty findings list that looks like a clean bill of health. |
+| `explanation` |  | A model's sentence about the findings above, in Korean. Empty unless `explain=true` was asked for, and also empty when the model could not be reached -- which is not an error, because the findings stand without it. |
+| `findings` |  | Empty means every check passed. Most jobs, most of the time. |
+| `note` |  | Why a check could not run, in plain words. |
 
 ### ArtifactFileView
 
@@ -361,6 +373,18 @@ What /v1/jobs/{id}/metrics returns.
 | `progress` |  |  |
 | `sample_count` |  | How many readings the lowest-indexed card printed in the window. `len(gpu_series)` is not that number -- the series is thinned to at most 400 points for drawing -- and the screen printed the thinned one as 'N samples'. |
 | `window_seconds` | yes | How far back the log was read. Older readings are still in the log; ask for a bigger window to see them. |
+
+### MonitorFindingView
+
+One thing an automated check decided is wrong with a RUNNING job.
+
+| field | required | description |
+|---|---|---|
+| `change_ratio` |  | For `regression`: (tail - head) / |head|, so -0.249 means the last rows average 24.9% below the first. |
+| `detail` | yes | What it found, in one sentence. |
+| `field` |  | Which of that training's numbers. |
+| `rule` | yes | Which check fired: `silent`, `regression`, `nan` or `crash`. |
+| `series` |  | Which training, when the rule is about one. |
 
 ### NamespacesResponse
 

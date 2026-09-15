@@ -252,6 +252,28 @@
     <div id="d-progress"></div>
   </div>
 
+  <!-- HYPERUN-MONITOR. Is this run still worth paying for. `Progress` above says
+       how far it has got and `GPU` says the cards are busy; neither says whether
+       the training is learning, and on 2026-09-15 a job finished Succeeded with a
+       perfect progress bar while one of its nine trainings ran its objective 25%
+       downhill. The numbers here are the training's OWN, read out of its log.
+
+       The verdict is arithmetic and arrives with the panel. The SENTENCE costs a
+       model call, so it is behind a button: opening a job must not spend money. -->
+  <div class="panel" id="d-learning-panel" hidden>
+    <header>
+      <h2>Learning</h2>
+      <span class="dim small" id="d-learning-note"></span>
+    </header>
+    <div id="d-learning"></div>
+    <div id="d-learning-findings"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="d-explain" class="ghost">Explain these numbers</button>
+      <span class="dim small" id="d-explain-note"></span>
+    </div>
+    <div id="d-explanation" class="small" style="margin-top:8px"></div>
+  </div>
+
   <div class="panel" id="d-gpu-panel" hidden>
     <header><h2>GPU</h2><span class="dim small" id="d-gpu-note"></span></header>
     <div id="d-gpu"></div>
