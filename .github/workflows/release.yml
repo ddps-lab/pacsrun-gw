@@ -252,6 +252,37 @@ jobs:
           # tag is the whole sha; `config/deploy/server.yaml` takes it verbatim.
           echo "::notice::pushed ${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
 
+      # ★ PUSHING THE IMAGE IS NOT DEPLOYING IT, AND NOTHING HERE SAID SO.
+      # This job built and pushed on every push to main and stopped there, so the
+      # pod kept whatever tag somebody last typed by hand. Measured 2026-09-15:
+      # the pod ran the previous week's image while ECR already held that day's,
+      # and the ALB and the Lambda answered `/openapi.json` 408 bytes apart --
+      # the pod's `LogsResponse` had no `truncated` because the pod was running
+      # older code. While the screen still talks to the Lambda that is merely
+      # confusing; the moment `config.json` points at the ALB it becomes "a push
+      # to main deploys nothing", which is the worst shape a release can have.
+      #
+      # WHY IT IS SAFE TO LET CI DO THIS. The role's Kubernetes rights are one
+      # Role in one namespace -- get/list/watch/patch on deployments, read on
+      # replicasets and pods (`config/deploy/hyperun-gateway.yaml`, the deployer
+      # Role). It cannot create or delete a workload and can see nothing outside
+      # `hyperun-system`. The cluster stores no CI credential either: an EKS
+      # access entry puts this OIDC role into the group that RoleBinding names.
+      #
+      # The container is `server`, not `gateway` (`config/deploy/hyperun-gw.yaml`).
+      - name: roll the pod onto the image just pushed
+        if: vars.EKS_CLUSTER != '' && vars.GW_NAMESPACE != ''
+        run: |
+          set -euo pipefail
+          aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER }}" --region ${{ vars.ECR_REGION }}
+          kubectl -n "${{ vars.GW_NAMESPACE }}" set image deploy/hyperun-gw \
+            server="${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}"
+          # --timeout so a pod that will never become ready fails the release
+          # here, in a log its author is already reading, rather than being found
+          # later by whoever opens the screen.
+          kubectl -n "${{ vars.GW_NAMESPACE }}" rollout status deploy/hyperun-gw --timeout=300s
+          echo "::notice::rolled hyperun-gw onto ${{ github.sha }}"
+
   screen:
     name: upload the screen to S3
     runs-on: ubuntu-latest
