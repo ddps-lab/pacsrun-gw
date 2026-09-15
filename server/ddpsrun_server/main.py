@@ -100,6 +100,8 @@ from .models import (
     LogsResponse,
     CardMetricsView,
     MemberTotalsView,
+    MetricSeriesView,
+    MetricTrendView,
     MetricsResponse,
     VendorTotalsView,
     ProgressView,
@@ -2079,6 +2081,33 @@ def get_metrics(
     reading = metrics_reader.scan(lines, window_seconds)
     return MetricsResponse(
         latest_gpu=_gpu_view(reading.latest_gpu),
+        # PACSRUN-METRIC-WATCH. The trends came out of `metrics.trend_of`, which is
+        # least squares and two averages and nothing else. Nothing on this path
+        # asks a model anything; a model is shown these numbers later, by the
+        # monitor, and is asked to name the objective and write a sentence.
+        metric_series=[
+            MetricSeriesView(
+                name=s.name,
+                step_key=s.step_key,
+                rows=s.rows,
+                row_count=s.row_count,
+                first_step=s.first_step,
+                last_step=s.last_step,
+                fields=s.fields,
+                trends={
+                    name: MetricTrendView(
+                        slope=round(t.slope, 6),
+                        head=round(t.head, 6),
+                        tail=round(t.tail, 6),
+                        change_ratio=None if t.change_ratio is None else round(t.change_ratio, 6),
+                        has_nan=t.has_nan,
+                        window=t.window,
+                    )
+                    for name, t in s.trends.items()
+                },
+            )
+            for s in reading.metric_series
+        ],
         gpu_series=[view for view in (_gpu_view(s) for s in reading.gpu_series) if view],
         progress=(
             ProgressView(

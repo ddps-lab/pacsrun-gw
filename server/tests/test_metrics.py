@@ -293,3 +293,153 @@ def test_every_card_carries_its_own_utilisation_peak():
     assert [c.peak_utilization_percent for c in cards] == [100, 40]
     # And the single-card fields still describe card 0, unchanged.
     assert m.scan(lines, 3600).peak_utilization_percent == 100
+
+
+# ------------------------------------------------- PACSRUN-METRIC-WATCH: the training's own numbers
+#
+# ★ WHY THESE EXIST, in one measurement. On 2026-09-15 a job finished `Succeeded`
+# after 9 h 44 m on four A100s at $6.36/hour with a perfect progress bar, and one
+# of its nine trainings had run its objective 25% downhill. Every log that job
+# uploaded contained the word `loss` exactly zero times -- the numbers were in a
+# file. `progress` answers "how far has it got"; only these answer "is it
+# learning", and the two are different questions.
+#
+# The rows below are REAL, copied out of that run's `ppo_stats.jsonl`. Invented
+# data would let the arithmetic be wrong in exactly the way that matters: this
+# series rises for a while before it falls, which is the shape that fooled a
+# language model asked the same question.
+
+REAL_SCORES = [2.4413, 2.7344, 3.6300, 3.0712, 2.3713, 2.4700, 2.2800, 3.1000,
+               2.4000, 3.3800, 2.9400, 3.4100, 3.0800, 2.8100, 3.4400, 1.5100,
+               3.0000, 1.5400, 2.2800, 2.3700]
+
+
+def metric_lines(series="bank/adapters/AD/iter_1", scores=None, key="step", extra=None):
+    """Log lines exactly as metric-watch.sh prints them, timestamp and all."""
+    import json as _json
+    scores = REAL_SCORES if scores is None else scores
+    out = []
+    for i, score in enumerate(scores, start=1):
+        row = {"_series": series, key: i, "score": score}
+        if extra:
+            row.update(extra(i))
+        out.append("2026-09-15T00:00:00.000Z PACSRUN_METRIC=" +
+                   _json.dumps(row, separators=(",", ":")))
+    return out
+
+
+def test_the_arithmetic_catches_the_run_that_went_backwards():
+    # The numbers this whole feature was built for. A language model shown this
+    # same series answered "learning and improving": it found the peak at step 3
+    # and called it the end. Least squares does not do that.
+    reading = m.scan(metric_lines(), 3600)
+    assert len(reading.metric_series) == 1
+    trend = reading.metric_series[0].trends["score"]
+    assert trend.slope < 0
+    # The scores above are the real ones rounded to four places, so the slope
+    # lands a hair off the -0.0269 computed from full precision. The tolerance is
+    # that rounding and nothing else.
+    assert trend.slope == pytest.approx(-0.0269, abs=0.0005)
+    assert trend.head == pytest.approx(2.850, abs=0.001)
+    assert trend.tail == pytest.approx(2.140, abs=0.001)
+    assert trend.change_ratio == pytest.approx(-0.249, abs=0.001)
+
+
+def test_nine_trainings_stay_nine_series_and_do_not_merge():
+    # ★ WITHOUT THIS THE READING IS WORSE THAN NOTHING. The measured job trained
+    # nine times and every one numbered its steps from 1. Merged, step 1 appears
+    # nine times with nine different scores and the average of the pile means
+    # nothing about any of them.
+    lines = []
+    for domain in ("bank", "market", "telecom"):
+        lines += metric_lines(series=f"{domain}/AD/iter_1", scores=REAL_SCORES[:6])
+    reading = m.scan(lines, 3600)
+    assert sorted(s.name for s in reading.metric_series) == [
+        "bank/AD/iter_1", "market/AD/iter_1", "telecom/AD/iter_1"]
+    for series in reading.metric_series:
+        assert series.row_count == 6
+        assert (series.first_step, series.last_step) == (1, 6)
+
+
+def test_a_repeated_step_is_the_same_row_and_not_a_second_point():
+    # metric-watch.sh re-prints what it already printed when it could not write
+    # its state file, so duplicates are expected. Counting them twice would put
+    # a doubled point into every trend.
+    lines = metric_lines(scores=REAL_SCORES[:5])
+    reading = m.scan(lines + lines, 3600)
+    assert reading.metric_series[0].row_count == 5
+
+
+def test_a_nan_is_reported_rather_than_propagated_into_a_meaningless_slope():
+    # Arithmetic on NaN gives NaN, and a slope of nan reads downstream as "no
+    # answer" when the honest answer is "this training is broken".
+    lines = metric_lines(scores=[1.0, 2.0, float("nan"), 4.0])
+    reading = m.scan(lines, 3600)
+    trend = reading.metric_series[0].trends["score"]
+    assert trend.has_nan is True
+    assert trend.slope == 0.0
+
+
+def test_every_numeric_field_gets_a_trend_because_the_server_picks_no_objective():
+    # `loss` for one run, `score` and `kl` for another. Deciding here which field
+    # matters would be the server deciding what a researcher may measure.
+    lines = metric_lines(extra=lambda i: {"kl": -0.3 * i, "entropy": 33.0 + i})
+    series = m.scan(lines, 3600).metric_series[0]
+    assert series.fields == ["entropy", "kl", "score"]
+    assert set(series.trends) == {"entropy", "kl", "score"}
+    assert series.trends["kl"].slope < 0
+    assert series.trends["entropy"].slope > 0
+
+
+def test_a_boolean_field_is_not_measured_as_a_number():
+    # `isinstance(True, int)` is True in python, so a flag would arrive as a
+    # metric that is always 0 or 1 and could be picked as the objective.
+    lines = metric_lines(scores=[1.0, 2.0, 3.0], extra=lambda i: {"should_stop": i == 3})
+    series = m.scan(lines, 3600).metric_series[0]
+    assert "should_stop" not in series.fields
+
+
+def test_a_trainer_style_global_step_orders_the_rows():
+    lines = metric_lines(scores=[2.0, 1.5, 1.2], key="global_step")
+    series = m.scan(lines, 3600).metric_series[0]
+    assert series.step_key == "global_step"
+    assert series.last_step == 3
+
+
+def test_a_line_that_is_not_ours_or_will_not_parse_is_ignored():
+    lines = ["2026-09-15T00:00:00Z some ordinary training output",
+             "2026-09-15T00:00:00Z PACSRUN_METRIC={not json at all}",
+             "2026-09-15T00:00:00Z PACSRUN_GPU=94,38200,45440,71,298"]
+    reading = m.scan(lines + metric_lines(scores=[1.0, 2.0]), 3600)
+    assert len(reading.metric_series) == 1
+    assert reading.metric_series[0].row_count == 2
+    # And the GPU line on the same stdout is still read as a GPU line.
+    assert reading.latest_gpu is not None
+
+
+def test_a_long_run_is_thinned_but_keeps_its_first_and_last_row():
+    # The head and tail are what a trend is read from. Thinning that dropped the
+    # first row would move the baseline a reader compares against.
+    lines = metric_lines(scores=[float(i) for i in range(1, 1001)])
+    series = m.scan(lines, 3600).metric_series[0]
+    assert series.row_count == 1000
+    assert len(series.rows) <= m.MAX_METRIC_ROWS
+    assert series.rows[0]["step"] == 1
+    assert series.rows[-1]["step"] == 1000
+    # The trend is measured on all 1,000, not on what survived the thinning.
+    assert series.trends["score"].slope == pytest.approx(1.0)
+
+
+def test_a_head_tail_window_never_overlaps_on_a_short_run():
+    # Six rows with a window of five would compare rows 1-5 against 2-6 and call
+    # four rows of overlap a trend.
+    series = m.scan(metric_lines(scores=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+                          3600).metric_series[0]
+    assert series.trends["score"].window == 3
+
+
+def test_a_job_that_prints_no_metric_line_reports_an_empty_list_and_not_an_error():
+    # A CPU image with no python3, and a training that keeps its numbers in
+    # memory until the end, both land here. Neither is a failure.
+    reading = m.scan(["2026-09-15T00:00:00Z PACSRUN_GPU=94,38200,45440,71,298"], 3600)
+    assert reading.metric_series == []

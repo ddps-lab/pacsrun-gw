@@ -316,6 +316,34 @@ One person's figures inside a team.
 | `unpriced_jobs` | yes | Jobs whose hours are counted but whose cost is not, because they ran on a machine we have no measured price for. |
 | `user` | yes |  |
 
+### MetricSeriesView
+
+One TRAINING's own numbers, read out of its log.
+
+| field | required | description |
+|---|---|---|
+| `fields` |  | Every numeric field this training printed, sorted. What a reader -- a person or a model -- picks the objective from. The server does not decide which one matters: `loss` for one run, `score` and `kl` for another, and pinning a list here would be the server deciding what a researcher may measure. |
+| `first_step` |  |  |
+| `last_step` |  |  |
+| `name` | yes | Which training this is, e.g. `bank/adapters/AD/iter_1`. Empty when the record was written before series names existed. |
+| `row_count` |  | How many rows there were before thinning. |
+| `rows` |  | The rows themselves, oldest first, thinned to at most 200. The FIRST and LAST always survive the thinning: they are what a head/tail reading is computed from, and a reader asking where a run started must not be shown row 40. |
+| `step_key` |  | Which field ordered the rows. `step` for most, `global_step` for `transformers.Trainer`. |
+| `trends` |  | One entry per field in `fields`, so nothing downstream has to guess which one to measure. |
+
+### MetricTrendView
+
+Which way one of a training's own numbers moved.
+
+| field | required | description |
+|---|---|---|
+| `change_ratio` |  | (tail - head) / |head|, so -0.249 means the last rows average 24.9% below the first. Null when head is 0 and the ratio would be undefined. |
+| `has_nan` |  | A NaN or an infinity was seen. One is enough to call the training broken whatever the other numbers look like, and the fields above are then zero because arithmetic on NaN propagates silently. |
+| `head` | yes | Mean of the first `window` rows. |
+| `slope` | yes | Change per step, by least squares over every row in the window. Steady, but one wild value drags it -- which is why `change_ratio` is here too. |
+| `tail` | yes | Mean of the last `window` rows. |
+| `window` |  | How many rows went into head and tail. Half the series at most, so a six-row run does not compare rows 1-5 against 2-6 and call the overlap a trend. |
+
 ### MetricsResponse
 
 What /v1/jobs/{id}/metrics returns.
@@ -326,6 +354,7 @@ What /v1/jobs/{id}/metrics returns.
 | `cards` |  | One entry per GPU card, lowest index first. A job renting four A100s reported one card until 2026-09-08 (the watcher kept `head -1`), so three quarters of it was invisible. The single-card fields above describe the lowest-indexed card, unchanged. |
 | `gpu_series` |  | Readings over the window, oldest first, thinned to at most 400 points. |
 | `latest_gpu` |  |  |
+| `metric_series` |  | The TRAINING'S OWN numbers, one entry per training. This is the only thing here that answers 'is it learning' -- `progress` answers 'how far has it got', and the two are not the same question. On 2026-09-15 a job finished Succeeded with a perfect progress bar while one of its nine trainings ran its objective 25% downhill. Empty when the image has no python3, or when the training keeps its numbers in memory and writes them once at the end. |
 | `note` |  | What is missing and why, in plain words. Empty when nothing is. |
 | `peak_gpu` |  | The reading with the most memory in use. The headline for a finished job, whose latest_gpu is the idle card just before teardown (0%, 0 MiB) and says nothing about the run itself. |
 | `peak_utilization_percent` |  | The HIGHEST utilisation in the window. It is NOT `peak_gpu.utilization_percent`: that sample is chosen by memory, and on job-66b46719b854 (four A100s, 785 samples) the highest-memory sample happened to fall between steps and read 0 -- against a real maximum of 100 and a mean of 84.6. Reporting the first as the peak told a reader the GPU had been idle for a run that was not. |

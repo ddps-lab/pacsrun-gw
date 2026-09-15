@@ -1552,6 +1552,84 @@ class CardMetricsView(BaseModel):
     )
 
 
+class MetricTrendView(BaseModel):
+    """Which way one of a training's own numbers moved.
+
+    ★ COMPUTED BY ARITHMETIC, NEVER BY A MODEL, and that is a measurement rather
+    than a preference. Asked to judge the exact series these fields describe,
+    `solar-pro3` answered "the run is learning and improving" about a series
+    whose slope is -0.0269 per step and whose last five steps average 25% below
+    its first five: it had found a mid-run peak and called it the end. An AI is
+    read these numbers afterwards to name which field is the objective and to
+    write the sentence a human gets, both of which it does well. The verdict is
+    already decided by the time it is asked.
+    """
+
+    slope: float = Field(
+        description="Change per step, by least squares over every row in the window. "
+        "Steady, but one wild value drags it -- which is why `change_ratio` is here too.",
+    )
+    head: float = Field(description="Mean of the first `window` rows.")
+    tail: float = Field(description="Mean of the last `window` rows.")
+    change_ratio: float | None = Field(
+        default=None,
+        description="(tail - head) / |head|, so -0.249 means the last rows average 24.9% "
+        "below the first. Null when head is 0 and the ratio would be undefined.",
+    )
+    has_nan: bool = Field(
+        default=False,
+        description="A NaN or an infinity was seen. One is enough to call the training "
+        "broken whatever the other numbers look like, and the fields above are then zero "
+        "because arithmetic on NaN propagates silently.",
+    )
+    window: int = Field(
+        default=0,
+        description="How many rows went into head and tail. Half the series at most, so a "
+        "six-row run does not compare rows 1-5 against 2-6 and call the overlap a trend.",
+    )
+
+
+class MetricSeriesView(BaseModel):
+    """One TRAINING's own numbers, read out of its log.
+
+    Not one per job: a job that trains nine adapters produces nine of these,
+    each with its own steps starting at 1. They are told apart by `name`, which
+    is where the training wrote its record relative to the work directory.
+    """
+
+    name: str = Field(
+        description="Which training this is, e.g. `bank/adapters/AD/iter_1`. Empty when "
+        "the record was written before series names existed.",
+    )
+    step_key: str = Field(
+        default="step",
+        description="Which field ordered the rows. `step` for most, `global_step` for "
+        "`transformers.Trainer`.",
+    )
+    rows: list[dict] = Field(
+        default_factory=list,
+        description="The rows themselves, oldest first, thinned to at most 200. The FIRST "
+        "and LAST always survive the thinning: they are what a head/tail reading is "
+        "computed from, and a reader asking where a run started must not be shown row 40.",
+    )
+    row_count: int = Field(
+        default=0, description="How many rows there were before thinning.")
+    first_step: int = 0
+    last_step: int = 0
+    fields: list[str] = Field(
+        default_factory=list,
+        description="Every numeric field this training printed, sorted. What a reader -- a "
+        "person or a model -- picks the objective from. The server does not decide which "
+        "one matters: `loss` for one run, `score` and `kl` for another, and pinning a list "
+        "here would be the server deciding what a researcher may measure.",
+    )
+    trends: dict[str, MetricTrendView] = Field(
+        default_factory=dict,
+        description="One entry per field in `fields`, so nothing downstream has to guess "
+        "which one to measure.",
+    )
+
+
 class MetricsResponse(BaseModel):
     """What /v1/jobs/{id}/metrics returns.
 
@@ -1561,6 +1639,15 @@ class MetricsResponse(BaseModel):
     """
 
     latest_gpu: GpuSampleView | None = None
+    metric_series: list[MetricSeriesView] = Field(
+        default_factory=list,
+        description="The TRAINING'S OWN numbers, one entry per training. This is the only "
+        "thing here that answers 'is it learning' -- `progress` answers 'how far has it "
+        "got', and the two are not the same question. On 2026-09-15 a job finished "
+        "Succeeded with a perfect progress bar while one of its nine trainings ran its "
+        "objective 25% downhill. Empty when the image has no python3, or when the training "
+        "keeps its numbers in memory and writes them once at the end.",
+    )
     gpu_series: list[GpuSampleView] = Field(
         default_factory=list,
         description="Readings over the window, oldest first, thinned to at most 400 points.",

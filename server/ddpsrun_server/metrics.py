@@ -36,6 +36,7 @@ Grep anchor: DDPSRUN-METRICS
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -90,6 +91,42 @@ PROGRESS_LINE = re.compile(
     r"(?P<done>\d+)/(?P<total>\d+)\s*\[(?P<elapsed>[\d:]+)<(?P<remaining>[\d:]+),\s*"
     r"(?P<pace>[\d.]+)(?P<unit>s/it|it/s)"
 )
+
+# PACSRUN-METRIC-WATCH. The TRAINING'S OWN numbers, one JSON object per line,
+# printed by driver/common/metric-watch.sh on the rented machine:
+#
+#   PACSRUN_METRIC={"_series":"bank/adapters/AD/iter_1","step":1,"score":2.44,...}
+#
+# ★ WHY THIS IS A DIFFERENT THING FROM PROGRESS_LINE ABOVE, which is easy to
+# miss. The progress line says HOW FAR a run has got -- step 350 of 556 -- and
+# says nothing about whether it is learning. On 2026-09-15 a job finished
+# `Succeeded` with a perfect progress bar while one of its nine trainings went
+# backwards: its objective averaged 2.850 over the first five steps and 2.140
+# over the last five. Every log that job uploaded contained the word `loss`
+# exactly zero times. These lines are what closes that gap.
+#
+# THE SHAPE IS DELIBERATELY NOT FIXED. Unlike GPU_LINE's five frozen fields, a
+# training's fields are the training's own -- `loss` for one, `score` and `kl`
+# for another, `train_loss` and `val_loss` for a third -- and pinning them here
+# would mean the server decides what a researcher may measure. The only two keys
+# this file knows are `_series`, which says WHICH training a row belongs to, and
+# the step field, which orders them.
+METRIC_LINE = re.compile(r"PACSRUN_METRIC=(?P<body>\{.*\})\s*$")
+
+# The key metric-watch.sh puts the series label under. Anything else in the row
+# is the training's own.
+SERIES_KEY = "_series"
+
+# Which field orders the rows, tried in this order. Mirrors STEP_KEYS in
+# metric-watch.sh; a row that reaches here has already been filtered to rows that
+# HAVE one, so this only has to find which.
+STEP_KEYS = ("step", "global_step", "iteration", "iter", "_step")
+
+# How many rows of one series to keep. A run logging every step for a long time
+# would otherwise put an unbounded list in a JSON response; the trend is computed
+# from the whole window before thinning, so the number below only limits what is
+# RETURNED, never what is measured.
+MAX_METRIC_ROWS = 200
 
 # Below this many steps the job's own pace is not yet worth quoting.
 # bank-exp2v2 was 32% out at step 1, 8% out at step 5, and 4% out at step 50.
@@ -206,6 +243,200 @@ class CardMetrics:
 
 
 @dataclass
+class MetricSeries:
+    """One training's own numbers, and what the arithmetic says about them.
+
+    ★ THE JUDGEMENT IS ARITHMETIC AND IT STAYS THAT WAY. An AI reads these rows
+    later to say WHICH column is the objective and to write the sentence a human
+    reads, and it is good at both. It is not trusted with the verdict, and that
+    is a measurement rather than a preference: asked on 2026-09-15 to judge the
+    very series below, `solar-pro3` answered "the run is learning and improving,
+    score rises from ~2.44 to a peak of ~3.44" about a series whose slope is
+    -0.0269 per step and whose last five steps average 25% below its first five.
+    It had picked a mid-run peak and called it the end. The day before, it
+    reported a steady `loss` in a log that contains no loss at all.
+
+    So the fields below are computed here, from the rows, with no model
+    involved. Whatever an AI later says about them is commentary printed beside
+    a number that was already decided.
+
+    Attributes:
+        name: which training this is, from the `_series` key. A job that trains
+            nine times produces nine of these.
+        step_key: which field ordered the rows.
+        rows: the rows themselves, oldest first, thinned to MAX_METRIC_ROWS.
+        row_count: how many rows there were BEFORE thinning.
+        first_step / last_step: the range the rows cover.
+        fields: every numeric field seen, sorted. What an AI is asked to pick
+            the objective from.
+        trends: field name -> `MetricTrend`. One per numeric field, so nothing
+            here has to guess which one matters.
+    """
+
+    name: str
+    step_key: str = "step"
+    rows: list[dict] = field(default_factory=list)
+    row_count: int = 0
+    first_step: int = 0
+    last_step: int = 0
+    fields: list[str] = field(default_factory=list)
+    trends: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MetricTrend:
+    """Which way one field moved, by two measures that disagree in useful ways.
+
+    WHY BOTH A SLOPE AND A HEAD/TAIL COMPARISON, rather than picking one. They
+    fail differently, and a reader who sees them disagree has learned something.
+    The slope is a least-squares fit over every row, so it is steady but a single
+    wild value drags it. The head/tail comparison averages the first and last few
+    rows and ignores everything between, so it is blind to a run that improved
+    and then collapsed back -- which the slope catches.
+
+    On the real series that prompted this: slope -0.0269 per step, head 2.850,
+    tail 2.140. Both say the same thing, which is why that run was a clear case.
+
+    Attributes:
+        slope: change per step, by least squares over every row.
+        head / tail: the mean of the first and last `window` rows.
+        change_ratio: (tail - head) / |head|, or None when head is 0.
+        has_nan: whether any value was NaN or infinite. A single one is enough
+            to say the training is broken, whatever the other numbers look like.
+        window: how many rows went into head and tail.
+    """
+
+    slope: float
+    head: float
+    tail: float
+    change_ratio: float | None
+    has_nan: bool
+    window: int
+
+
+def parse_metric(line: str) -> dict | None:
+    """Pull one training row out of a `PACSRUN_METRIC=` log line.
+
+    Args:
+        line: one line of the job's log, timestamp and all.
+
+    Returns:
+        The row as a dict, or None when the line is not one of ours or will not
+        parse. A half-written line -- the relay can split one, though it has not
+        been seen to -- is dropped rather than guessed at.
+    """
+    match = METRIC_LINE.search(line)
+    if match is None:
+        return None
+    try:
+        row = json.loads(match.group("body"))
+    except ValueError:
+        return None
+    return row if isinstance(row, dict) else None
+
+
+def _step_of(row: dict) -> tuple[str, int] | None:
+    """Which field orders this row, and its value."""
+    for name in STEP_KEYS:
+        value = row.get(name)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return name, value
+    return None
+
+
+def trend_of(values: list[float], window: int = 5) -> MetricTrend:
+    """What one field's values did, by least squares and by head against tail.
+
+    Args:
+        values: the field's values in step order. Two or more.
+        window: how many from each end go into head and tail. Clamped to half
+            the series, so a six-row run does not compare rows 1-5 against rows
+            2-6 and call the overlap a trend.
+
+    Returns:
+        A `MetricTrend`. A series carrying a NaN gets `has_nan` and zeros:
+        arithmetic on NaN propagates silently, and a slope of nan reads as "no
+        answer" when the honest answer is "this training is broken".
+    """
+    clean = [v for v in values if isinstance(v, (int, float))]
+    if any(v != v or v in (float("inf"), float("-inf")) for v in clean):
+        return MetricTrend(slope=0.0, head=0.0, tail=0.0, change_ratio=None,
+                           has_nan=True, window=0)
+    n = len(clean)
+    if n < 2:
+        return MetricTrend(slope=0.0, head=0.0, tail=0.0, change_ratio=None,
+                           has_nan=False, window=0)
+
+    width = max(1, min(window, n // 2))
+    head = sum(clean[:width]) / width
+    tail = sum(clean[-width:]) / width
+
+    mean_x = (n - 1) / 2
+    mean_y = sum(clean) / n
+    denominator = sum((i - mean_x) ** 2 for i in range(n))
+    slope = 0.0 if denominator == 0 else sum(
+        (i - mean_x) * (y - mean_y) for i, y in enumerate(clean)) / denominator
+
+    ratio = None if head == 0 else (tail - head) / abs(head)
+    return MetricTrend(slope=slope, head=head, tail=tail, change_ratio=ratio,
+                       has_nan=False, window=width)
+
+
+def series_from_rows(rows: list[dict]) -> list[MetricSeries]:
+    """Group rows by training, order them, and measure every numeric field.
+
+    Args:
+        rows: every `PACSRUN_METRIC=` row in the window, in the order the log
+            had them.
+
+    Returns:
+        One `MetricSeries` per training, named in the order first seen. A row
+        with no step field is dropped: it cannot be placed in a series, and
+        keeping it would put an unordered point in the middle of a trend.
+    """
+    grouped: dict[str, dict[int, dict]] = {}
+    step_keys: dict[str, str] = {}
+    for row in rows:
+        found = _step_of(row)
+        if found is None:
+            continue
+        key, step = found
+        name = str(row.get(SERIES_KEY) or "")
+        # LAST ROW WINS FOR A REPEATED STEP. metric-watch.sh re-prints what it
+        # already printed when it could not write its state file, so duplicates
+        # are expected and are not an error. Keying on the step number is what
+        # makes that harmless.
+        grouped.setdefault(name, {})[step] = row
+        step_keys.setdefault(name, key)
+
+    out: list[MetricSeries] = []
+    for name, by_step in grouped.items():
+        ordered = [by_step[s] for s in sorted(by_step)]
+        key = step_keys[name]
+        names = sorted({k for row in ordered for k, v in row.items()
+                        if k not in (SERIES_KEY, key)
+                        and isinstance(v, (int, float)) and not isinstance(v, bool)})
+        trends = {}
+        for field_name in names:
+            values = [row[field_name] for row in ordered if field_name in row]
+            if len(values) >= 2:
+                trends[field_name] = trend_of(values)
+        # Thinned by taking every k-th row, so the first and last survive: those
+        # two are what a head/tail reading is computed from upstream, and a
+        # reader who asks "where did it start" must not be shown row 40.
+        keep = ordered
+        if len(ordered) > MAX_METRIC_ROWS:
+            stride = len(ordered) / MAX_METRIC_ROWS
+            keep = [ordered[int(i * stride)] for i in range(MAX_METRIC_ROWS - 1)]
+            keep.append(ordered[-1])
+        steps = sorted(by_step)
+        out.append(MetricSeries(
+            name=name, step_key=key, rows=keep, row_count=len(ordered),
+            first_step=steps[0], last_step=steps[-1], fields=names, trends=trends))
+    return out
+
+
+@dataclass
 class Metrics:
     """Everything a monitoring screen needs about one job.
 
@@ -244,6 +475,12 @@ class Metrics:
     # card 0 alone (baseline-c, 2026-09-08). The four fields above still
     # describe the LOWEST-indexed card so an older screen keeps working.
     cards: list[CardMetrics] = field(default_factory=list)
+    # PACSRUN-METRIC-WATCH. One entry per TRAINING, which is not one per job: a
+    # job that trains nine adapters produces nine, each with its own steps
+    # starting at 1. Empty for a job whose image has no python3, and for one
+    # that keeps its numbers in memory and writes them once at the end -- which
+    # nothing outside that process can see, and the note below says so.
+    metric_series: list[MetricSeries] = field(default_factory=list)
 
 
 def parse_gpu_card(line: str) -> GpuSample | None:
@@ -395,8 +632,16 @@ def scan(lines: object, window_seconds: int) -> Metrics:
     # or by a researcher's own watch loop, contains.
     per_card: dict[int, list[GpuSample]] = {}
     legacy: list[GpuSample] = []
+    metric_rows: list[dict] = []
 
     for line in lines:
+        # PACSRUN-METRIC-WATCH first, and the order matters for cost rather than
+        # correctness: a long training prints far more of these than GPU lines,
+        # and the three regexes below would each run over every one of them.
+        row = parse_metric(line)
+        if row is not None:
+            metric_rows.append(row)
+            continue
         card = parse_gpu_card(line)
         if card is not None:
             per_card.setdefault(card.gpu_index, []).append(card)
@@ -483,4 +728,5 @@ def scan(lines: object, window_seconds: int) -> Metrics:
         peak_utilization_percent=first.peak_utilization_percent if first else None,
         sample_count=first.sample_count if first else 0,
         cards=cards,
+        metric_series=series_from_rows(metric_rows),
     )
