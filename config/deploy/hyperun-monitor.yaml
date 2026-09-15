@@ -1,0 +1,187 @@
+# The watcher: notice while a job is still running that it has stopped being worth paying for.
+#
+# END-TO-END FLOW of one tick:
+#
+#   1. Kubernetes starts this CronJob on its schedule. It runs the SAME image as the gateway
+#      pod, with a different entrypoint -- `python -m ddpsrun_server.monitor` -- so the log
+#      reading, the metric parsing and the trend arithmetic are all code that already ships
+#      and is already tested.
+#   2. It reads the token directory out of Secrets Manager, exactly as the gateway does, to
+#      learn which namespaces exist.
+#   3. For each running job it reads a six-hour log window and applies the rules in
+#      `monitor.py`. They are arithmetic. Nothing in that step asks a model anything.
+#   4. When a rule fires it shows the numbers to Upstage, asks for a sentence, and sends the
+#      whole thing to the job's owner as a Slack DM.
+#
+# ★ IT DOES NOT STOP ANYTHING, and the omission is deliberate. Stopping a job today means
+# DELETING it, which returns the rented machine and loses the run; there is no pause yet.
+# A monitor that could act would therefore be a monitor that can only destroy. Every message
+# it sends says so out loud, because a reader who thinks the platform already stopped the job
+# will not go and stop it.
+#
+# WHY A CronJob AND NOT A LOOP INSIDE THE GATEWAY. The gateway answers requests. A watcher
+# living in it would run once per replica, restart on every deploy, and turn a slow scan into
+# a slow request. A CronJob has its own schedule, its own failure and its own log, and
+# `concurrencyPolicy: Forbid` is Kubernetes already knowing how not to run two at once.
+#
+# WHAT IT COSTS. No pod is standing: this one lives for a few seconds every ten minutes. The
+# AI call happens only after a rule has already fired -- `solar-pro3` is $0.15 per million
+# input tokens and $0.60 per million output, and a check carrying twenty rows measured 1,124
+# input and about 100 output, so $0.00023 including VAT. A job that fires every tick for a
+# whole day costs about two cents against the $6.36 an hour the job itself costs.
+#
+# WHAT HAS TO EXIST FIRST:
+#   * `config/deploy/hyperun-gw.yaml` applied, for the namespace, the ServiceAccount and its
+#     EKS Pod Identity association. This CronJob deliberately reuses them rather than getting
+#     its own: it reads exactly what the gateway reads and should be able to do no more.
+#   * the Secret below, holding the two credentials this adds.
+#
+# Grep anchor: HYPERUN-MONITOR
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hyperun-monitor
+  namespace: hyperun-system
+type: Opaque
+stringData:
+  # ★ NEITHER OF THESE MAY EVER BE COMMITTED. This repository is public and CI refuses an
+  # account identifier in the tree; a bot token is worse than an account number. Create the
+  # object from the command line instead and keep this file as the shape:
+  #
+  #   kubectl create secret generic hyperun-monitor -n hyperun-system \
+  #     --from-literal=upstage-api-key='<UPSTAGE_API_KEY>' \
+  #     --from-literal=slack-bot-token='<SLACK_BOT_TOKEN>' \
+  #     --from-literal=slack-user-map='{"<OWNER_LABEL>":"<SLACK_USER_ID>"}'
+  #
+  # The Slack token needs `chat:write` and `im:write`, which are the two calls `notify` makes:
+  # conversations.open and chat.postMessage. Nothing else.
+  upstage-api-key: "<UPSTAGE_API_KEY>"
+  slack-bot-token: "<SLACK_BOT_TOKEN>"
+  # owner label -> Slack user id. The owner label is what PACSrun writes on every job as
+  # `ddpsrun.io/owner`. The same shape cloud-usage's IAM_SLACK_USER_MAP uses, so an operator
+  # who already has one can paste it across.
+  slack-user-map: '{"<OWNER_LABEL>":"<SLACK_USER_ID>"}'
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hyperun-monitor
+  namespace: hyperun-system
+spec:
+  # Every ten minutes. Chosen against what it is for rather than against what is possible: a
+  # training step is minutes, a stall is noticed at thirty, and a job costing $6.36/hour loses
+  # about a dollar per tick of delay. Faster would read the same log window over and over for
+  # no new information.
+  schedule: "*/10 * * * *"
+  # ★ Forbid, NOT the default Allow. A tick that takes longer than ten minutes -- many running
+  # jobs, a slow apiserver -- would otherwise be joined by the next one, and both would read
+  # the same logs and send the same person the same DM twice.
+  concurrencyPolicy: Forbid
+  # A tick that has not started within five minutes of its slot is skipped rather than run
+  # late. The thing it reports is "what is happening now"; an answer about ten minutes ago,
+  # arriving now, reads as a fresh alarm about a state that may already be over.
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # One attempt. A retry would re-read the same window and, if a rule still fires, send
+      # the same DM a second time. The next tick is ten minutes away and is the retry.
+      backoffLimit: 0
+      # A pass that has not finished in eight minutes is wedged, not slow, and must be gone
+      # before the next slot so `Forbid` does not start skipping ticks forever.
+      activeDeadlineSeconds: 480
+      template:
+        spec:
+          restartPolicy: Never
+          # The gateway's own ServiceAccount, deliberately. It already has the EKS Pod
+          # Identity association that lets Secrets Manager answer, and the RoleBindings that
+          # let it list PacsJobs and read pod logs in each tenant namespace. This job needs
+          # exactly that and must not be able to do more.
+          serviceAccountName: hyperun-gw
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+          containers:
+            - name: monitor
+              # The SAME tag the Deployment runs. Keep the two in step: a monitor reading a
+              # log format the server no longer produces would report silence on healthy jobs.
+              image: <IMAGE>
+              command: ["python", "-m", "ddpsrun_server.monitor"]
+              env:
+                # Read by `Settings.from_env`, the same values the Deployment sets. The
+                # monitor does not serve requests, but it builds the same Settings object and
+                # the required ones have to be there.
+                - name: HYPERUN_RESULT_BUCKET
+                  value: <RESULT_BUCKET>
+                - name: HYPERUN_TOKENS_SECRET_ID
+                  value: <TOKENS_SECRET_ID>
+                - name: HYPERUN_TOKENS_PATH
+                  value: /tmp/hyperun-tokens.json
+                - name: AWS_REGION
+                  value: <AWS_REGION>
+                # botocore reads AWS_DEFAULT_REGION and a Deployment naturally sets
+                # AWS_REGION. Both, so it does not matter which one anything looks for --
+                # the pod died on exactly this on 2026-09-15 (`config.aws_region`).
+                - name: AWS_DEFAULT_REGION
+                  value: <AWS_REGION>
+
+                # The three this job adds. Absent is a supported state for all of them: with
+                # no Upstage key the DM carries the numbers and no sentence; with no Slack
+                # token nothing is sent and every finding is still in this job's log, which
+                # is where an operator looks when they wonder why they heard nothing.
+                - name: HYPERUN_UPSTAGE_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: hyperun-monitor
+                      key: upstage-api-key
+                      optional: true
+                - name: HYPERUN_SLACK_BOT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: hyperun-monitor
+                      key: slack-bot-token
+                      optional: true
+                - name: HYPERUN_SLACK_USER_MAP
+                  valueFrom:
+                    secretKeyRef:
+                      name: hyperun-monitor
+                      key: slack-user-map
+                      optional: true
+
+                # The thresholds, here rather than only in the code, so an operator who is
+                # being woken too often can turn one down without a release. Every default is
+                # argued for at its constant in `monitor.py`.
+                - name: HYPERUN_MONITOR_WINDOW_SECONDS
+                  value: "21600"
+                - name: HYPERUN_MONITOR_SILENT_SECONDS
+                  value: "1800"
+                - name: HYPERUN_MONITOR_REGRESSION_RATIO
+                  value: "0.15"
+                - name: HYPERUN_MONITOR_MIN_ROWS
+                  value: "10"
+              resources:
+                # Small: it reads logs and does arithmetic on a few hundred rows. The limit is
+                # there so a job with an enormous log cannot take a node down, not because
+                # this is expected to come near it.
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                # The token directory is fetched from Secrets Manager and written to disk, and
+                # the root filesystem is read-only.
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
