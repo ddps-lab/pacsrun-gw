@@ -1,0 +1,337 @@
+# The gateway as a POD. Step 1a of the move off Lambda.
+#
+# WHY THE GATEWAY IS MOVING AT ALL. A browser terminal needs a connection that
+# stays open between two of a person's keystrokes, and a Lambda cannot hold one:
+# its execution ends with its response, and a Function URL cannot accept an
+# inbound WebSocket at all (`server/ddpsrun_server/k8s.py`, exec_in_driver). One
+# line typed into today's Shell panel costs a measured 1.05 s because every line
+# is a fresh HTTPS request that opens a fresh WebSocket to the apiserver. A pod
+# that stays up holds the connection once.
+#
+# ★ WHAT THIS FILE DOES **NOT** DO, AND THAT IS THE POINT OF STEP 1a.
+# It creates no load balancer, no Ingress, no Gateway, no certificate and no DNS
+# record. Nothing outside the cluster can reach what this creates. Verify it with
+#
+#     kubectl -n hyperun-system port-forward svc/hyperun-gw 8080:80
+#
+# and point a browser or curl at localhost. The door comes in step 1b, after this
+# has been proved, because installing the AWS Load Balancer Controller is the one
+# change in this plan that touches the whole cluster: its admission webhook sits
+# in front of every Service creation anywhere, so while the controller is
+# starting or restarting, no Service can be created at all.
+#
+# EVERYTHING NEW IS ADDITIVE. Not one object the Lambda depends on is modified.
+# The existing `ClusterRole ddpsrun-gw`, its ClusterRoleBinding to the Kubernetes
+# group of the same name, and the per-namespace Roles are all left exactly as
+# they are, so the Lambda keeps working for the whole migration and rolling back
+# is `kubectl delete` of what is here.
+#
+# EVERY IDENTIFIER IS A PLACEHOLDER, because this repository is public and CI
+# refuses a real account id, bucket or address in the tree. Fill them in when you
+# apply and do not commit the filled-in copy (`docs/00-overview.md`).
+#
+# Grep anchor: HYPERUN-GW-POD
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hyperun-system
+  labels:
+    # ★ DELIBERATELY NOT `elbv2.k8s.aws/pod-readiness-gate-inject: enabled`.
+    # That label is what puts a namespace under the AWS Load Balancer
+    # Controller's POD admission webhook, and a webhook that fails closed
+    # prevents every pod in the labelled namespace from starting while the
+    # controller is down. This namespace does not need readiness gates.
+    app.kubernetes.io/name: hyperun-gw
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hyperun-gw
+  namespace: hyperun-system
+  # ★ THIS IS WHERE THE POD GETS ITS AWS IDENTITY, and it is not set here.
+  # The pod reads the directory of registered people out of Secrets Manager,
+  # exactly as the Lambda does, so that the two can never disagree about who
+  # exists while both are answering requests. A Lambda gets AWS credentials from
+  # its execution role for free; a pod has none. EKS Pod Identity supplies them:
+  #
+  #   aws eks create-pod-identity-association --cluster-name <CLUSTER> \
+  #     --namespace hyperun-system --service-account hyperun-gw \
+  #     --role-arn arn:aws:iam::<ACCOUNT_ID>:role/hyperun-gw
+  #
+  # That role needs `secretsmanager:GetSecretValue` on the one secret and nothing
+  # else. The agent that delivers the credentials (`eks-pod-identity-agent`) is
+  # already running on this cluster, and six associations already use it.
+---
+# The same verbs the Lambda has had since 2026-09-02, under the new name. A COPY
+# rather than a second subject on the existing binding: the running Lambda must
+# not be touched, and deleting this ClusterRole is then a complete rollback.
+#
+# WHAT IS DELIBERATELY ABSENT: `secrets`. This role is bound cluster-wide, so a
+# secrets verb here would be a secrets verb in kube-system. The one route that
+# writes a Secret gets a namespaced Role instead, at the bottom of this file.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hyperun-gw
+rules:
+  # Submit, read back, and cancel. `delete` is the cancel path -- deleting the
+  # PacsJob is the only stop the CRD offers, and PACSrun's controller watches for
+  # it to give back whatever the job rented. No `update` or `patch`: a submitted
+  # job is not edited, it is cancelled and submitted again.
+  - apiGroups: ["pacsrun.io"]
+    resources: ["pacsjobs"]
+    verbs: ["create", "get", "list", "delete"]
+  # Find the pod behind a job. `list` and not `get`, because the server looks a
+  # pod up by label and never by name.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # Run one command in a job's driver pod. BOTH verbs on purpose: the exec
+  # subresource maps a WebSocket upgrade to `get` and the SPDY path to `create`,
+  # and which one a client library takes is its own implementation detail.
+  # The terminal work will use the WebSocket road, so `get` is the one that
+  # matters, and `create` is what the kubernetes Python client may still use.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["get", "create"]
+  # Reach the in-cluster Prometheus through the apiserver rather than giving it
+  # an address of its own. `get` alone: the proxy subresource maps HTTP verbs
+  # onto RBAC verbs, so this permits GET and never a POST to its remote-write
+  # path -- which is how a bug here could corrupt the series it exists to read.
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    verbs: ["get"]
+---
+# ONE BINDING PER TENANT NAMESPACE, not a ClusterRoleBinding. The live cluster
+# binds the OLD role cluster-wide, which also lets it read pods in kube-system;
+# binding per namespace means adding a tenant is a deliberate act with a
+# reviewable diff. Copy this block once per namespace in the directory file.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hyperun-gw
+  namespace: <TENANT_NAMESPACE>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hyperun-gw
+subjects:
+  - kind: ServiceAccount
+    name: hyperun-gw
+    namespace: hyperun-system
+---
+# `PUT /v1/secrets/{name}` -- what a member registers for their own namespace.
+#
+# A SEPARATE, NAMESPACED Role and not three more lines above, because the
+# ClusterRole is bound in several namespaces and `secrets` in it would reach
+# every one of them. The three verbs and what each cannot do:
+#
+#   create   RBAC cannot restrict create by name -- at authorization time the
+#            object does not exist. So this permits creating ANY Secret in this
+#            namespace and nothing else. It cannot overwrite an existing one
+#            (create on a name that exists is 409) and it cannot read anything.
+#            Used exactly once per namespace, for the first `secret set`.
+#   get      One name only. `GET /v1/secrets` needs the KEY names and Kubernetes
+#            has no keys-only read, so this necessarily also permits reading
+#            those values -- and no other Secret in the namespace, which is the
+#            promise the submit path has always made.
+#   patch    Same one name. Adds, replaces or removes one key. No `update`: a
+#            full replace needs the whole object and the server never builds one.
+#
+# WHAT THIS DOES NOT PROTECT AGAINST, said plainly: a Kubernetes Secret is
+# base64, not encryption. Anyone who already has `get secrets` in the namespace
+# can read every registered value.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hyperun-gw-secrets
+  namespace: <TENANT_NAMESPACE>
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["ddpsrun-user-secrets"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hyperun-gw-secrets
+  namespace: <TENANT_NAMESPACE>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hyperun-gw-secrets
+subjects:
+  - kind: ServiceAccount
+    name: hyperun-gw
+    namespace: hyperun-system
+---
+# Prometheus is in `pacsrun-system`, which is not a tenant namespace, so the
+# per-tenant bindings above never cover it. Without this, `/v1/metrics/query`
+# answers 502 with a 403 underneath. A Role narrowed to the single verb rather
+# than the whole ClusterRole: the gateway has no reason to create PacsJobs or
+# read the operator's own pods in there, and both would otherwise be one bug away.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hyperun-gw-prometheus
+  namespace: pacsrun-system
+rules:
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hyperun-gw-prometheus
+  namespace: pacsrun-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hyperun-gw-prometheus
+subjects:
+  # A ServiceAccount, and the older file's equivalent binding names a GROUP
+  # instead. Both are right for their own subject: the Lambda proves who it is
+  # with an EKS access entry that maps its IAM role to the group `ddpsrun-gw`,
+  # and RBAC sees that group. A pod presents its ServiceAccount token. Binding
+  # the wrong one applies cleanly, grants nothing, and says nothing.
+  - kind: ServiceAccount
+    name: hyperun-gw
+    namespace: hyperun-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hyperun-gw
+  namespace: hyperun-system
+spec:
+  # ONE REPLICA FOR STEP 1a, two later. The agreed end state is two, so a rolling
+  # update leaves one serving; while this is only being proved behind a
+  # port-forward, a second copy adds a second reader of the directory and nothing
+  # else. Raising it needs the browser reconnect code first, because a WebSocket
+  # is pinned to whichever pod accepted it and a rolling update drops it.
+  replicas: 1
+  selector:
+    matchLabels: { app: hyperun-gw }
+  template:
+    metadata:
+      labels: { app: hyperun-gw }
+    spec:
+      serviceAccountName: hyperun-gw
+      containers:
+        - name: server
+          # The tag CI pushed, which is the commit sha. Never `latest`: a
+          # Deployment pinned to a sha names exactly one build, and `latest`
+          # makes "what is running" unanswerable after the fact.
+          image: <IMAGE>
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            # ── The new names. `Settings.from_env` reads HYPERUN_* first and
+            # falls back to DDPSRUN_*, so the Lambda's own configuration is
+            # untouched and everything new is written with the product's name.
+            - name: HYPERUN_RESULT_BUCKET
+              value: <RESULT_BUCKET>
+            - name: HYPERUN_RESULT_PREFIX
+              value: pacsrun/
+            # Must match PACSrun's PACSRUN_RESULT_PREFIX_TEMPLATE, which checks
+            # the same prefix again on the cluster side. If the two disagree,
+            # every job is refused at admission.
+            #
+            # The ServiceAccount the DRIVER pod runs as. It must be the one
+            # PACSrun's terraform wired to the EC2/STS role, because that role
+            # trusts exactly one namespace/ServiceAccount pair. Naming anything
+            # else is exit 10 before a machine is rented.
+            - name: HYPERUN_SERVICE_ACCOUNT
+              value: pacsjob-writer
+            # ── The directory of registered people.
+            # SECRETS MANAGER AND NOT A MOUNTED SECRET, and this is the whole
+            # reason the pod needs an AWS identity. The Lambda reads this same
+            # secret. Two copies of "who is allowed in" is the one duplication
+            # this system must not have, and the two run side by side for the
+            # length of the migration.
+            - name: HYPERUN_TOKENS_SECRET_ID
+              value: <TOKENS_SECRET_ID>
+            # Where the fetched copy is written. Must be under a writable mount:
+            # the root filesystem is read-only below.
+            - name: HYPERUN_TOKENS_PATH
+              value: /tmp/hyperun-tokens.json
+            # ── Sign-in. All of these empty is a supported state and means
+            # static tokens only.
+            - name: HYPERUN_COGNITO_POOL_ID
+              value: <COGNITO_POOL_ID>
+            - name: HYPERUN_COGNITO_CLIENT_ID
+              value: <COGNITO_CLIENT_ID>
+            - name: HYPERUN_COGNITO_REGION
+              value: <AWS_REGION>
+            - name: HYPERUN_COGNITO_LOGIN_DOMAIN
+              value: <COGNITO_LOGIN_DOMAIN>
+            # ── Which stored secrets a user may ask for by name, and where each
+            # really lives. A name absent here cannot be requested at all.
+            - name: HYPERUN_SECRET_BINDINGS
+              value: '{"GITHUB_PAT": {"name": "<SECRET_NAME>", "key": "token"}}'
+            # ── boto3 needs a region even with Pod Identity supplying the rest.
+            - name: AWS_REGION
+              value: <AWS_REGION>
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            # ★ /healthz TOUCHES NOTHING. A probe that called the apiserver would
+            # restart a healthy server every time the cluster was briefly busy,
+            # which is the classic way a liveness probe becomes the outage.
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            # ★ LIMITS ON OURS AND NOT ON THEIRS, DELIBERATELY. Everything in
+            # this cluster is on one m5.large, including the driver pod of every
+            # running job -- which requests 100m/256Mi and sets no limit, so it
+            # can take what it needs. Capping this container means a bug here
+            # cannot starve a job that is paying $6.36 an hour for a machine.
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        # The only writable path. The image runs as uid 10001 with a read-only
+        # root filesystem, and the directory fetched from Secrets Manager has to
+        # land somewhere -- the same arrangement the Lambda has with its /tmp.
+        # emptyDir and not a PVC: it is a cache of something whose source of
+        # truth is elsewhere, and it should be empty again after a restart.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hyperun-gw
+  namespace: hyperun-system
+spec:
+  # ClusterIP, so nothing outside the cluster can reach it. Step 1b decides how
+  # a browser gets in; until then the only way is
+  # `kubectl -n hyperun-system port-forward svc/hyperun-gw 8080:80`.
+  type: ClusterIP
+  selector: { app: hyperun-gw }
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
