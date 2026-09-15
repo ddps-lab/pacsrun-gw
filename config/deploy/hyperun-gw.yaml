@@ -275,6 +275,18 @@ spec:
               value: <AWS_REGION>
             - name: HYPERUN_COGNITO_LOGIN_DOMAIN
               value: <COGNITO_LOGIN_DOMAIN>
+            # ── Where a "somebody signed in and has no namespace" email goes.
+            # ★ LEAVING THESE OUT IS NOT NEUTRAL: `/v1/login-config` then answers
+            # `registration_requests: false` and the screen stops offering the
+            # button, telling a new person to find an operator by other means.
+            # The first pod had exactly that, and it was the only difference left
+            # when its answers were compared with the Lambda's (2026-09-15).
+            # Both ends must be SES-verified identities while the account is in
+            # the sandbox, which is why they are usually the same address.
+            - name: HYPERUN_REGISTER_NOTIFY_TO
+              value: <OPERATOR_EMAIL>
+            - name: HYPERUN_REGISTER_NOTIFY_FROM
+              value: <OPERATOR_EMAIL>
             # ── Which stored secrets a user may ask for by name, and where each
             # really lives. A name absent here cannot be requested at all.
             - name: HYPERUN_SECRET_BINDINGS
