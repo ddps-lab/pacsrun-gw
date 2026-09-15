@@ -309,6 +309,20 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            # ★ THE UID IS SPELLED OUT AND `runAsNonRoot` ALONE IS NOT ENOUGH.
+            # The image says `USER ddpsrun`, which is a NAME, and kubelet cannot
+            # resolve a name to a number without running the image -- so it
+            # cannot prove the user is not root and refuses to start the
+            # container at all:
+            #
+            #   Error: container has runAsNonRoot and image has non-numeric
+            #   user (ddpsrun), cannot verify user is non-root
+            #
+            # Measured on the first apply, 2026-09-15. 10001 is the uid
+            # `server/Dockerfile` creates. Stating it here also means the yaml
+            # says which user the process is, instead of that fact living only
+            # inside the image.
+            runAsUser: 10001
             capabilities: { drop: ["ALL"] }
       volumes:
         # The only writable path. The image runs as uid 10001 with a read-only

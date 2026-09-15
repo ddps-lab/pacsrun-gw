@@ -194,3 +194,36 @@ jobs:
       - name: docker build
         working-directory: server
         run: docker build -t ddpsrun-gw:${{ github.sha }} .
+
+      # ★ 빌드되는 것과 도는 것은 다르다. 2026-09-15 에 image 가 깨끗이 빌드되고
+      # 첫 `kubectl apply` 에서 죽었다 — `pip install .` 이 `prices.csv` 를 빼먹었고
+      # (pyproject 의 package-data 가 없었다), `measurements.py` 가 그것을 import 시점에
+      # 읽으므로 기능이 하나 빠지는 게 아니라 프로세스가 아예 안 떴다. Lambda 는
+      # `cp -r ddpsrun_server build/` 라 파일이 따라가서 이 결함이 안 보였다.
+      #
+      # 그래서 여기서 **실제로 띄우고 /healthz 를 물어본다.** import 시점에 죽는 것은
+      # 전부 여기서 걸린다. 환경변수는 자리표시자면 되고 cluster 도 AWS 도 안 부른다
+      # (`Cluster.connect` 는 kubeconfig 가 없으면 죽지만, 그 전에 import 가 먼저다).
+      - name: image 가 실제로 뜨고 /healthz 에 답하는지
+        working-directory: server
+        run: |
+          set -euo pipefail
+          echo '{"tokens":[{"sha256":"'$(printf 0%.0s {1..64})'","user":"ci","namespace":"default"}]}' > /tmp/tok.json
+          docker run -d --name gw-smoke -p 18080:8080 \
+            -e HYPERUN_RESULT_BUCKET=ci-bucket \
+            -e HYPERUN_TOKENS_PATH=/tmp/tok.json \
+            -v /tmp/tok.json:/tmp/tok.json:ro \
+            ddpsrun-gw:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -sf -m 2 http://127.0.0.1:18080/healthz > /dev/null; then
+              echo "  /healthz 응답 확인"
+              curl -s http://127.0.0.1:18080/metrics | head -3
+              docker rm -f gw-smoke > /dev/null
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::image 가 30초 안에 /healthz 에 답하지 않았다"
+          docker logs gw-smoke
+          docker rm -f gw-smoke > /dev/null
+          exit 1

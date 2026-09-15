@@ -38,5 +38,20 @@ dev = ["pytest>=8.0", "httpx>=0.27"]
 [tool.setuptools.packages.find]
 include = ["ddpsrun_server*"]
 
+# ★ prices.csv IS PART OF THE PACKAGE, AND `pip install .` LEAVES IT OUT WITHOUT
+# THIS. setuptools installs Python modules and nothing else unless told, and
+# `measurements.py` reads the file at IMPORT time -- so a build missing it does
+# not degrade, it refuses to start:
+#
+#   FileNotFoundError: .../site-packages/ddpsrun_server/prices.csv
+#
+# WHY IT WENT UNNOTICED UNTIL 2026-09-15. The Lambda is not pip-installed: the
+# release workflow does `cp -r ddpsrun_server build/` and zips the directory, so
+# the file rode along. CI built the image on every push and threw it away
+# without ever running it. The first `kubectl apply` of the pod is what found
+# this, which is the whole argument for doing step 1a behind a port-forward.
+[tool.setuptools.package-data]
+ddpsrun_server = ["*.csv"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
