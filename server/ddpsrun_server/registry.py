@@ -55,6 +55,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import config   # aws_region: HYPERUN-ENV-RENAME 와 같은 이유
+
 # How many tags one repository contributes. A repository accumulates a tag per build -- the
 # operator's has one per commit -- and the useful ones are the newest. Showing all of them would
 # make the Image picker thousands of buttons long for one repository.
@@ -114,7 +116,7 @@ def ecr_client(region: str = ""):
     """
     import boto3  # provided by the Lambda runtime, so it is not in our package
 
-    return boto3.client("ecr", region_name=region) if region else boto3.client("ecr")
+    return boto3.client("ecr", region_name=region or config.aws_region() or None)
 
 
 def _registry_host(repository_uri: str, repository_name: str) -> str:

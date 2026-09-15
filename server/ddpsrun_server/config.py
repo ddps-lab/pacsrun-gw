@@ -50,6 +50,30 @@ PACSRUN_JOB_LABEL = "pacsrun.io/job"
 PACSRUN_SLOT_LABEL = "pacsrun.io/slot"
 
 
+def aws_region() -> str:
+    """Which AWS region every client in this server talks to.
+
+    ★ WHY THIS EXISTS, AND IT IS NOT A TIDYING-UP. Every AWS client here was
+    written as "pass a region if you have one, otherwise let boto3 work it out",
+    and on Lambda boto3 always could: the runtime sets `AWS_DEFAULT_REGION`
+    itself. A pod gets whatever its Deployment sets, and the name Kubernetes
+    deployments use is `AWS_REGION`. botocore reads the other one.
+
+    So the pod started with a region plainly visible in `kubectl describe pod`
+    and still answered `/v1/images` with "The container registry refused the
+    list (You must specify a region.)", and died at startup on the same message
+    from Secrets Manager (2026-09-15). Both names are read here so that no
+    caller has to know which one a deployment happened to set.
+
+    Returns:
+        The region, or "" when neither variable is set -- which is a local run,
+        and the callers then behave as they always did.
+    """
+    return (os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+            or "").strip()
+
+
 class ConfigError(RuntimeError):
     """A required setting is missing or malformed. Raised at startup, never later."""
 

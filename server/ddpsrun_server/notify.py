@@ -65,6 +65,8 @@ from __future__ import annotations
 import json
 import logging
 
+from . import config   # aws_region: HYPERUN-ENV-RENAME 와 같은 이유
+
 logger = logging.getLogger("ddpsrun.notify")
 
 # Where the marker objects go. A prefix of its own, NOT under the results prefix,
@@ -105,7 +107,7 @@ def s3_client():
             "this deployment cannot record registration requests: the boto3 "
             "library is missing from the server."
         ) from exc
-    return boto3.client("s3")
+    return boto3.client("s3", region_name=config.aws_region() or None)
 
 
 def ses_client(region: str = ""):
@@ -127,7 +129,7 @@ def ses_client(region: str = ""):
             "this deployment cannot send email: the boto3 library is missing "
             "from the server."
         ) from exc
-    return boto3.client("sesv2", region_name=region) if region else boto3.client("sesv2")
+    return boto3.client("sesv2", region_name=region or config.aws_region() or None)
 
 
 def marker_key(email: str) -> str:

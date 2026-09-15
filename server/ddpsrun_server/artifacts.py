@@ -44,6 +44,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import config   # aws_region: HYPERUN-ENV-RENAME 와 같은 이유
+
 # How long a minted download link keeps working. Long enough to click every
 # file on the screen one by one; short enough that a link pasted into a chat
 # is stale within the meeting it was pasted into.
@@ -124,7 +126,7 @@ def s3_client():
     """
     import boto3  # provided by the Lambda runtime, so it is not in our package
 
-    return boto3.client("s3")
+    return boto3.client("s3", region_name=config.aws_region() or None)
 
 
 def list_artifacts(

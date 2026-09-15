@@ -40,6 +40,28 @@ def minimal(**overrides):
 # ---------------------------------------------------------------- HYPERUN-ENV-RENAME
 
 
+def test_the_aws_region_is_read_from_either_variable(monkeypatch):
+    # ★ botocore READS `AWS_DEFAULT_REGION`; a Kubernetes Deployment sets
+    # `AWS_REGION`. The Lambda runtime sets the first itself, so every client in
+    # this server was written as "pass a region if you have one" and always had
+    # one. The pod had a region in its environment and still answered
+    # /v1/images with "You must specify a region" (2026-09-15).
+    from ddpsrun_server.config import aws_region
+
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    assert aws_region() == "us-west-2"
+
+    monkeypatch.delenv("AWS_REGION")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    assert aws_region() == "us-east-1"
+
+    monkeypatch.delenv("AWS_DEFAULT_REGION")
+    # Neither set is a local run, and the callers then behave as they always did.
+    assert aws_region() == ""
+
+
+
 def test_a_hyperun_variable_is_read():
     # The name the product actually has. Everything new is configured with these.
     s = Settings.from_env({"HYPERUN_RESULT_BUCKET": "b", "HYPERUN_TOKENS_PATH": "t"})
