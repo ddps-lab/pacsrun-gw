@@ -1052,6 +1052,58 @@ def test_an_ownerless_job_is_its_own_row_and_not_the_operators_spend(client, clu
     assert as_alice(client, "GET", "/v1/stats").json()["caller_cost_usd"] == 0.0
 
 
+def test_a_log_longer_than_the_cap_says_the_start_is_missing(client, cluster, monkeypatch):
+    # ★ A READER GIVEN A TAIL HAS NO WAY TO TELL. Opening a seven-hour job used
+    # to show its last 500 lines with nothing saying the first six hours were
+    # not there -- and where it first went wrong, which is what somebody is
+    # usually hunting for, is exactly the part that got cut.
+    cluster.objects[("default", "hand-made-logs")] = {
+        "metadata": {"name": "hand-made-logs"},
+        "spec": {"parallelism": 1},
+        "status": {"phase": "Running"},
+    }
+    monkeypatch.setattr(
+        cluster, "job_log_window",
+        lambda ns, name, window, cap: [f"2026-09-15T00:00:0{i % 10}Z line {i}" for i in range(cap)])
+
+    body = as_root(client, "GET", "/v1/jobs/hand-made-logs/logs?window_seconds=0&max_lines=50").json()
+    assert body["truncated"] is True
+    assert len(body["lines"]) == 50
+
+
+def test_a_log_shorter_than_the_cap_is_not_called_truncated(client, cluster, monkeypatch):
+    cluster.objects[("default", "hand-made-logs2")] = {
+        "metadata": {"name": "hand-made-logs2"},
+        "spec": {"parallelism": 1},
+        "status": {"phase": "Running"},
+    }
+    monkeypatch.setattr(
+        cluster, "job_log_window",
+        lambda ns, name, window, cap: ["2026-09-15T00:00:00Z only line"])
+
+    body = as_root(client, "GET", "/v1/jobs/hand-made-logs2/logs?window_seconds=0&max_lines=50").json()
+    assert body["truncated"] is False
+
+
+def test_an_incremental_read_is_never_called_truncated(client, cluster, monkeypatch):
+    # ★ A `since=` read is short because little is NEW, not because anything was
+    # lost. Calling it truncated would put "the start is missing" on the screen
+    # of a job that is simply quiet.
+    cluster.objects[("default", "hand-made-logs3")] = {
+        "metadata": {"name": "hand-made-logs3"},
+        "spec": {"parallelism": 1},
+        "status": {"phase": "Running"},
+    }
+    monkeypatch.setattr(
+        cluster, "job_log_window",
+        lambda ns, name, window, cap: [f"2026-09-15T00:00:0{i % 10}Z line {i}" for i in range(cap)])
+
+    body = as_root(
+        client, "GET",
+        "/v1/jobs/hand-made-logs3/logs?since=2026-09-15T00:00:00Z&max_lines=50").json()
+    assert body["truncated"] is False
+
+
 def test_stats_are_aggregate_and_carry_no_job_names(client, cluster):
     # Being on a team does not entitle you to read a member's jobs.
     client.post("/v1/jobs", json=submit_body(name="bobs-secret-experiment"),

@@ -298,6 +298,7 @@ One window of a job's output.
 |---|---|---|
 | `last_timestamp` |  | The timestamp of the last line here, or null when the window was empty. Send it back as `since` next time and only newer lines return. |
 | `lines` |  | Oldest first, each prefixed with an RFC 3339 timestamp. The runner's own bookkeeping lines are removed. |
+| `truncated` |  | True when the log was longer than `max_lines` and this is its TAIL -- the beginning is missing. Said out loud because a reader given the last 500 lines of a seven-hour run has no way to tell that the first hour is not there, and the thing they are usually looking for -- where it first went wrong -- is exactly what got cut. |
 | `window_seconds` | yes | How far back this window reached. Make it several times your polling interval: too narrow and a pause loses lines, too wide and every request re-sends what it already sent. |
 
 ### MemberTotalsView

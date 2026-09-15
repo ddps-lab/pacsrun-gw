@@ -1714,6 +1714,14 @@ class LogsResponse(BaseModel):
         description="The timestamp of the last line here, or null when the window "
         "was empty. Send it back as `since` next time and only newer lines return.",
     )
+    truncated: bool = Field(
+        default=False,
+        description="True when the log was longer than `max_lines` and this is "
+        "its TAIL -- the beginning is missing. Said out loud because a reader "
+        "given the last 500 lines of a seven-hour run has no way to tell that "
+        "the first hour is not there, and the thing they are usually looking "
+        "for -- where it first went wrong -- is exactly what got cut.",
+    )
     window_seconds: int = Field(
         description="How far back this window reached. Make it several times your "
         "polling interval: too narrow and a pause loses lines, too wide and every "

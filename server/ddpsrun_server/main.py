@@ -2197,14 +2197,27 @@ def get_logs(
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    before_since = lines
+    truncated = False
+
     # The comparison is a plain string compare, which is correct because RFC 3339
     # with a fixed number of fraction digits sorts the same way it orders in
     # time. The apiserver emits exactly that shape.
     if since:
         lines = [line for line in lines if line.split(" ", 1)[0] > since]
+    else:
+        # ★ SAY WHEN THE BEGINNING IS MISSING. `job_log_window` asks the
+        # apiserver for the last `max_lines`, and a run that printed more gets
+        # its TAIL with no sign that anything was cut. A reader looking at a
+        # seven-hour job is usually hunting for where it first went wrong, which
+        # is precisely the part that got dropped. Only on the first read: an
+        # incremental one filtered by `since` is short because little is new,
+        # not because anything was lost.
+        truncated = len(before_since) >= max_lines
 
     return LogsResponse(
         lines=lines,
         last_timestamp=lines[-1].split(" ", 1)[0] if lines else None,
+        truncated=truncated,
         window_seconds=window_seconds,
     )

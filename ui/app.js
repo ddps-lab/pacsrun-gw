@@ -503,6 +503,9 @@ function wireRows(root, ns) {
 
 let logSeen = null;   // last timestamp seen. This is what keeps the server stateless.
 let logText = "";
+// True once the server said the first read was a TAIL. Sticky for the life of the
+// pane: only the first read can be truncated, and the fact stays true afterwards.
+let logTruncated = false;
 let lastSpec = null;  // what "Run again" copies from.
 let detailNs = "";    // which namespace the open detail screen reads. "" = own.
 
@@ -516,6 +519,7 @@ async function drawDetail(jobId, ns = "") {
   detailNs = ns;
   logSeen = null;
   logText = "";
+  logTruncated = false;
   lastSpec = null;
   $("d-log").textContent = "Waiting for output.";
   $("d-id").textContent = jobId;
@@ -1112,15 +1116,22 @@ function xAxis(series) {
 async function drawLog(jobId) {
   let r;
   try {
-    // The first read after opening asks for NO time window (0): just the last
-    // 500 lines of the whole log. Every later read is incremental from the
+    // The first read after opening asks for NO time window (0) and for as many
+    // lines as the server will give. Every later read is incremental from the
     // last timestamp seen. Without the backfill, a job that has been running
     // for hours — or finished days ago — showed "No output yet." while a
     // 30-second live window stayed empty (baseline-c, 2026-09-07: its scoring
     // phase printed nothing for 20+ minutes).
+    //
+    // ★ 10000 AND NOT 500. It was 500, so opening a seven-hour job showed its
+    // last few minutes and nothing before — and the thing a reader is usually
+    // hunting for, where it first went wrong, is exactly what was missing. There
+    // was no sign anything had been cut either. 10000 is the server's own cap
+    // (`max_lines`, le=10000); above that the response would have to be paged,
+    // and the honest answer for now is `truncated`, which the note below prints.
     r = await call(`/v1/jobs/${jobId}/logs` +
       (logSeen ? `?since=${encodeURIComponent(logSeen)}` + nsQuery("&")
-               : `?window_seconds=0&max_lines=500` + nsQuery("&")));
+               : `?window_seconds=0&max_lines=10000` + nsQuery("&")));
   } catch { return; }
 
   const lines = r.lines || [];
@@ -1132,8 +1143,14 @@ async function drawLog(jobId) {
     $("d-log").textContent = "No output yet.";
   }
   if (r.last_timestamp) logSeen = r.last_timestamp;
+  // Sticky: the first read is the only one that can be truncated, and the fact
+  // stays true for as long as this pane is open.
+  if (r.truncated) logTruncated = true;
   const n = logText.split("\n").filter(Boolean).length;
-  $("d-log-note").textContent = `${n} ${n === 1 ? "line" : "lines"}`;
+  $("d-log-note").textContent = `${n} ${n === 1 ? "line" : "lines"}` +
+    (logTruncated
+      ? "  ·  the start is missing: this job printed more than 10,000 lines"
+      : "  ·  from the first line");
 }
 
 /* DDPSRUN-COMPARE-PANEL. Pull the ranking out of the one sentence the operator writes.
