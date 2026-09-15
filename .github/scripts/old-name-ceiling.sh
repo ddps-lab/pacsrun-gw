@@ -31,11 +31,12 @@
 # Grep anchor: HYPERUN-ENV-RENAME
 set -euo pipefail
 
-# Measured 2026-09-15 from `git ls-files`, right after the Lambda was deleted.
+# Measured 2026-09-15 from `git ls-files`. Started at 702; the dead Lambda job in
+# release.yml took it to 699.
 # Lower it, never raise it. The easiest 29 to remove are in terraform/lambda/main.tf,
 # whose `aws_lambda_function` and `aws_lambda_function_url` blocks now describe
 # something that no longer exists -- and would rebuild it on the next apply.
-BASELINE=702
+BASELINE=699
 
 # ★ `git ls-files` AND NOT `grep -r .`, and the difference is the whole check.
 # A recursive grep counts what is on the DISK: a virtualenv, a build directory,

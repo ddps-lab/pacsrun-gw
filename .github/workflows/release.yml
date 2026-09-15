@@ -1,4 +1,4 @@
-# RELEASE — build the gateway's deployment package and publish it to Lambda.
+# RELEASE — build what the gateway runs and put it there.
 #
 # END-TO-END FLOW of one release:
 #
@@ -11,26 +11,30 @@
 #      calling sts:AssumeRoleWithWebIdentity against the IAM role
 #      terraform/registry created. The role's trust policy checks `sub`, which is
 #      what stops any other repository using it.
-#   4. Dependencies are installed for Lambda's platform, not the runner's, and
-#      zipped with the server package.
-#   5. update-function-code publishes it.
+#   4. `image` builds the server image, pushes it to ECR, and rolls the gateway
+#      Deployment onto that exact tag.
+#   5. `screen` syncs the static page to S3 and invalidates CloudFront.
 #
-# WHY A ZIP AND NOT AN IMAGE. Measured 2026-09-01: the dependencies come to
-# 92.4 MB unzipped against Lambda's 250 MB limit. The ECR repository this
-# workflow used to push to is still there for a possible return to running as a
-# pod, and costs $0.40 a month.
-#
-# WHY --platform manylinux2014_x86_64 AND --only-binary. The runner is Ubuntu and
-# Lambda is Amazon Linux; a wheel compiled for one can fail to load on the other,
-# and it fails at import time inside the function rather than here. Forcing
-# prebuilt wheels for Lambda's platform makes that impossible.
+# WHAT USED TO BE HERE. Until 2026-09-15 the gateway ran as a Lambda and this
+# workflow built a zip and called `update-function-code`. The function was
+# deleted that day, so the job went too. The reason it had to go is the browser
+# terminal: a Lambda cannot hold a WebSocket, and its execution ends with its
+# response, so nothing of ours is alive between two of a person's keystrokes.
+# The zip recipe, the manylinux wheel pinning and the publish call are in the
+# history, and terraform/lambda/ still describes the function, if a Lambda is
+# ever wanted again.
 #
 # REQUIRED repository configuration (Settings -> Secrets and variables -> Actions
 # -> Variables), printed by `terraform output next_steps`:
 #
 #   AWS_REGION       us-west-2
-#   AWS_ROLE_ARN     arn:aws:iam::<ACCOUNT_ID>:role/ddpsrun-gw-github-actions
-#   LAMBDA_FUNCTION  ddpsrun-gw
+#   AWS_ROLE_ARN     arn:aws:iam::<ACCOUNT_ID>:role/<GITHUB_ACTIONS_ROLE>
+#   ECR_REGION       us-west-2
+#   ECR_REPOSITORY   the image repository
+#   EKS_CLUSTER      the cluster the gateway pod runs in
+#   GW_NAMESPACE     hyperun-system
+#   API_BASE         https://api.hyperun.<YOUR_DOMAIN>
+#   UI_BUCKET / UI_DISTRIBUTION   where the screen goes
 name: release
 
 on:
@@ -77,107 +81,12 @@ jobs:
         working-directory: server
         run: python -m pytest -q
 
-  publish:
-    name: build the zip and publish it to Lambda
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          # Must match the function's runtime. A wheel built for a different
-          # minor version can import here and fail there.
-          python-version: "3.12"
-
-      - name: assume the publish role over OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: build the deployment package
-        working-directory: server
-        run: |
-          set -euo pipefail
-          # Read the dependency list out of pyproject.toml rather than repeating
-          # it here. It used to be repeated, and on 2026-09-01 that cost a 502:
-          # pyjwt was added to pyproject for Cognito, this list was not touched,
-          # and the deployed function died on `No module named 'jwt'`. One list
-          # cannot drift from itself.
-          #
-          # Two things are dropped, and only two, each for its own reason:
-          #   botocore  the Lambda runtime already provides it. Shipping ours
-          #             would add tens of megabytes to a cold start that is
-          #             already dominated by reading the package.
-            #   boto3     same reason. It became a declared dependency on
-            #             2026-09-15 for the POD, which has only what the image
-            #             installs; the function still gets it from the runtime.
-          #   uvicorn   only ever runs the server as a process. In Lambda,
-          #             mangum is what speaks to the runtime, so uvicorn and its
-          #             [standard] extras would be several megabytes never read.
-          DEPS=$(python - <<'PY'
-          import tomllib
-          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
-          skip = ("botocore", "boto3", "uvicorn")
-          print(" ".join(
-              d for d in project["dependencies"]
-              if not d.lower().startswith(skip)
-          ))
-          PY
-          )
-          echo "packaging: $DEPS"
-          python -m pip install --quiet --target build \
-            --platform manylinux2014_x86_64 --python-version 3.12 \
-            --only-binary=:all: $DEPS
-          cp -r ddpsrun_server build/
-          rm -rf build/boto3 build/botocore build/*.dist-info/RECORD
-          cd build && zip -qr ../function.zip .
-          cd .. && python - <<'PY'
-          import os, zipfile
-          size = os.path.getsize("function.zip")
-          with zipfile.ZipFile("function.zip") as z:
-              unzipped = sum(i.file_size for i in z.infolist())
-          print(f"::notice::zip {size/1024/1024:.1f} MB, unzipped {unzipped/1024/1024:.1f} MB (limit 250 MB)")
-          if unzipped > 250 * 1024 * 1024:
-              raise SystemExit("the package is over Lambda's 250 MB unzipped limit")
-          PY
-
-      # ★ DO NOT PUBLISH AN ANCESTOR. A force push of a rewritten history pushes
-      # many commits at once and GitHub starts a run for several of them; they
-      # finish out of order, so the LAST one to call update-function-code wins.
-      # MEASURED 2026-09-08: runs fired at 11:27 (9aef8b9, the new tip) and at
-      # 11:31/11:32/11:33 for cdfd042/2f960d3/7538a49, which are its ANCESTORS.
-      # The 11:33 run published 7538a49 and rolled production back past a
-      # validate fix that had been verified live half an hour earlier -- with
-      # every run green, because each one really did build the commit it was
-      # given. A workflow that can deploy backwards has no useful green.
-      #
-      # The check is one API call: is this run's commit the current tip of the
-      # default branch. `git rev-parse` on the checkout would not do -- the
-      # checkout IS the stale commit, so it would compare it with itself.
-      - name: refuse to publish anything but the current tip of main
-        run: |
-          set -euo pipefail
-          TIP=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq .object.sha)
-          echo "this run: ${{ github.sha }}"
-          echo "main tip: $TIP"
-          if [ "$TIP" != "${{ github.sha }}" ]; then
-            echo "::error::this commit is not the tip of main (probably an ancestor pushed by a force push). Refusing to publish it over a newer one. Re-run release on main: gh workflow run release.yml --ref main"
-            exit 1
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: publish
-        working-directory: server
-        run: |
-          aws lambda update-function-code \
-            --function-name "${{ vars.LAMBDA_FUNCTION }}" \
-            --zip-file fileb://function.zip \
-            --query '{name:FunctionName,size:CodeSize,sha:CodeSha256}' --output json
-          aws lambda wait function-updated-v2 --function-name "${{ vars.LAMBDA_FUNCTION }}"
-          echo "::notice::published ${{ github.sha }} to ${{ vars.LAMBDA_FUNCTION }}"
+  # The Lambda that used to serve every request was deleted on 2026-09-15 and the
+  # job that published to it went with it. What replaced it is the `image` job
+  # below plus its rollout step: the gateway now runs as a pod and a push to main
+  # moves that pod onto the image it just built. The zip, the manylinux wheel
+  # pinning and the `update-function-code` call are in the history if a Lambda is
+  # ever wanted again; terraform/lambda/ still describes the function itself.
 
   # HYPERUN-GW-IMAGE. Build the server image and push it to ECR.
   #
