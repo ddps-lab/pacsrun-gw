@@ -264,6 +264,11 @@ def test_the_directory_is_fetched_before_it_is_read(monkeypatch, tmp_path):
         def list_jobs(self, namespace):
             return []
 
-    monkeypatch.setattr(monitor.k8s, "Cluster", lambda *a, **k: NoJobs())
+    # `Cluster.connect()`, not `Cluster()`. The constructor takes two API clients
+    # and the factory is what builds them from the pod's service account -- the
+    # second thing the first live run died on (`TypeError: Cluster.__init__()
+    # missing 2 required positional arguments`). Patching the factory rather than
+    # the class is what makes this test notice if that ever changes back.
+    monkeypatch.setattr(monitor.k8s.Cluster, "connect", staticmethod(lambda: NoJobs()))
     assert monitor.run_once() == 0
     assert fetched, "the directory was read without being fetched first"

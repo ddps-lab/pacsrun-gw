@@ -422,7 +422,7 @@ def run_once() -> int:
     settings = config.Settings.from_env()
     tokens_source.fetch_to_file(pathlib.Path(settings.tokens_path))
     store = auth.TokenStore.load(settings.tokens_path)
-    cluster = k8s.Cluster()
+    cluster = k8s.Cluster.connect()
     upstage = os.environ.get("HYPERUN_UPSTAGE_API_KEY", "").strip()
     slack = os.environ.get("HYPERUN_SLACK_BOT_TOKEN", "").strip()
     now = time.time()
