@@ -25,6 +25,14 @@ dependencies = [
     # workflow drops it from the package; it is declared here for local runs and
     # tests.
     "botocore>=1.34",
+    # ★ boto3 IS A HARD DEPENDENCY BECAUSE OF THE POD, and was not one before.
+    # `tokens_source` reads the directory of registered people out of Secrets
+    # Manager, and the Lambda runtime supplies boto3 so nothing had to declare
+    # it. A container has only what the image installs, and the pod died on
+    # `ModuleNotFoundError: No module named 'boto3'` at its first start
+    # (2026-09-15). The release workflow drops it from the zip for the same
+    # reason it drops botocore: the runtime already has it.
+    "boto3>=1.34",
     # Verifies Cognito id_tokens locally instead of calling Cognito on every
     # request (DDPSRUN-COGNITO-VERIFY). The [crypto] extra pulls `cryptography`,
     # which is what actually does RS256; measured 3.8 MB, against a package that

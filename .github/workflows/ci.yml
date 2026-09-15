@@ -201,18 +201,32 @@ jobs:
       # 읽으므로 기능이 하나 빠지는 게 아니라 프로세스가 아예 안 떴다. Lambda 는
       # `cp -r ddpsrun_server build/` 라 파일이 따라가서 이 결함이 안 보였다.
       #
-      # 그래서 여기서 **실제로 띄우고 /healthz 를 물어본다.** import 시점에 죽는 것은
-      # 전부 여기서 걸린다. 환경변수는 자리표시자면 되고 cluster 도 AWS 도 안 부른다
-      # (`Cluster.connect` 는 kubeconfig 가 없으면 죽지만, 그 전에 import 가 먼저다).
+      # 그래서 여기서 **실제로 띄우고 /healthz 를 물어본다.**
+      #
+      # ★ 가짜 kubeconfig 를 넣어주는 이유. `build_state` 가 startup 에 `Cluster.connect()`
+      # 를 부르고, 그것은 in-cluster token 도 kubeconfig 도 없으면 ClusterError 로 죽는다
+      # (k8s.py:149). runner 는 cluster 가 아니므로 파일을 하나 쥐여준다. `load_kube_config`
+      # 는 파일을 읽기만 하고 apiserver 에 접속하지 않으므로, 주소가 가짜여도 startup 은
+      # 지나간다 — 이 단계가 잡으려는 것은 연결이 아니라 **뜨기 전에 죽는 것**이다.
       - name: image 가 실제로 뜨고 /healthz 에 답하는지
         working-directory: server
         run: |
           set -euo pipefail
           echo '{"tokens":[{"sha256":"'$(printf 0%.0s {1..64})'","user":"ci","namespace":"default"}]}' > /tmp/tok.json
+          cat > /tmp/kubeconfig <<'KUBECONF'
+          apiVersion: v1
+          kind: Config
+          clusters: [{name: ci, cluster: {server: https://127.0.0.1:6443}}]
+          users: [{name: ci, user: {token: not-a-real-token}}]
+          contexts: [{name: ci, context: {cluster: ci, user: ci}}]
+          current-context: ci
+          KUBECONF
           docker run -d --name gw-smoke -p 18080:8080 \
             -e HYPERUN_RESULT_BUCKET=ci-bucket \
             -e HYPERUN_TOKENS_PATH=/tmp/tok.json \
+            -e KUBECONFIG=/tmp/kubeconfig \
             -v /tmp/tok.json:/tmp/tok.json:ro \
+            -v /tmp/kubeconfig:/tmp/kubeconfig:ro \
             ddpsrun-gw:${{ github.sha }}
           for i in $(seq 1 30); do
             if curl -sf -m 2 http://127.0.0.1:18080/healthz > /dev/null; then

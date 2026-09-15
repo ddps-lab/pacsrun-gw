@@ -110,13 +110,16 @@ jobs:
           #   botocore  the Lambda runtime already provides it. Shipping ours
           #             would add tens of megabytes to a cold start that is
           #             already dominated by reading the package.
+            #   boto3     same reason. It became a declared dependency on
+            #             2026-09-15 for the POD, which has only what the image
+            #             installs; the function still gets it from the runtime.
           #   uvicorn   only ever runs the server as a process. In Lambda,
           #             mangum is what speaks to the runtime, so uvicorn and its
           #             [standard] extras would be several megabytes never read.
           DEPS=$(python - <<'PY'
           import tomllib
           project = tomllib.load(open("pyproject.toml", "rb"))["project"]
-          skip = ("botocore", "uvicorn")
+          skip = ("botocore", "boto3", "uvicorn")
           print(" ".join(
               d for d in project["dependencies"]
               if not d.lower().startswith(skip)
