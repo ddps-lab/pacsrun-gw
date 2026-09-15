@@ -237,3 +237,33 @@ def test_a_job_whose_log_cannot_be_read_is_skipped_rather_than_fatal():
             raise RuntimeError("pods \"x-pod-0\" not found")
 
     assert monitor.check_one(Gone(), "ns", {"metadata": {"name": "x"}}, NOW) == []
+
+
+def test_the_directory_is_fetched_before_it_is_read(monkeypatch, tmp_path):
+    # ★ THE FIRST LIVE RUN DIED ON EXACTLY THIS. The gateway fetches the token
+    # directory once in its lifespan and then serves for weeks; this process
+    # starts from nothing every ten minutes with an empty /tmp, so a `load`
+    # without a fetch raises
+    #     TokenFileError: cannot read the token file at /tmp/hyperun-tokens.json
+    # It is not a startup ordering detail -- it is the difference between a
+    # CronJob that runs and one that has never run successfully.
+    fetched: list = []
+    target = tmp_path / "tokens.json"
+    # A real directory, because `TokenStore` refuses an empty `tokens` array --
+    # a server that admits nobody is a configuration error, not a quiet state.
+    target.write_text(json.dumps({"tokens": [
+        {"email": "alice@example.com", "user": "alice", "namespace": "ddps-alice", "team": "ddps"}]}),
+        encoding="utf-8")
+
+    monkeypatch.setenv("HYPERUN_TOKENS_PATH", str(target))
+    monkeypatch.setenv("HYPERUN_RESULT_BUCKET", "a-bucket")
+    monkeypatch.setattr(monitor.tokens_source, "fetch_to_file",
+                        lambda path, sid="": fetched.append(path) or False)
+
+    class NoJobs:
+        def list_jobs(self, namespace):
+            return []
+
+    monkeypatch.setattr(monitor.k8s, "Cluster", lambda *a, **k: NoJobs())
+    assert monitor.run_once() == 0
+    assert fetched, "the directory was read without being fetched first"

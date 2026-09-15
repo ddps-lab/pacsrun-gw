@@ -56,11 +56,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import pathlib
 import time
 import urllib.error
 import urllib.request
 
-from . import auth, config, k8s, metrics
+from . import auth, config, k8s, metrics, tokens_source
 
 logger = logging.getLogger("hyperun.monitor")
 
@@ -407,6 +408,16 @@ def run_once() -> int:
     first unreadable log is a monitor that reports nothing on the day something
     is actually wrong.
     """
+    # ★ FETCH THE DIRECTORY FIRST. The gateway does this in its lifespan and then
+    # serves requests for weeks; this process starts from nothing every ten
+    # minutes with an empty /tmp, so without it the very first pass dies on
+    #     TokenFileError: cannot read the token file at /tmp/hyperun-tokens.json
+    # which is what the first live run did (2026-09-15). The same function the
+    # gateway calls, so the two cannot disagree about who exists.
+    settings_path = os.environ.get("HYPERUN_TOKENS_PATH") or \
+        os.environ.get("DDPSRUN_TOKENS_PATH") or "/tmp/hyperun-tokens.json"
+    tokens_source.fetch_to_file(pathlib.Path(settings_path))
+
     settings = config.Settings.from_env()
     store = auth.TokenStore.load(settings.tokens_path)
     cluster = k8s.Cluster()
