@@ -475,6 +475,177 @@ def test_watch_prints_progress_and_gpu(fake, capsys):
     assert "samples        120" in printed
 
 
+def gpu_sample(util, used, total=81920, index=0):
+    """One reading, for the card tests below."""
+    return {"utilization_percent": util, "memory_used_mib": used,
+            "memory_total_mib": total, "memory_percent": round(100 * used / total, 1),
+            "temperature_c": 62, "power_w": 310.0, "gpu_index": index}
+
+
+def four_a100_cards():
+    """job-66b46719b854 as the server reports it: four A100s in one pod.
+
+    The numbers are that run's: every card peaked at 77,631 of 81,920 MiB, and
+    the utilisation INSIDE those four highest-memory samples read 0, 3, 1 and 95
+    while the cards themselves peaked at 100, 99, 100 and 99. That gap is the
+    defect the screen carried until 2026-09-11, so the fixture keeps it.
+    """
+    peaks = [(0, 100, 84.6), (3, 99, 37.8), (1, 100, 79.2), (95, 99, 81.3)]
+    return [
+        {"gpu_index": i,
+         "series": [{}] * 393,
+         "latest": gpu_sample(0, 0, index=i),
+         "peak": gpu_sample(at_peak, 77631, index=i),
+         "avg_utilization_percent": avg,
+         "peak_utilization_percent": real_peak,
+         "sample_count": 785}
+        for i, (at_peak, real_peak, avg) in enumerate(peaks)
+    ]
+
+
+def test_every_card_is_printed_not_only_the_first(fake, capsys):
+    # ★ THE DEFECT. `latest_gpu` is card 0, so a four-A100 job printed one card
+    # and three quarters of a $44 run was invisible from the CLI. The screen was
+    # fixed on 2026-09-08 and this surface was not.
+    fake.metrics_result = {
+        "latest_gpu": gpu_sample(94, 38200),
+        "peak_gpu": gpu_sample(0, 77631),
+        "gpu_series": [{}] * 393,
+        "sample_count": 785,
+        "peak_utilization_percent": 100,
+        "avg_utilization_percent": 84.6,
+        "cards": four_a100_cards(),
+        "window_seconds": 604800, "note": "",
+    }
+    assert run(["watch", "job-66b46719b854"]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    # `GPU 0` is a table row; `GPU util` and `GPU memory` are the headline above
+    # it, so the card index is what tells the two apart.
+    rows = {line.split()[1]: line.split()
+            for line in printed.splitlines()
+            if line.startswith("  GPU ") and line.split()[1].isdigit()}
+    assert sorted(rows) == ["0", "1", "2", "3"]
+
+    # A row reads: GPU <n> <used> / <total> MiB (<pct>%) <peak util> <avg> <n>
+    # so the last three fields are the three that were wrong or missing.
+    expected = {"0": ("100%", "84.6%"), "1": ("99%", "37.8%"),
+                "2": ("100%", "79.2%"), "3": ("99%", "81.3%")}
+    for index, (peak_util, avg_util) in expected.items():
+        fields = rows[index]
+        # Each card's own peak memory, not card 0's repeated four times.
+        assert fields[2:7] == ["77,631", "/", "81,920", "MiB", "(95%)"]
+        # ★ `peak_utilization_percent`, NOT the utilisation inside the memory
+        # peak. The two differ on this very run: the four highest-memory samples
+        # read 0%, 3%, 1% and 95% while the cards peaked at 100, 99, 100 and 99.
+        assert fields[7] == peak_util
+        assert fields[8] == avg_util
+        # The readings this card printed, not the 393 points left after the
+        # server thinned the series for the chart.
+        assert fields[9] == "785"
+
+
+def test_one_card_prints_no_table_because_it_would_repeat_the_block(fake, capsys):
+    # With a single card the table's four numbers are the same four printed
+    # directly above it, so it is drawn on the same condition the screen uses.
+    fake.metrics_result = {
+        "latest_gpu": gpu_sample(94, 38200, total=45440),
+        "gpu_series": [{}] * 120,
+        "cards": [{"gpu_index": 0, "series": [{}] * 120,
+                   "latest": gpu_sample(94, 38200, total=45440),
+                   "peak": gpu_sample(94, 38200, total=45440),
+                   "avg_utilization_percent": 90.0,
+                   "peak_utilization_percent": 99,
+                   "sample_count": 120}],
+        "window_seconds": 3600, "note": "",
+    }
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    assert "peak memory" not in printed      # the table's header row
+    assert "38,200 / 45,440 MiB" in printed
+
+
+def test_a_finished_job_leads_with_the_peak_not_the_idle_last_reading(fake, capsys):
+    # ★ THE DEFECT. A finished job's last reading is the idle card in the
+    # seconds before teardown -- 0%, 0 MiB -- and printing it as "GPU util" says
+    # the run was idle. What a post-mortem asks for is the peak, because running
+    # out of memory is what kills a run. The screen was changed to this shape on
+    # 2026-09-07.
+    fake.status_result = {"job_id": "job-66b46719b854", "name": "baseline-c",
+                          "phase": "Succeeded"}
+    fake.metrics_result = {
+        "latest_gpu": gpu_sample(0, 0),
+        "peak_gpu": gpu_sample(0, 77631),
+        "gpu_series": [{}] * 393,
+        "sample_count": 785,
+        "peak_utilization_percent": 100,
+        "avg_utilization_percent": 84.6,
+        "window_seconds": 604800, "note": "",
+    }
+    assert run(["watch", "job-66b46719b854"]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    assert "peak memory" in printed
+    assert "77,631 / 81,920 MiB" in printed
+    # The peak of the CARD, not the utilisation inside the highest-memory
+    # sample, which on this run was 0 while the card reached 100.
+    assert "peak util      100%" in printed
+    assert "avg util       84.6%" in printed
+    # The last reading is still shown, and named for what it is.
+    assert "last reading   0%, 0 MiB  (run ended)" in printed
+    # The running job's labels are gone: leaving "GPU util  0%" on the screen is
+    # exactly the claim this fix removes.
+    assert "GPU util" not in printed
+
+
+def test_a_running_job_keeps_the_live_readings_as_the_headline(fake, capsys):
+    # The mirror of the test above. `peak_gpu` being present is not on its own a
+    # finished job -- the server sends it for a running one too -- so the phase
+    # is what decides, and a Running job still leads with what the card is doing
+    # NOW.
+    fake.metrics_result = {
+        "latest_gpu": gpu_sample(94, 38200, total=45440),
+        "peak_gpu": gpu_sample(99, 40000, total=45440),
+        "gpu_series": [{}] * 120,
+        "peak_utilization_percent": 99,
+        "avg_utilization_percent": 90.0,
+        "window_seconds": 3600, "note": "",
+    }
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    assert "GPU util" in printed
+    assert "38,200 / 45,440 MiB" in printed
+    assert "last reading" not in printed
+
+
+def test_a_phase_lookup_that_fails_still_prints_the_gpu_numbers(fake, capsys):
+    # The numbers are what the command exists for, so a job deleted between the
+    # metrics call and the phase call falls back to the running layout rather
+    # than exiting with nothing printed.
+    def refuse(job_id):
+        raise ServerError("404: no such job")
+
+    fake.status = refuse
+    fake.metrics_result = {
+        "latest_gpu": gpu_sample(94, 38200, total=45440),
+        "gpu_series": [{}] * 120,
+        "window_seconds": 3600, "note": "",
+    }
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    assert "38,200 / 45,440 MiB" in capsys.readouterr().out
+
+
+def test_watch_json_prints_the_cards_and_asks_for_no_phase(fake, capsys):
+    # --json is the server's answer verbatim, so the second request would buy
+    # nothing. It is one GET per typed `watch` and worth not making.
+    def refuse(job_id):
+        raise AssertionError("--json must not ask for the phase")
+
+    fake.status = refuse
+    fake.metrics_result = {"cards": four_a100_cards(), "gpu_series": [],
+                           "window_seconds": 3600, "note": ""}
+    assert run(["watch", "job-66b46719b854", "--json"]) == cli.EXIT_OK
+    assert len(json.loads(capsys.readouterr().out)["cards"]) == 4
+
+
 def test_samples_counts_the_readings_taken_not_the_chart_points(fake, capsys):
     # ★ THE SAME DEFECT THE SCREEN HAD. The server thins the series to at most
     # 400 points so a chart can draw it; job-66b46719b854 printed 785 readings

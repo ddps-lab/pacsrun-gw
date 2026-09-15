@@ -1088,12 +1088,60 @@ def bar(percent: float, width: int = 20) -> str:
     return "#" * filled + "-" * (width - filled)
 
 
+# DDPSRUN-WATCH-TERMINAL. The three phases a job never leaves. They are the
+# controller's own words: the phase enum in api/v1alpha1/pacsjob_types.go
+# carries Pending / Starting / Running / Recovering / Succeeded / Failed /
+# Compared and nothing else, and the screen keeps the same three in
+# `const TERMINAL` (ui/app.js). Recovering is NOT here -- the machine was
+# reclaimed and the job is being restarted, so the run is still going.
+TERMINAL_PHASES = ("Succeeded", "Failed", "Compared")
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
-    """Print a job's GPU usage and how far the training has got."""
-    result = client_from_config().metrics(args.job_id, args.window)
+    """Print a job's GPU usage and how far the training has got.
+
+    ONE BLOCK PER CARD, because a job can rent several. baseline-c rents four
+    A100s in one pod, and until today this printed `latest_gpu`, which is card 0
+    alone -- three quarters of a $44 run was invisible from the CLI. The screen
+    had the same defect and was fixed on 2026-09-08. `cards` is the server's
+    per-card answer (CardMetricsView in server/ddpsrun_server/models.py); a
+    server too old to send it answers with an empty list, and then the
+    single-card block below is the whole story, exactly as before.
+
+    WHY THIS ASKS FOR THE PHASE AS WELL AS THE METRICS. A finished job's last
+    reading is the idle card in the seconds before teardown -- 0%, 0 MiB -- so
+    printing it under "GPU util" tells a reader the run was idle when it was
+    not. Leading with the peak instead requires knowing the job is over, and
+    THE METRICS ANSWER DOES NOT SAY: MetricsResponse carries latest_gpu,
+    gpu_series, peak_gpu, the two utilisation figures, sample_count, cards,
+    progress, window_seconds and note, and no phase at all
+    (server/ddpsrun_server/models.py). Guessing from the readings fails in both
+    directions -- a job whose framework has not allocated yet also reads 0 MiB,
+    and a job killed mid-step leaves a final reading that is nowhere near 0 --
+    so this asks the server instead.
+
+    WHAT THAT COSTS: one extra `GET /v1/jobs/{id}` per typed `watch`. `watch`
+    prints once and exits rather than polling, so it is one extra request per
+    command, not one per second, and `--json` skips it entirely. The screen
+    pays the same price -- it reads the job and hands it to drawMetrics
+    (ui/app.js).
+    """
+    client = client_from_config()
+    result = client.metrics(args.job_id, args.window)
     if args.json:
+        # The server's answer, verbatim. It already contains `cards`, so nothing
+        # here needs the phase and nothing should pay for the second request.
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return EXIT_OK
+
+    # A phase lookup that fails must not lose the GPU numbers this command
+    # exists to print, so it falls back to the running layout. The likely cause
+    # is the job being deleted between the two calls, and the running layout is
+    # the behaviour this command had until today rather than a wrong number.
+    try:
+        done = client.status(args.job_id).get("phase") in TERMINAL_PHASES
+    except ServerError:
+        done = False
 
     progress = result.get("progress")
     if progress:
@@ -1109,12 +1157,40 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
     gpu = result.get("latest_gpu")
     if gpu:
-        print(f"  GPU util       {bar(gpu['utilization_percent'])}  "
-              f"{gpu['utilization_percent']}%")
-        print(f"  GPU memory     {bar(gpu['memory_percent'])}  "
-              f"{gpu['memory_used_mib']:,} / {gpu['memory_total_mib']:,} MiB "
-              f"({gpu['memory_percent']}%)")
-        print(f"  temp, power    {gpu['temperature_c']} C, {gpu['power_w']} W")
+        # The reading with the most MEMORY in use. A server too old to send it
+        # leaves the last reading as the only one there is, which is what the
+        # screen falls back to as well.
+        peak = result.get("peak_gpu") or gpu
+        if done:
+            # A FINISHED RUN LEADS WITH THE PEAK. Memory is what kills a run, so
+            # the peak is the number a post-mortem came here for; the last
+            # reading is kept, because it is still evidence, but it is named for
+            # what it is instead of being labelled "GPU util". The screen was
+            # changed to this shape on 2026-09-07 after the 0%, 0 MiB readout
+            # was reported as the panel being broken.
+            print(f"  peak memory    {bar(peak['memory_percent'])}  "
+                  f"{peak['memory_used_mib']:,} / {peak['memory_total_mib']:,} MiB "
+                  f"({peak['memory_percent']}%)")
+            # ★ `peak_utilization_percent`, NOT `peak['utilization_percent']`,
+            # and the difference is the whole defect. `peak` is the sample with
+            # the most memory in it and its utilisation is whatever the card
+            # happened to be doing at that instant. On job-66b46719b854 all four
+            # A100s reached 77,631 MiB and the utilisation inside those four
+            # samples read 0, 3, 1 and 95 -- while every one of those cards
+            # actually peaked at 99 or 100 and averaged between 37.8 and 84.6.
+            # Reported on the screen 2026-09-11; the CLI never printed either
+            # figure, so it is being added correct rather than fixed.
+            print(f"  peak util      {_percent(result.get('peak_utilization_percent'))}")
+            print(f"  avg util       {_percent(result.get('avg_utilization_percent'))}")
+            print(f"  last reading   {gpu['utilization_percent']}%, "
+                  f"{gpu['memory_used_mib']:,} MiB  (run ended)")
+        else:
+            print(f"  GPU util       {bar(gpu['utilization_percent'])}  "
+                  f"{gpu['utilization_percent']}%")
+            print(f"  GPU memory     {bar(gpu['memory_percent'])}  "
+                  f"{gpu['memory_used_mib']:,} / {gpu['memory_total_mib']:,} MiB "
+                  f"({gpu['memory_percent']}%)")
+            print(f"  temp, power    {gpu['temperature_c']} C, {gpu['power_w']} W")
         # `sample_count`, not len(gpu_series): the server thins the series to at
         # most 400 points so a chart can draw it, and job-66b46719b854 printed
         # 785 readings per card while this line said 393. The screen had the same
@@ -1122,10 +1198,59 @@ def cmd_watch(args: argparse.Namespace) -> int:
         # falls back to the thinned length, which is the only number it has.
         taken = result.get("sample_count") or len(result.get("gpu_series", []))
         print(f"  samples        {taken}, last {result['window_seconds']}s")
+        print_card_table(result.get("cards") or [])
 
     if result.get("note"):
         print(f"  note           {result['note']}")
     return EXIT_OK
+
+
+def _percent(value: float | int | None) -> str:
+    """One utilisation figure, or a dash when the server did not send it.
+
+    The two utilisation fields arrived on 2026-09-10 and a server older than
+    that answers with them absent. A blank line reads as 0, which is the very
+    thing the peak figures exist to stop being claimed.
+    """
+    return "-" if value is None else f"{value}%"
+
+
+def print_card_table(cards: list[dict[str, Any]]) -> None:
+    """One row per GPU card, printed only when the job rented more than one.
+
+    WHY THIS EXISTS. Everything above describes card 0 -- `latest_gpu` and
+    `peak_gpu` are the lowest-indexed card's readings, unchanged since before
+    `cards` existed. job-66b46719b854 is four A100s in one pod, and reading its
+    CLI output left three of them invisible.
+
+    WHY ONLY ABOVE ONE CARD. With a single card these four numbers repeat the
+    block above it word for word, so the table is drawn on the same condition
+    the screen draws its own (`cards.length > 1` in ui/app.js).
+
+    Args:
+        cards: the response's `cards`, each a CardMetricsView -- `gpu_index`,
+            `series`, `latest`, `peak`, `avg_utilization_percent`,
+            `peak_utilization_percent`, `sample_count`.
+    """
+    if len(cards) < 2:
+        return
+    print(f"  {'card':<8}{'peak memory':>27}{'peak util':>11}"
+          f"{'avg util':>10}{'samples':>9}")
+    for card in cards:
+        # `peak` is this card's highest-MEMORY reading; falling back to its last
+        # one matches the screen's table and keeps a row rather than dropping a
+        # card that only ever printed once.
+        sample = card.get("peak") or card.get("latest") or {}
+        memory = "-" if not sample else (
+            f"{sample['memory_used_mib']:,} / {sample['memory_total_mib']:,} MiB "
+            f"({sample['memory_percent']:.0f}%)")
+        # Same two corrections as the block above: the card's own highest
+        # utilisation rather than the utilisation inside its memory peak, and
+        # the readings it printed rather than the points left after thinning.
+        taken = card.get("sample_count") or len(card.get("series") or [])
+        print(f"  {('GPU ' + str(card['gpu_index'])):<8}{memory:>27}"
+              f"{_percent(card.get('peak_utilization_percent')):>11}"
+              f"{_percent(card.get('avg_utilization_percent')):>10}{taken:>9}")
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
