@@ -21,6 +21,8 @@ import types
 
 import pytest
 
+from pathlib import Path as pathlib_Path
+
 from ddpsrun_server import tokens_source
 
 DIRECTORY = {"tokens": [{"email": "alice@example.com", "user": "alice",
@@ -53,6 +55,22 @@ def clean_env(monkeypatch):
     yield
     for name in ("HYPERUN_TOKENS_PATH", "DDPSRUN_TOKENS_PATH"):
         os.environ.pop(name, None)
+
+
+@pytest.fixture
+def stopper():
+    """A stop Event that is always set, whatever the test does.
+
+    ★ WITHOUT THIS THE SUITE FAILS ONLY WHEN RUN IN FULL. A refresh thread left
+    running keeps re-fetching every 0.01s and rewriting HYPERUN_TOKENS_PATH in
+    the real `os.environ`, so the tests that ran next authenticated against a
+    tmp_path belonging to a test that had already finished. It passed on its own
+    and failed in the suite, which is the least useful shape a failure can take.
+    """
+    import threading
+    event = threading.Event()
+    yield event
+    event.set()
 
 
 def test_no_secret_id_means_the_file_is_mounted_and_nothing_is_fetched(fake_boto, tmp_path):
@@ -125,14 +143,14 @@ def test_nothing_is_refreshed_when_the_file_is_mounted(fake_boto, tmp_path):
     assert tokens_source.refresh_forever(tmp_path / "t.json", lambda: None) is None
 
 
-def test_a_new_person_is_picked_up_without_a_restart(fake_boto, tmp_path, monkeypatch):
+def test_a_new_person_is_picked_up_without_a_restart(fake_boto, tmp_path, monkeypatch, stopper):
     # ★ WHAT A LAMBDA GOT FOR FREE AND A POD DOES NOT. Registering somebody used
     # to take effect at the next cold start; a pod stays up for weeks.
     monkeypatch.setenv("HYPERUN_TOKENS_SECRET_ID", "s")
     target = tmp_path / "t.json"
     reloads = []
 
-    thread = tokens_source.refresh_forever(target, lambda: reloads.append(1), seconds=0.01)
+    thread = tokens_source.refresh_forever(target, lambda: reloads.append(1), seconds=0.01, stop=stopper)
     assert thread is not None
 
     fake_boto["body"] = json.dumps({"tokens": DIRECTORY["tokens"] + [
@@ -146,12 +164,13 @@ def test_a_new_person_is_picked_up_without_a_restart(fake_boto, tmp_path, monkey
     assert len(json.loads(target.read_text())["tokens"]) == 2
 
 
-def test_a_failed_refresh_does_not_kill_the_thread(fake_boto, tmp_path, monkeypatch):
+def test_a_failed_refresh_does_not_kill_the_thread(fake_boto, tmp_path, monkeypatch, stopper):
     # The directory already in memory is still valid. Throwing here would take
     # down a server that is answering correctly because Secrets Manager blinked.
     monkeypatch.setenv("HYPERUN_TOKENS_SECRET_ID", "s")
     reloads = []
-    thread = tokens_source.refresh_forever(tmp_path / "t.json", lambda: reloads.append(1), seconds=0.01)
+    thread = tokens_source.refresh_forever(tmp_path / "t.json", lambda: reloads.append(1),
+                                           seconds=0.01, stop=stopper)
 
     fake_boto["body"] = None            # every fetch now raises
     __import__("time").sleep(0.1)
@@ -162,3 +181,20 @@ def test_a_failed_refresh_does_not_kill_the_thread(fake_boto, tmp_path, monkeypa
     while not reloads and __import__("time").monotonic() < deadline:
         __import__("time").sleep(0.01)
     assert reloads, "the thread stopped refreshing after one failure"
+
+
+def test_setting_the_stop_event_ends_the_thread():
+    # A thread nobody can stop is the defect above wearing a different hat: in a
+    # server it leaks into shutdown, in a test it leaks into the next one.
+    import os as _os, threading, time
+    _os.environ["HYPERUN_TOKENS_SECRET_ID"] = "s"
+    try:
+        event = threading.Event()
+        thread = tokens_source.refresh_forever(pathlib_Path("/dev/null"), lambda: None,
+                                               seconds=0.01, stop=event)
+        assert thread.is_alive()
+        event.set()
+        thread.join(timeout=3)
+        assert not thread.is_alive(), "the thread ignored the stop event"
+    finally:
+        _os.environ.pop("HYPERUN_TOKENS_SECRET_ID", None)

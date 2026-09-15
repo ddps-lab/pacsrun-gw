@@ -47,7 +47,6 @@ import logging
 import os
 import pathlib
 import threading
-import time
 
 logger = logging.getLogger("ddpsrun")
 
@@ -118,7 +117,8 @@ def fetch_to_file(path: pathlib.Path, sid: str = "") -> bool:
     return True
 
 
-def refresh_forever(path: pathlib.Path, on_new, seconds: float = REFRESH_SECONDS) -> threading.Thread | None:
+def refresh_forever(path: pathlib.Path, on_new, seconds: float = REFRESH_SECONDS,
+                    stop: threading.Event | None = None) -> threading.Thread | None:
     """Re-read the directory on an interval, for a process that does not restart.
 
     Args:
@@ -126,6 +126,17 @@ def refresh_forever(path: pathlib.Path, on_new, seconds: float = REFRESH_SECONDS
         on_new: called with no arguments after each successful re-fetch. The
             caller reloads its `TokenStore` there.
         seconds: how long to wait between reads.
+        stop: set it to end the loop. `stop.wait(seconds)` is the sleep, so
+            setting it ends the thread at once rather than after the remaining
+            interval.
+
+            ★ IT EXISTS BECAUSE A THREAD NOBODY CAN STOP LEAKS INTO WHATEVER
+            RUNS NEXT. The first version slept and looped forever, which is
+            harmless in a server that exits by dying -- and wrong everywhere
+            else. Two tests started one at a 0.01s interval and it outlived
+            them, re-fetching and rewriting `os.environ` underneath the tests
+            that followed, so the suite failed only in full and passed when that
+            file ran alone (2026-09-15).
 
     Returns:
         The daemon thread, or None when there is no secret to re-read (a mounted
@@ -141,9 +152,10 @@ def refresh_forever(path: pathlib.Path, on_new, seconds: float = REFRESH_SECONDS
     if not secret_id():
         return None
 
+    stop = stop or threading.Event()
+
     def loop() -> None:
-        while True:
-            time.sleep(seconds)
+        while not stop.wait(seconds):
             try:
                 if fetch_to_file(path):
                     on_new()

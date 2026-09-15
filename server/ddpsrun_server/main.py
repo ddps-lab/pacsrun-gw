@@ -42,6 +42,7 @@ import json
 import logging
 import pathlib
 import re
+import threading
 import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -215,8 +216,16 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001 - see the docstring
             logger.warning("the refreshed directory did not parse, keeping the old one: %s", exc)
 
-    tokens_source.refresh_forever(TOKENS_CACHE, reload_directory)
-    yield
+    # The event is held so the thread ends when the process does, rather than
+    # being left to die with it. uvicorn runs the second half of this on
+    # shutdown; a thread that cannot be asked to stop is what made the test
+    # suite fail only when run in full (tokens_source.refresh_forever).
+    stop_refresh = threading.Event()
+    tokens_source.refresh_forever(TOKENS_CACHE, reload_directory, stop=stop_refresh)
+    try:
+        yield
+    finally:
+        stop_refresh.set()
 
 
 app = FastAPI(
