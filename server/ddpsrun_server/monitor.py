@@ -414,11 +414,13 @@ def run_once() -> int:
     #     TokenFileError: cannot read the token file at /tmp/hyperun-tokens.json
     # which is what the first live run did (2026-09-15). The same function the
     # gateway calls, so the two cannot disagree about who exists.
-    settings_path = os.environ.get("HYPERUN_TOKENS_PATH") or \
-        os.environ.get("DDPSRUN_TOKENS_PATH") or "/tmp/hyperun-tokens.json"
-    tokens_source.fetch_to_file(pathlib.Path(settings_path))
-
+    #
+    # Settings is built FIRST and the path taken from it, rather than reading the
+    # environment again here. `Settings.from_env` already knows which of the two
+    # variable names this deployment uses (HYPERUN-ENV-RENAME), and a second
+    # reader with its own fallback list is a second thing to keep in step.
     settings = config.Settings.from_env()
+    tokens_source.fetch_to_file(pathlib.Path(settings.tokens_path))
     store = auth.TokenStore.load(settings.tokens_path)
     cluster = k8s.Cluster()
     upstage = os.environ.get("HYPERUN_UPSTAGE_API_KEY", "").strip()
