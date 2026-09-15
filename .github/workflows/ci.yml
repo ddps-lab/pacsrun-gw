@@ -101,6 +101,20 @@ jobs:
           fi
           echo "통과: 계정 식별자 없음"
 
+  no-new-ddpsrun:
+    name: ddpsrun 이 늘지 않았는지
+    runs-on: ubuntu-latest
+    steps:
+      # 이 저장소가 쓰는 이름은 hyperun 이다. ddpsrun 은 gateway 가 태어날 때의 이름이고
+      # 2026-09-15 기준 87개 파일 702줄에 남아 있다. 한 번에 다 바꾸는 것은 따로 잡아야 할
+      # 하루치 일이고, 그중 셋(Secrets Manager 의 ddpsrun-gw/tokens, ECR 의 ddpsrun/gateway,
+      # PacsJob 69개에 붙은 ddpsrun.io/* label)은 파일을 고쳐서 바꿀 수 있는 것이 아니다.
+      # 그래서 금지가 아니라 **천장**이다. 줄이는 것은 언제든 되고 늘리는 것만 막는다.
+      # 왜 이 모양인지는 .github/scripts/no-new-ddpsrun.sh 가 적고 있다.
+      - uses: actions/checkout@v4
+      - name: 검사
+        run: ./.github/scripts/no-new-ddpsrun.sh
+
   server-test:
     name: 서버 test
     runs-on: ubuntu-latest
