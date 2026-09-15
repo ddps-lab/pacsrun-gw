@@ -222,6 +222,29 @@ ls -d runs/iter_* runs/C runs/adapters/*/iter_*/ppo_stats.jsonl
 
 ---
 
+## 7b. 산출 경로가 고정이 아닌 script — 회수는 실제 폴더를 따라간다
+
+감싸는 script 가 부르는 학습 script 에 산출 경로가 **박혀 있는** 경우가 있다. 인자도 환경변수도
+없이 `runs/` 가 파일 안 스물여섯 군데에 그대로 적혀 있는 식이다. 그런 코드를 고치지 않고 여러
+갈래로 돌리려면, 바깥에서 **그 이름이 가리키는 곳을 바꿔 끼우는** 방법을 쓴다.
+
+```bash
+for ds in $DATASETS; do
+  mkdir -p out/$ds; rm -f runs; ln -sfn out/$ds runs     # 이름표를 옮겨 붙인다
+  bash their_train.sh                                     # 자기가 어디 쓰는지 모른다
+  rm -f runs                                              # 그리고 뗀다
+done
+```
+
+**회수를 짤 때 그 이름표를 보면 안 된다.** `runs/` 는 한 갈래가 도는 동안에만 있고, 갈래 사이와
+job 이 끝난 뒤에는 없다. 그 이름으로 tar 하면 경계마다 빈 손이 되고, 마지막 묶음은 아무것도
+담지 못한다. **진짜 폴더(`out/`)를 직접 본다** — 이름표가 있든 없든 그쪽은 계속 자란다.
+
+2026-09-15 에 감싸는 script 를 그렇게 고쳐서 냈다. 고치기 전 판이었다면 종료 시점의 tar 가
+비어 있었을 것이다.
+
+---
+
 ## 8. 긴 학습에는 checkpoint 감시를 붙인다
 
 trainer 가 에폭마다 `checkpoint-NNN/` 을 로컬에 쓴다. 그것을 S3 로 옮기려면 **다 쓴 뒤에**
@@ -323,6 +346,42 @@ hyperun estimate --gpu-vram 48 --pairs 1110 --epochs 4 --row-tokens 4100 --cap 1
 
 ---
 
+## 12b. ★ script 본문은 그 프로세스의 명령줄이 된다 — `pkill -f` 가 자기에게 걸린다
+
+12절이 말한 그대로의 결과다. `spec.args = ["bash", "-lc", <본문>]` 이므로 원격에서 이 script 는
+**자기 전문을 명령줄로 달고** 뜬다. `pkill -f` / `pgrep -f` / `ps | grep` 은 **전체 명령줄**에
+대고 맞추므로, 죽이려는 대상의 이름이 본문 어딘가에 적혀 있으면 **자기 자신이 걸린다.** 주석도
+본문이다.
+
+**2026-09-11.** NCCL 사전시험을 끝내고 `pkill -f nccl_test.py` 를 부른 script 가 14초 만에
+SIGTERM 으로 죽었다(exit 143 = 128+15). 바로 윗줄에 `torch.distributed.run ... nccl_test.py` 가
+있었기 때문이다.
+
+**2026-09-14.** 학습 script 가 GPU 정리 loop 에서 `pkill -9 -f "[v]llm"` 을 부르는데, 그것을
+감싼 wrapper 의 **주석 세 줄에** 같은 소문자 낱말이 있었다. `-9` 라 trap 도 안 돈다. 걸리는
+자리는 로깅과 채점이 끝난 뒤, 학습 직전이었다 — A100 4장으로 약 2.6시간, 약 $17 이다. 제출
+전에 찾아 지웠다.
+
+**패턴을 정교하게 짜도 소용없다.** 대상의 이름이 본문에 있는 한 걸린다. 둘 중 하나로 한다.
+
+```bash
+# (가) 자기와 조상을 PID 로 뺀다 -- 감싸는 script 를 우리가 쓸 때
+ANC=" $$ ${BASHPID:-$$} "
+for pid in $(pgrep -f "$PATTERN"); do
+  case "$ANC" in *" $pid "*) continue;; esac
+  kill "$pid"
+done
+
+# (나) 우리가 못 고치는 script 가 pkill 을 부르면, 그 낱말을 우리 본문에서 없앤다
+#      무엇을 없애야 하는지는 그 script 의 pkill 줄을 읽어야 안다
+grep -n "pkill\|pgrep" "$THEIR_SCRIPT"        # 제출 전에 반드시
+```
+
+**제출 전 점검.** 감싸는 script 가 부르는 남의 script 에 `pkill -f` 가 있으면, 그 패턴 하나하나로
+자기 본문을 grep 한다. 0건이 아니면 고친다.
+
+---
+
 ## 12. script 가 커지거나 파일이 여럿이면 — args 에 그대로 넣지 않는다
 
 `--script run.sh` 로 보낸 본문은 **job 객체 안에 들어간다.** `to_pacsjob` 이
@@ -375,6 +434,32 @@ bash /root/run.sh
 옛 wrapper 를 우연히 읽어서 알았다. 그 우연이 없었으면 `aws s3 cp` 로 썼을 것이고, 21시간 뒤
 `AccessDenied` 로 결과가 전부 사라진다. `troubleshooting.md` 의 "job 이 Succeeded 인데 S3 가
 비어 있다" 항목이 그 실패의 흔적이다.
+
+### ★ 그 한 줄은 로그를 타고 간다 — 로그가 끊기면 하나도 안 올라간다
+
+이 규약이 성립하는 조건이 하나 있다. **driver 는 그 줄을 원격의 로그에서 읽는다.** vendor 의
+로그 통로가 끊기면 announce 는 아무 일도 하지 않고, script 는 그것을 알 방법이 없다 — 계속
+잘 찍고 있으니까.
+
+**2026-09-14.** 한 vendor 의 로그 조회가 pod 전체에 대해 거절을 답하기 시작했다(한 job 에서
+63분 동안 68번, 다른 job 에서 21번). 그 vendor 의 현재 API 명세에는 로그 경로가 **아예 없다** —
+경로 23개 중 로그가 없다. 그날 job 은 8시간을 정상으로 돌고도 **결과가 0개**였고, 종료를 알리는
+줄도 못 가서 기계가 반납되지 않았다.
+
+**그래서 첫 announce 뒤에 결과 경로를 한 번 본다.** 규칙 5 의 "관이 서는지 먼저 확인한다" 와
+같은 생각이고, 확인 대상만 다르다.
+
+```bash
+echo "PACSRUN_ARTIFACT=$FIRST_SMALL_FILE"
+sleep 120
+# 결과 경로에 그 이름이 보이는가. 안 보이면 announce 가 닿지 않는 것이다.
+aws s3 ls "$PACSRUN_RESULT_PATH" | grep -q "$(basename "$FIRST_SMALL_FILE")" \
+  || echo "★ announce 가 닿지 않는다 -- 로그 통로를 의심하고, 사람에게 알린다"
+```
+
+**닿지 않을 때 무엇을 할 수 있나.** script 쪽에서 고칠 수는 없다. 다만 그 상태를 **로그에 남기면**
+사람이 다른 경로로 회수할 수 있다. 그 vendor 에는 artifact 를 절대경로로 내주는 HTTP 서버가 이미
+떠 있어서, 2026-09-14 에는 그쪽으로 전부 받아 살렸다. **아무 말도 없이 끝나는 것이 가장 나쁘다.**
 
 ### 규약
 
