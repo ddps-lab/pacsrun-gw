@@ -1,0 +1,274 @@
+# The door: how a browser reaches the gateway pod over HTTPS.
+#
+# END-TO-END FLOW of one request from the screen:
+#
+#   1. The browser resolves `api.hyperun.<YOUR_DOMAIN>`. Route 53 answers with an
+#      ALIAS record pointing at the ALB, so there is no CNAME hop and the query
+#      itself is free.
+#   2. The ALB terminates TLS with the ACM certificate named in the
+#      `LoadBalancerConfiguration` below, and matches the request against the
+#      HTTPRoute.
+#   3. The ALB sends it straight to a POD IP on port 8080. Not to a node port:
+#      the target type is `ip` (see the TargetGroupConfiguration), which the VPC
+#      CNI makes routable inside the VPC.
+#   4. `hyperun-gw` answers. The Service (`hyperun-gw.yaml`) still exists and is
+#      still ClusterIP, but the ALB does not go through it -- it reads the
+#      Service only to learn which pods to send to.
+#
+# WHY GATEWAY API AND NOT INGRESS. Ingress carries per-vendor behaviour in
+# annotations, so an Ingress written for one controller says nothing to another.
+# Gateway API splits the same thing into objects with owners: the operator owns
+# the Gateway (the address, the certificate, the port), and whoever owns an
+# application writes an HTTPRoute that attaches to it. That split is why a second
+# service can be put behind this ALB later without editing anything here.
+#
+# WHAT THIS COSTS, measured on the AWS price list for us-west-2 on 2026-09-15:
+# the ALB is $0.0225 per ALB-hour, which is $16.43 a month, plus $0.008 per
+# LCU-hour. Our traffic is a handful of requests a minute and does not fill one
+# LCU. The ACM certificate is $0, and an ALIAS record answering for an AWS
+# resource is $0 per query. The hosted zone's own $0.50 a month is already paid.
+#
+# WHAT HAS TO EXIST FIRST, none of which this file creates:
+#
+#   * Gateway API CRDs. `kubectl apply -f \
+#     https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.2/standard-install.yaml`
+#   * The AWS Load Balancer Controller, with the ALB Gateway feature gate on:
+#       helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+#         --version 3.5.0 -n kube-system \
+#         --set clusterName=<CLUSTER> --set region=<AWS_REGION> --set vpcId=<VPC_ID> \
+#         --set serviceAccount.create=true \
+#         --set serviceAccount.name=aws-load-balancer-controller \
+#         --set controllerConfig.featureGates.ALBGatewayAPI=true \
+#         --set replicaCount=2
+#     Its IAM policy is the project's own published one, `docs/install/iam_policy.json`
+#     at the tag being installed -- do not hand-write it. Bind it with EKS Pod
+#     Identity, the same mechanism the gateway pod uses:
+#       aws eks create-pod-identity-association --cluster-name <CLUSTER> \
+#         --namespace kube-system --service-account aws-load-balancer-controller \
+#         --role-arn arn:aws:iam::<ACCOUNT_ID>:role/<LBC_ROLE>
+#   * An ACM certificate for the hostname, in the SAME region as the cluster,
+#     validated by DNS. Issued in about two minutes once the CNAME is in place.
+#   * Public subnets tagged `kubernetes.io/role/elb=1`. The controller discovers
+#     them by that tag and places the ALB with no subnet list here.
+#
+# Grep anchor: HYPERUN-GATEWAY
+---
+# How the ALB itself is built. Everything AWS-specific lives here, which is what
+# keeps the Gateway below portable.
+apiVersion: gateway.k8s.aws/v1
+kind: LoadBalancerConfiguration
+metadata:
+  name: hyperun-alb
+  namespace: hyperun-system
+spec:
+  scheme: internet-facing
+  ipAddressType: ipv4
+  loadBalancerAttributes:
+    # ★ FIVE MINUTES, NOT THE DEFAULT SIXTY SECONDS. This is the ALB's idle
+    # timeout: how long a connection may sit with no bytes moving before the ALB
+    # closes it. Sixty seconds is fine for a request/response API and wrong for
+    # the browser terminal this door exists to make possible -- a shell where
+    # nobody types for a minute would be cut, and the reader would read that as
+    # the terminal being broken. 300 is the number that made the WebSocket work
+    # without a keepalive of our own; the browser side still sends a ping,
+    # because an idle timeout is a backstop and not a design.
+    - key: idle_timeout.timeout_seconds
+      value: "300"
+    # Refuse rather than forward a header the ALB cannot parse. The default
+    # forwards it, and a backend that parses it differently from the ALB is the
+    # shape request smuggling takes.
+    - key: routing.http.drop_invalid_header_fields.enabled
+      value: "true"
+  listenerConfigurations:
+    - protocolPort: HTTPS:443
+      # ★ THE CERTIFICATE IS NAMED HERE AND NOWHERE ELSE. The controller's own
+      # documentation says it does NOT read `certificateRefs` on a Gateway
+      # listener; this field is the only place it looks.
+      defaultCertificate: arn:aws:acm:<AWS_REGION>:<ACCOUNT_ID>:certificate/<CERT_ID>
+      # TLS 1.2 and 1.3 only. The older policies still offer TLS 1.0.
+      sslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+  tags:
+    app: hyperun-gw
+---
+# Which controller builds a Gateway that names this class. One per implementation,
+# not one per Gateway.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: hyperun-alb
+spec:
+  controllerName: gateway.k8s.aws/alb
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: hyperun-gw
+  namespace: hyperun-system
+spec:
+  gatewayClassName: hyperun-alb
+  infrastructure:
+    parametersRef:
+      group: gateway.k8s.aws
+      kind: LoadBalancerConfiguration
+      name: hyperun-alb
+  listeners:
+    # Port 80 exists only to send people to 443. It carries no route to the
+    # application: see the redirect HTTPRoute at the bottom.
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: api.hyperun.<YOUR_DOMAIN>
+      tls:
+        mode: Terminate
+        # ★ THIS OPTION IS HERE TO SATISFY A VALIDATION RULE, NOT THE CONTROLLER.
+        # Gateway API's CRD carries the CEL rule
+        #   self.mode == 'Terminate' ? size(self.certificateRefs) > 0 ||
+        #                              size(self.options) > 0 : true
+        # so a Terminate listener with both empty is REFUSED by the apiserver,
+        # with "certificateRefs or options must be specified when mode is
+        # Terminate". The AWS controller does not read either one, so one
+        # domain-prefixed option satisfies the rule and says where the
+        # certificate really comes from.
+        options:
+          gateway.k8s.aws/certificate-source: LoadBalancerConfiguration
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# How the ALB reaches the pods behind the Service.
+apiVersion: gateway.k8s.aws/v1
+kind: TargetGroupConfiguration
+metadata:
+  name: hyperun-gw
+  namespace: hyperun-system
+spec:
+  targetReference:
+    group: ""
+    kind: Service
+    name: hyperun-gw
+  defaultConfiguration:
+    # ★ `ip` AND NOT THE DEFAULT `instance`, AND WITHOUT THIS NOTHING IS BUILT.
+    # An `instance` target group sends to a port on a NODE, so it requires a
+    # Service of type NodePort or LoadBalancer. `hyperun-gw` is ClusterIP, and
+    # the controller refused the whole Gateway with
+    #   TargetGroup port is empty. When using Instance targets, your service
+    #   must be of type 'NodePort' or 'LoadBalancer'
+    # `ip` sends to the pod address directly, which the VPC CNI gives a real
+    # address inside the VPC. It also removes a hop: with `instance` the packet
+    # lands on some node and kube-proxy forwards it again, possibly to a pod on a
+    # different node.
+    targetType: ip
+    protocol: HTTP
+    protocolVersion: HTTP1
+    healthCheckConfig:
+      # The route that answers without a credential. A health check pointed at an
+      # authenticated route reads every pod as unhealthy, and the ALB then has no
+      # target and answers 503 while the application is perfectly fine.
+      healthCheckPath: /healthz
+      healthCheckProtocol: HTTP
+      healthCheckPort: "traffic-port"
+      healthyThresholdCount: 2
+      unhealthyThresholdCount: 2
+      healthCheckInterval: 15
+      healthCheckTimeout: 5
+      matcher:
+        httpCode: "200"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hyperun-gw-https
+  namespace: hyperun-system
+spec:
+  parentRefs:
+    - name: hyperun-gw
+      sectionName: https
+  hostnames:
+    - api.hyperun.<YOUR_DOMAIN>
+  rules:
+    # No path match: every path goes to the gateway, which owns its own routing.
+    # Splitting paths here would put the API's shape in two places.
+    - backendRefs:
+        - name: hyperun-gw
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hyperun-gw-http-redirect
+  namespace: hyperun-system
+spec:
+  parentRefs:
+    - name: hyperun-gw
+      sectionName: http
+  rules:
+    # 301 and not 302: the address is not moving back, and a permanent redirect
+    # is the one browsers and CLIs cache. Nothing here reaches the application,
+    # so a request that arrives on port 80 never touches the gateway at all.
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+# What lets CI move this Deployment onto the image it just pushed.
+#
+# ★ WHY CI NEEDS ANY RIGHTS IN THE CLUSTER AT ALL. `release.yml` built and pushed
+# the server image on every push to main and stopped there, so the pod kept
+# whatever tag somebody last typed by hand. Measured 2026-09-15: the pod ran an
+# image from the previous week while ECR already held that day's, and the two
+# answered `/openapi.json` 408 bytes apart. While the screen still talks to the
+# Lambda that is only confusing; once `config.json` points at this ALB it becomes
+# "a push to main deploys nothing".
+#
+# The rights are deliberately the smallest set that `kubectl set image` and
+# `kubectl rollout status` need. There is no `create` and no `delete`: a release
+# may move the workload that exists onto a new image and may read how that went,
+# and it can do nothing else, in no other namespace.
+#
+# The cluster stores no credential for CI. An EKS access entry puts the GitHub
+# Actions role into the Kubernetes group this RoleBinding names:
+#   aws eks create-access-entry --cluster-name <CLUSTER> \
+#     --principal-arn arn:aws:iam::<ACCOUNT_ID>:role/<GITHUB_ACTIONS_ROLE> \
+#     --type STANDARD --kubernetes-groups hyperun-gw-deployer
+# and that role additionally needs `eks:DescribeCluster` on this one cluster, so
+# that `aws eks update-kubeconfig` can answer.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hyperun-gw-deployer
+  namespace: hyperun-system
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+  # `rollout status` reads the ReplicaSets behind the Deployment.
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+  # And the pods, so a stuck rollout can say WHY and not only that it is stuck.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hyperun-gw-deployer
+  namespace: hyperun-system
+subjects:
+  # A Group and not a ServiceAccount: the access entry above is what puts the
+  # OIDC role into this group, so nothing long-lived is stored on either side.
+  - kind: Group
+    name: hyperun-gw-deployer
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: hyperun-gw-deployer
+  apiGroup: rbac.authorization.k8s.io

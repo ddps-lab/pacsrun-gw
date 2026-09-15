@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import getpass
 import json
 import time
@@ -387,8 +388,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     watch.add_argument("job_id")
     watch.add_argument(
-        "--window", type=int, default=3600, metavar="SECONDS",
-        help="how far back to read (default 3600, max 86400)",
+        # default=None, not 3600, and the difference is load-bearing: it is how
+        # `cmd_watch` tells "the caller wants an hour" from "the caller said
+        # nothing", and only the second one may be widened to reach a finished
+        # job's readings. 604800 is the server's cap, not a number chosen here.
+        "--window", type=int, default=None, metavar="SECONDS",
+        help="how far back to read (default 3600, max 604800). A finished job "
+             "is widened automatically to reach its own readings.",
     )
     add_json_flag(watch)
 
@@ -1096,6 +1102,49 @@ def bar(percent: float, width: int = 20) -> str:
 # reclaimed and the job is being restarted, so the run is still going.
 TERMINAL_PHASES = ("Succeeded", "Failed", "Compared")
 
+# How far back `watch` reads when the caller says nothing, and the furthest the
+# server will let it reach. The cap is the server's own: `window_seconds` on
+# `GET /v1/jobs/{id}/metrics` is declared `ge=60, le=604800`
+# (server/ddpsrun_server/main.py). The `--window` help said 86400 here, which was
+# simply wrong -- one day, against the server's seven.
+DEFAULT_WATCH_WINDOW = 3600
+MAX_WATCH_WINDOW = 604800
+
+
+def _window_reaching_back_to_start(job: dict[str, Any]) -> int:
+    """How wide a window must be to contain a FINISHED job's readings.
+
+    ★ WHY THIS EXISTS. Nothing is stored: `watch` re-reads the job's own log, and
+    the window is measured back from NOW. A running job's readings are therefore
+    always inside the default hour. A job that finished five hours ago has NONE
+    of its readings in the last hour, so `hyperun watch` on it printed the phase
+    and no numbers -- and the phase is the one thing the reader already knew.
+
+    The fix is not a larger default, which would make every `watch` on a running
+    job re-read a week of log. It is to widen only when the job is over AND the
+    caller did not pick a window.
+
+    Args:
+        job: the body of `GET /v1/jobs/{id}`.
+
+    Returns:
+        Seconds, or 0 when the job is not finished or carries no start time, in
+        which case the caller leaves the window as it was.
+    """
+    if job.get("phase") not in TERMINAL_PHASES:
+        return 0
+    started = job.get("started_at") or job.get("created_at")
+    if not started:
+        return 0
+    try:
+        began = datetime.datetime.fromisoformat(started.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    elapsed = (datetime.datetime.now(datetime.timezone.utc) - began).total_seconds()
+    # A minute of headroom so the FIRST reading falls inside the window instead
+    # of exactly on its edge, and the server's own cap over the top.
+    return min(MAX_WATCH_WINDOW, max(60, int(elapsed) + 60))
+
 
 def cmd_watch(args: argparse.Namespace) -> int:
     """Print a job's GPU usage and how far the training has got.
@@ -1122,15 +1171,39 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
     WHAT THAT COSTS: one extra `GET /v1/jobs/{id}` per typed `watch`. `watch`
     prints once and exits rather than polling, so it is one extra request per
-    command, not one per second, and `--json` skips it entirely. The screen
-    pays the same price -- it reads the job and hands it to drawMetrics
-    (ui/app.js).
+    command, not one per second, and `--json` pays it only when the first window
+    came back empty. The screen pays the same price -- it reads the job and hands
+    it to drawMetrics (ui/app.js).
     """
     client = client_from_config()
-    result = client.metrics(args.job_id, args.window)
+    window = DEFAULT_WATCH_WINDOW if args.window is None else args.window
+    result = client.metrics(args.job_id, window)
+
+    # ★ AN EMPTY ANSWER ON A FINISHED JOB IS THE WINDOW, NOT THE JOB. The window
+    # is measured back from now, so a run that ended hours ago has every reading
+    # outside the default hour and `watch` printed nothing. Widening is done
+    # ONLY here: the caller did not choose a window, and the first one came back
+    # with no readings at all. A running job never reaches this branch, so the
+    # usual `watch` is still exactly one metrics request.
+    #
+    # "No readings" means BOTH are empty. `cards` is the per-card answer and
+    # `latest_gpu` is card 0; a multi-card job fills `cards`, while a server too
+    # old to send it fills only `latest_gpu`. Testing one alone would make
+    # `watch --json` on a four-card job buy a second request it does not need.
+    job: dict[str, Any] | None = None
+    if args.window is None and not result.get("latest_gpu") and not result.get("cards"):
+        try:
+            job = client.status(args.job_id)
+        except ServerError:
+            job = None
+        wider = _window_reaching_back_to_start(job) if job else 0
+        if wider > window:
+            result = client.metrics(args.job_id, wider)
+            window = wider
+
     if args.json:
         # The server's answer, verbatim. It already contains `cards`, so nothing
-        # here needs the phase and nothing should pay for the second request.
+        # here needs the phase.
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return EXIT_OK
 
@@ -1139,7 +1212,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     # is the job being deleted between the two calls, and the running layout is
     # the behaviour this command had until today rather than a wrong number.
     try:
-        done = client.status(args.job_id).get("phase") in TERMINAL_PHASES
+        done = (job or client.status(args.job_id)).get("phase") in TERMINAL_PHASES
     except ServerError:
         done = False
 

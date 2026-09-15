@@ -38,6 +38,15 @@ class FakeClient:
         self.estimate_result = {}
         self.validate_result = {"ok": True, "findings": [], "not_checked": []}
         self.metrics_result = {"window_seconds": 3600, "gpu_series": [], "note": ""}
+        # Every window `watch` asked for, in order. The widening of a finished
+        # job's window is invisible in the printed output -- the numbers look the
+        # same whichever window found them -- so the only way to test it is to
+        # record what was asked.
+        self.metrics_windows: list[int] = []
+        # What to answer once the window is wider than the default hour. None
+        # means "the same answer whatever the window", which is what every test
+        # written before the widening existed expects.
+        self.metrics_wide_result = None
         self.stats_result = {"team": "", "members": [], "jobs": 0, "gpu_hours": 0.0,
                              "cost_usd": 0.0, "unpriced_jobs": 0, "note": ""}
         self.secrets_result = {"names": ["GITHUB_PAT", "HF_TOKEN"],
@@ -55,6 +64,9 @@ class FakeClient:
         return self.validate_result
 
     def metrics(self, job_id, window_seconds=3600):
+        self.metrics_windows.append(window_seconds)
+        if self.metrics_wide_result is not None and window_seconds > 3600:
+            return self.metrics_wide_result
         return self.metrics_result
 
     def stats(self):
@@ -631,6 +643,94 @@ def test_a_phase_lookup_that_fails_still_prints_the_gpu_numbers(fake, capsys):
     }
     assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
     assert "38,200 / 45,440 MiB" in capsys.readouterr().out
+
+
+def _hours_ago(hours):
+    """An RFC 3339 timestamp that many hours in the past, as the server writes it."""
+    import datetime as _dt
+    t = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_watch_widens_the_window_to_reach_a_finished_jobs_readings(fake, capsys):
+    # ★ THE DEFECT: nothing is stored, so `watch` re-reads the log and the window
+    # is measured back from NOW. A run that ended five hours ago has every
+    # reading outside the default hour, and `watch` printed the phase and no
+    # numbers -- the phase being the one thing the reader already knew.
+    fake.status_result = {"job_id": "job-a8acdef80a07", "name": "bank-exp2",
+                          "phase": "Succeeded", "started_at": _hours_ago(9),
+                          "finished_at": _hours_ago(5)}
+    fake.metrics_result = {"gpu_series": [], "window_seconds": 3600, "note": ""}
+    fake.metrics_wide_result = {
+        "latest_gpu": gpu_sample(94, 38200, total=45440),
+        "peak_gpu": gpu_sample(94, 38200, total=45440),
+        "peak_utilization_percent": 94,
+        "gpu_series": [{}] * 120, "window_seconds": 36000, "note": "",
+    }
+
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    assert len(fake.metrics_windows) == 2, "the empty first window was not retried"
+    assert fake.metrics_windows[0] == 3600
+    # Nine hours of run plus a minute of headroom, so the FIRST reading is inside
+    # the window rather than exactly on its edge.
+    assert fake.metrics_windows[1] >= 9 * 3600
+    assert "38,200 / 45,440 MiB" in capsys.readouterr().out
+
+
+def test_a_window_the_caller_chose_is_never_widened(fake):
+    # An explicit --window is an instruction, not a default. Widening it would
+    # answer a question the caller did not ask, and the answer would be a bigger
+    # read of the log than they wanted.
+    fake.status_result = {"job_id": "job-a8acdef80a07", "phase": "Succeeded",
+                          "started_at": _hours_ago(9)}
+    fake.metrics_result = {"gpu_series": [], "window_seconds": 600, "note": ""}
+
+    assert run(["watch", "job-a8acdef80a07", "--window", "600"]) == cli.EXIT_OK
+    assert fake.metrics_windows == [600]
+
+
+def test_a_running_job_is_not_widened_however_quiet_it_is(fake):
+    # A running job's readings ARE inside the last hour, so an empty answer means
+    # the job has printed nothing yet. Re-reading a week of its log would buy a
+    # second empty answer and a much larger response.
+    fake.status_result = {"job_id": "job-a8acdef80a07", "phase": "Running",
+                          "started_at": _hours_ago(9)}
+    fake.metrics_result = {"gpu_series": [], "window_seconds": 3600, "note": ""}
+
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    assert fake.metrics_windows == [3600]
+
+
+def test_the_widened_window_stops_at_the_servers_own_cap(fake):
+    # `window_seconds` is declared ge=60, le=604800 on the metrics route. Asking
+    # for more is a 422, so a job that started a month ago must be clamped here
+    # rather than turned into an error the reader cannot act on.
+    fake.status_result = {"job_id": "job-a8acdef80a07", "phase": "Failed",
+                          "started_at": _hours_ago(24 * 30)}
+    fake.metrics_result = {"gpu_series": [], "window_seconds": 3600, "note": ""}
+
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    assert fake.metrics_windows[1] == cli.MAX_WATCH_WINDOW == 604800
+
+
+def test_a_finished_job_with_no_start_time_leaves_the_window_alone(fake):
+    # Nothing to compute a width from. Widening to the cap "just in case" would
+    # read seven days of log off the back of a missing field.
+    fake.status_result = {"job_id": "job-a8acdef80a07", "phase": "Succeeded"}
+    fake.metrics_result = {"gpu_series": [], "window_seconds": 3600, "note": ""}
+
+    assert run(["watch", "job-a8acdef80a07"]) == cli.EXIT_OK
+    assert fake.metrics_windows == [3600]
+
+
+def test_the_window_help_quotes_the_servers_real_cap(capsys):
+    # It said 86400 and the server accepts 604800, so the help talked a reader
+    # out of a window the server would have answered.
+    with pytest.raises(SystemExit):
+        cli.main(["watch", "--help"])
+    printed = capsys.readouterr().out
+    assert "604800" in printed
+    assert "86400" not in printed
 
 
 def test_watch_json_prints_the_cards_and_asks_for_no_phase(fake, capsys):
