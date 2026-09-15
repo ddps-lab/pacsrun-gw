@@ -39,7 +39,10 @@ def handler_module(monkeypatch, tmp_path):
             }}
 
     fake_boto3 = types.SimpleNamespace(
-        client=lambda service: {"secretsmanager": FakeSecrets(), "eks": FakeEks()}[service]
+        # `**kw` because the real call passes `region_name=`. A stub that accepts
+        # only the service name turns a signature change into a confusing
+        # TypeError inside the code under test rather than a clear failure.
+        client=lambda service, **kw: {"secretsmanager": FakeSecrets(), "eks": FakeEks()}[service]
     )
     monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
     monkeypatch.setenv("DDPSRUN_TOKENS_SECRET_ID", "ddpsrun-gw/tokens")

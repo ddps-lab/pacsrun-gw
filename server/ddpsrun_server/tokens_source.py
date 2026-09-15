@@ -97,10 +97,20 @@ def fetch_to_file(path: pathlib.Path, sid: str = "") -> bool:
     if not sid:
         return False
 
-    import boto3  # provided by the Lambda runtime, so it is not a hard dependency
+    import boto3
+
+    # ★ THE REGION IS PASSED AND NOT LEFT TO THE ENVIRONMENT. botocore looks for
+    # `AWS_DEFAULT_REGION`; the Lambda runtime sets that itself, and a pod's
+    # Deployment naturally sets `AWS_REGION` -- which is the name everything else
+    # in Kubernetes uses. The pod therefore had a region in its environment and
+    # still died with `You must specify a region` at startup (2026-09-15).
+    # Reading both names here and handing the answer to the client means it no
+    # longer matters which one the deployment happened to set.
+    region = (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "").strip()
 
     try:
-        response = boto3.client("secretsmanager").get_secret_value(SecretId=sid)
+        client = boto3.client("secretsmanager", region_name=region or None)
+        response = client.get_secret_value(SecretId=sid)
     except Exception as exc:  # noqa: BLE001 - botocore raises several types here
         raise RuntimeError(f"cannot read the token list from {sid}: {exc}") from exc
 

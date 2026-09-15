@@ -32,7 +32,7 @@ DIRECTORY = {"tokens": [{"email": "alice@example.com", "user": "alice",
 @pytest.fixture
 def fake_boto(monkeypatch):
     """A boto3 whose secretsmanager client answers from a dict this test owns."""
-    answers = {"body": json.dumps(DIRECTORY), "calls": []}
+    answers = {"body": json.dumps(DIRECTORY), "calls": [], "regions": []}
 
     class FakeClient:
         def get_secret_value(self, SecretId):          # noqa: N803 - boto3's name
@@ -42,7 +42,15 @@ def fake_boto(monkeypatch):
             return {"SecretString": answers["body"]}
 
     module = types.ModuleType("boto3")
-    module.client = lambda name: FakeClient()
+    # `**kw` because the real call passes `region_name=`. A stub that takes only
+    # the service name hides a signature change instead of catching it -- and
+    # this one did: the region argument was added after the pod died with
+    # `You must specify a region`, and these tests went red for the wrong reason.
+    def client(name, **kw):
+        answers["regions"].append(kw.get("region_name"))
+        return FakeClient()
+
+    module.client = client
     monkeypatch.setitem(sys.modules, "boto3", module)
     return answers
 
@@ -129,7 +137,7 @@ def test_a_base64_secret_is_decoded(fake_boto, tmp_path, monkeypatch):
         def get_secret_value(self, SecretId):          # noqa: N803
             return {"SecretBinary": base64.b64encode(json.dumps(DIRECTORY).encode())}
 
-    sys.modules["boto3"].client = lambda name: BinaryClient()
+    sys.modules["boto3"].client = lambda name, **kw: BinaryClient()
     tokens_source.fetch_to_file(tmp_path / "t.json")
     assert json.loads((tmp_path / "t.json").read_text())["tokens"][0]["user"] == "alice"
 
@@ -198,3 +206,27 @@ def test_setting_the_stop_event_ends_the_thread():
         assert not thread.is_alive(), "the thread ignored the stop event"
     finally:
         _os.environ.pop("HYPERUN_TOKENS_SECRET_ID", None)
+
+
+def test_the_region_is_handed_to_the_client_and_not_left_to_the_environment(
+        fake_boto, tmp_path, monkeypatch):
+    # ★ botocore READS `AWS_DEFAULT_REGION`; a Deployment naturally sets
+    # `AWS_REGION`, which is the name the rest of Kubernetes uses. The pod had a
+    # region in its environment and still died with "You must specify a region"
+    # at startup (2026-09-15). Reading both here removes the dependency on which
+    # one a deployment happened to set.
+    monkeypatch.setenv("HYPERUN_TOKENS_SECRET_ID", "s")
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+
+    tokens_source.fetch_to_file(tmp_path / "t.json")
+    assert fake_boto["regions"] == ["us-west-2"]
+
+
+def test_the_old_region_variable_is_honoured_too(fake_boto, tmp_path, monkeypatch):
+    monkeypatch.setenv("HYPERUN_TOKENS_SECRET_ID", "s")
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+
+    tokens_source.fetch_to_file(tmp_path / "t.json")
+    assert fake_boto["regions"] == ["us-east-1"]
