@@ -31,12 +31,16 @@
 # Grep anchor: HYPERUN-ENV-RENAME
 set -euo pipefail
 
-# Measured 2026-09-15 from `git ls-files`. Started at 702; the dead Lambda job in
-# release.yml took it to 699.
-# Lower it, never raise it. The easiest 29 to remove are in terraform/lambda/main.tf,
-# whose `aws_lambda_function` and `aws_lambda_function_url` blocks now describe
+# Measured 2026-09-15 from `git ls-files`. 702 at first; deleting the dead Lambda job in
+# release.yml took it to 699; the monitor put it back to 707, and every one of those eight is
+# a live identifier -- the three `<oldname>.io/*` labels PACSrun writes on every job, and the
+# python package's own directory name. Both are on the list above that a file edit cannot
+# change, which is the case this file says out loud is worth a conversation.
+#
+# Lower it, never raise it without one. The easiest 29 to remove are in terraform/lambda/
+# main.tf, whose `aws_lambda_function` and `aws_lambda_function_url` blocks now describe
 # something that no longer exists -- and would rebuild it on the next apply.
-BASELINE=699
+BASELINE=707
 
 # ★ `git ls-files` AND NOT `grep -r .`, and the difference is the whole check.
 # A recursive grep counts what is on the DISK: a virtualenv, a build directory,
@@ -68,6 +72,20 @@ count() {
 }
 
 NOW=$(count)
+
+# ★ WARN ABOUT FILES GIT CANNOT SEE YET, because that is how this check got dodged twice in
+# one afternoon, by the person who wrote it, both times. `git ls-files` lists the INDEX, so a
+# new file counts only once it has been `git add`ed. Running the check before staging
+# therefore reports the old number, passes, and lets CI find the difference minutes later.
+# It cannot count an untracked file without guessing whether that file is meant to be
+# committed, so it says what it did not look at instead.
+UNSTAGED=$(git ls-files --others --exclude-standard -- \
+    '*.py' '*.js' '*.md' '*.yaml' '*.yml' '*.toml' '*.sh' '*.tf' '*.html' '*.json' 2>/dev/null \
+  | head -20)
+if [ -n "$UNSTAGED" ]; then
+  echo "note: these files are not in git yet and were NOT counted. Stage them and run again:"
+  echo "$UNSTAGED" | sed 's/^/  /'
+fi
 
 if [ "$NOW" -gt "$BASELINE" ]; then
   echo "::error::ddpsrun occurrences went UP: $BASELINE -> $NOW (+$((NOW - BASELINE)))."
