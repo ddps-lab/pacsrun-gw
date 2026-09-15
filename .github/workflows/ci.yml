@@ -101,19 +101,20 @@ jobs:
           fi
           echo "통과: 계정 식별자 없음"
 
-  no-new-ddpsrun:
-    name: ddpsrun 이 늘지 않았는지
+  old-name-ceiling:
+    name: 옛 이름이 늘지 않았는지
     runs-on: ubuntu-latest
     steps:
-      # 이 저장소가 쓰는 이름은 hyperun 이다. ddpsrun 은 gateway 가 태어날 때의 이름이고
-      # 2026-09-15 기준 87개 파일 702줄에 남아 있다. 한 번에 다 바꾸는 것은 따로 잡아야 할
-      # 하루치 일이고, 그중 셋(Secrets Manager 의 ddpsrun-gw/tokens, ECR 의 ddpsrun/gateway,
-      # PacsJob 69개에 붙은 ddpsrun.io/* label)은 파일을 고쳐서 바꿀 수 있는 것이 아니다.
-      # 그래서 금지가 아니라 **천장**이다. 줄이는 것은 언제든 되고 늘리는 것만 막는다.
-      # 왜 이 모양인지는 .github/scripts/no-new-ddpsrun.sh 가 적고 있다.
+      # 이 저장소가 쓰는 이름은 hyperun 이다. 옛 이름은 아직 700줄 넘게 남아 있고, 그중
+      # 셋은 파일을 고쳐서 바꿀 수 있는 것이 아니다. 그래서 금지가 아니라 **천장**이다.
+      #
+      # ★ 설명을 여기에 적지 않는 이유가 있다. 이 job 이 세는 그 글자를 여기서 쓰면 천장이
+      # 그만큼 올라간다. 2026-09-15 에 실제로 그렇게 해서 CI 가 빨개졌다(702 -> 709, 전부
+      # 이 자리의 주석이었다). 전문은 .github/scripts/ 의 그 script 안에 있고, 그 파일은
+      # 자기 자신을 세지 않는다.
       - uses: actions/checkout@v4
       - name: 검사
-        run: ./.github/scripts/no-new-ddpsrun.sh
+        run: ./.github/scripts/old-name-ceiling.sh
 
   server-test:
     name: 서버 test

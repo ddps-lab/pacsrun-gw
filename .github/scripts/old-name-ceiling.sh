@@ -44,10 +44,20 @@ BASELINE=702
 # and 861 through the filesystem. A ceiling that means one number on a laptop and
 # another in CI is not a ceiling. Listing from git makes the two agree by
 # construction, and needs no exclusion list that can go stale.
+# ★ THIS FILE EXCLUDES ITSELF THROUGH GIT, NOT THROUGH grep, AND ITS OWN NAME
+# CARRIES NO OLD NAME EITHER. Two mistakes on 2026-09-15, both caught by CI:
+#   * the first version piped `git ls-files -z` into `grep -zv <name>`, which
+#     appeared to work on a laptop and failed in CI (702 here, 709 there). The
+#     exclusion was never doing anything -- the script was still UNTRACKED when
+#     it was tested, so `git ls-files` did not list it. `:(exclude)` is git's own
+#     pathspec and behaves the same in both places.
+#   * the file was called `no-new-<oldname>.sh`, so every line that INVOKED it
+#     counted. A checker whose own filename trips the check is a checker nobody
+#     can satisfy.
 per_file() {
   git ls-files -z -- \
       '*.py' '*.js' '*.md' '*.yaml' '*.yml' '*.toml' '*.sh' '*.tf' '*.html' '*.json' \
-    | grep -zv 'no-new-ddpsrun\.sh' \
+      ':(exclude).github/scripts/old-name-ceiling.sh' \
     | xargs -0 grep -ric 'ddpsrun' 2>/dev/null \
     | grep -v ':0$' || true
 }
@@ -64,7 +74,7 @@ if [ "$NOW" -gt "$BASELINE" ]; then
   echo "The product is called hyperun. Write HYPERUN_/hyperun in anything new."
   echo "If you genuinely had to write one of the live identifiers"
   echo "(ddpsrun-gw/tokens, ddpsrun/gateway, ddpsrun.io/* labels), say so in the"
-  echo "pull request and raise BASELINE in .github/scripts/no-new-ddpsrun.sh."
+  echo "pull request and raise BASELINE in .github/scripts/old-name-ceiling.sh."
   echo ""
   echo "Where they are now:"
   per_file | sort -t: -k2 -rn | head -15
@@ -73,7 +83,7 @@ fi
 
 if [ "$NOW" -lt "$BASELINE" ]; then
   echo "::notice::ddpsrun occurrences went down: $BASELINE -> $NOW."
-  echo "Set BASELINE=$NOW in .github/scripts/no-new-ddpsrun.sh so the ground held."
+  echo "Set BASELINE=$NOW in .github/scripts/old-name-ceiling.sh so the ground held."
   # NOT an error. Failing a build for doing the right thing is how a check gets
   # deleted. The notice is in the log the author is already reading.
 fi
