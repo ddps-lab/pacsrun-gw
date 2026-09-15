@@ -2279,3 +2279,92 @@ def test_analysis_of_someone_elses_job_is_refused(client, cluster, monkeypatch):
         "status": {"phase": "Running"},
     }
     assert as_alice(client, "GET", "/v1/jobs/bobs-run/analysis").status_code in (403, 404)
+
+
+# ------------------------------------------------- HYPERUN-USAGE: /v1/usage
+
+
+def _finished_job(name, started, finished, owner, vendor="runpod", usd=6.0):
+    return {
+        "metadata": {"name": name,
+                     "labels": {"ddpsrun.io/owner": owner, "ddpsrun.io/name": name}},
+        "spec": {"parallelism": 1},
+        "status": {"phase": "Succeeded", "startedAt": started, "finishedAt": finished,
+                   "currentOffering": {"vendor": vendor, "usdPerHour": usd},
+                   "currentOfferingGroups": [{"vendor": vendor, "usdPerHour": usd}]},
+    }
+
+
+def test_usage_is_refused_to_anyone_who_is_not_an_operator(client, cluster):
+    # ★ IT NAMES EVERY PERSON IN EVERY NAMESPACE. `/v1/stats` is the per-team
+    # answer and refuses to cross a team boundary; this one exists to cross them.
+    r = as_alice(client, "GET", "/v1/usage")
+    assert r.status_code == 403
+    assert "/v1/stats" in r.json()["detail"]
+
+
+def test_usage_rolls_up_by_team_person_and_vendor(client, cluster):
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc)
+    yday = (today - _dt.timedelta(days=1)).strftime("%Y-%m-%dT02:00:00Z")
+    yday_end = (today - _dt.timedelta(days=1)).strftime("%Y-%m-%dT04:00:00Z")
+    cluster.objects[("default", "u1")] = _finished_job("u1", yday, yday_end, "alice", usd=6.0)
+    cluster.objects[("default", "u2")] = _finished_job("u2", yday, yday_end, "bob",
+                                                       vendor="aws", usd=4.0)
+
+    body = as_root(client, "GET", "/v1/usage?days=7").json()
+    assert {u["name"] for u in body["users"]} >= {"alice", "bob"}
+    assert {v["name"] for v in body["vendors"]} >= {"runpod", "aws"}
+    # 6.0 x 2 h + 4.0 x 2 h
+    assert sum(u["estimate_usd"] for u in body["users"]) == pytest.approx(20.0, abs=0.01)
+    # And yesterday's column is filled, because that is what a daily report prints.
+    alice = [u for u in body["users"] if u["name"] == "alice"][0]
+    assert alice["day_estimate_usd"] == pytest.approx(12.0, abs=0.01)
+
+
+def test_usage_carries_month_to_date(client, cluster):
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc)
+    if today.day == 1:
+        pytest.skip("on the first of the month there is no earlier day in it")
+    earlier = today.replace(day=1).strftime("%Y-%m-%dT00:00:00Z")
+    earlier_end = today.replace(day=1).strftime("%Y-%m-%dT03:00:00Z")
+    cluster.objects[("default", "m1")] = _finished_job("m1", earlier, earlier_end,
+                                                       "alice", usd=5.0)
+    body = as_root(client, "GET", "/v1/usage?days=60").json()
+    assert body["mtd_estimate_usd"] >= 15.0
+    assert body["mtd_jobs"] >= 1
+
+
+def test_every_usage_answer_says_the_money_is_an_estimate(client, cluster):
+    # baseline-c computed to $11.07 and was billed $44.28. A reader who takes
+    # these for an invoice loses an afternoon.
+    assert "estimate" in as_root(client, "GET", "/v1/usage").json()["note"]
+
+
+def test_a_namespace_that_cannot_be_read_does_not_empty_the_whole_report(client, cluster,
+                                                                         monkeypatch):
+    # ★ A TENANT NAMESPACE WITH NO RoleBinding YET IS THE COMMON CASE. A report
+    # that refused to answer because of one is a report nobody sees on the day it
+    # matters.
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc)
+    yday = (today - _dt.timedelta(days=1)).strftime("%Y-%m-%dT02:00:00Z")
+    yday_end = (today - _dt.timedelta(days=1)).strftime("%Y-%m-%dT04:00:00Z")
+    cluster.objects[("default", "ok")] = _finished_job("ok", yday, yday_end, "alice")
+
+    real = cluster.list_jobs
+
+    def refuse_one(namespace):
+        if namespace != "default":
+            raise main.ClusterError("no RoleBinding in this namespace")
+        return real(namespace)
+
+    monkeypatch.setattr(cluster, "list_jobs", refuse_one)
+    body = as_root(client, "GET", "/v1/usage?days=7").json()
+    assert any(u["name"] == "alice" for u in body["users"])
+
+
+def test_the_window_cannot_be_asked_for_beyond_the_cap(client, cluster):
+    assert as_root(client, "GET", "/v1/usage?days=9999").status_code == 422
+    assert as_root(client, "GET", "/v1/usage?days=0").status_code == 422

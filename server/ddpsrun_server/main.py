@@ -38,6 +38,7 @@ Grep anchor: DDPSRUN-ROUTES
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
@@ -58,6 +59,7 @@ from . import registry      # DDPSRUN-IMAGES: the container images this lab has 
 from . import cognito
 from . import measurements
 from . import monitor   # HYPERUN-MONITOR: the rules, shared with the CronJob
+from . import usage    # HYPERUN-USAGE: who spent what, day by day
 from . import notify
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
@@ -103,7 +105,10 @@ from .models import (
     CardMetricsView,
     MemberTotalsView,
     AnalysisResponse,
+    DayUsageView,
     MonitorFindingView,
+    UsageBucketView,
+    UsageResponse,
     MetricSeriesView,
     MetricTrendView,
     MetricsResponse,
@@ -2026,6 +2031,86 @@ def query_metrics(
         return cluster.prometheus_query(expr)
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/v1/usage", response_model=UsageResponse)
+def get_usage(
+    request: Request,
+    principal: PrincipalDep,
+    days: int = Query(
+        default=30, ge=1, le=60,
+        description="How far back. Sixty is the cap because beyond that the PacsJob objects "
+        "themselves have usually been deleted and the answer would be quietly short.",
+    ),
+) -> UsageResponse:
+    """Who spent what, day by day, across every namespace. Operators only.
+
+    ★ WHAT THIS IS FOR. A daily report in Slack (cloud-usage Main 4) and, later,
+    the history the screen has never had. It answers the three questions an
+    operator asks about a shared GPU budget -- which team, which person, which
+    vendor -- for hyperun's OWN jobs and nothing else.
+
+    ★★ WHY IT IS OPERATOR-ONLY AND NOT PER-TEAM. It names every person in every
+    namespace. `/v1/stats` is the per-team answer and already refuses to cross a
+    team boundary; this one exists precisely to cross them, so it needs the
+    account that is allowed to.
+
+    HOW A LONG RUN IS COUNTED, because it is the thing that makes a daily figure
+    mean anything. Hours are split at midnight UTC and money follows the hours; a
+    JOB is counted once, on the day it started. A 25-hour run charged entirely to
+    the day it finished puts a spike on a Tuesday and nothing on the Monday it
+    actually ran, and the daily figure is what somebody reads to notice trouble.
+
+    WHAT IT COSTS TO ASK. One list per namespace against the apiserver, which is
+    what `/v1/stats` already does for one team. No log is read and no pod is
+    touched.
+
+    Raises:
+        HTTPException: 403 for a non-operator; 502 on a cluster error.
+    """
+    if not principal.admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Only an operator account may read usage across every namespace. "
+                   "`GET /v1/stats` answers the same questions for your own team.",
+        )
+
+    cluster: Cluster = request.app.state.cluster
+    store: TokenStore = request.app.state.tokens
+    jobs_by_namespace: dict[str, list] = {}
+    for namespace in store.all_namespaces():
+        try:
+            jobs_by_namespace[namespace] = cluster.list_jobs(namespace)
+        except ClusterError:
+            # ONE UNREADABLE NAMESPACE MUST NOT EMPTY THE WHOLE REPORT. A tenant
+            # namespace with no RoleBinding yet is the common case, and a report
+            # that refused to answer because of it would be a report nobody sees
+            # on the day it matters.
+            jobs_by_namespace[namespace] = []
+
+    team_of = {ns: store.team_of_namespace(ns) for ns in jobs_by_namespace}
+    reading = usage.summarise(jobs_by_namespace, team_of,
+                              datetime.datetime.now(datetime.timezone.utc), days)
+
+    def bucket(b) -> UsageBucketView:
+        return UsageBucketView(
+            name=b.name, jobs=b.jobs, gpu_hours=b.gpu_hours,
+            estimate_usd=b.estimate_usd, unpriced_jobs=b.unpriced_jobs,
+            day_jobs=b.day_jobs, day_gpu_hours=b.day_gpu_hours,
+            day_estimate_usd=b.day_estimate_usd)
+
+    return UsageResponse(
+        days=[DayUsageView(date=d.date, jobs=d.jobs, gpu_hours=d.gpu_hours,
+                           estimate_usd=d.estimate_usd, unpriced_jobs=d.unpriced_jobs)
+              for d in reading.days],
+        teams=[bucket(b) for b in reading.teams],
+        users=[bucket(b) for b in reading.users],
+        vendors=[bucket(b) for b in reading.vendors],
+        mtd_estimate_usd=reading.mtd_estimate_usd,
+        mtd_gpu_hours=reading.mtd_gpu_hours,
+        mtd_jobs=reading.mtd_jobs,
+        note=reading.note,
+    )
 
 
 @app.get("/v1/jobs/{job_id}/analysis", response_model=AnalysisResponse)

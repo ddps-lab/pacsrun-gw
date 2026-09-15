@@ -1689,6 +1689,75 @@ class AnalysisResponse(BaseModel):
     note: str = Field(default="", description="Why a check could not run, in plain words.")
 
 
+class DayUsageView(BaseModel):
+    """One calendar day, UTC."""
+
+    date: str
+    jobs: int = Field(
+        default=0,
+        description="Jobs that STARTED on this day. A run that crossed midnight is counted "
+        "once, on the day it began -- its hours are split across the days it covers, but "
+        "'we ran two jobs' is not true of one run that crossed a date line.",
+    )
+    gpu_hours: float = 0.0
+    estimate_usd: float = Field(
+        default=0.0,
+        description="The catalogue rate times the hours that fell on this day. AN ESTIMATE: a "
+        "measured run computed to $11.07 against a $44.28 bill.",
+    )
+    unpriced_jobs: int = Field(
+        default=0,
+        description="Jobs on a machine with no price we know. Counted rather than absorbed, "
+        "because a total that swallowed them would read as complete and be low.",
+    )
+
+
+class UsageBucketView(BaseModel):
+    """One team, person or vendor."""
+
+    name: str
+    jobs: int = 0
+    gpu_hours: float = 0.0
+    estimate_usd: float = 0.0
+    unpriced_jobs: int = 0
+    day_jobs: int = Field(
+        default=0, description="The same, for the most recent COMPLETE day.")
+    day_gpu_hours: float = 0.0
+    day_estimate_usd: float = Field(
+        default=0.0,
+        description="Yesterday's estimate. Yesterday and not today, because today is half "
+        "finished and a report calling it 'yesterday' would print a number that grows while "
+        "somebody reads it.",
+    )
+
+
+class UsageResponse(BaseModel):
+    """What /v1/usage returns: who spent what, day by day.
+
+    ★ EVERY FIGURE IS AN ESTIMATE AND THE FIELD NAMES SAY SO. It is the catalogue
+    rate times the hours, which is what the screen and `hyperun stats` have always
+    shown. The vendor's own bill is a different number and has been measured to
+    differ by a lot -- `baseline-c` computed to $11.07 and was billed $44.28, a
+    missed card count. Calling a field `cost_usd` would invite a reader to
+    reconcile against an invoice and lose an afternoon.
+
+    IT COVERS hyperun's OWN JOBS ONLY. Everything here is read from PacsJob
+    objects, so a pod somebody started by hand on the same RunPod account is not
+    in it and cannot be -- which is also why the vendors' billing APIs are not
+    folded in: RunPod's answers for the whole account.
+    """
+
+    days: list[DayUsageView] = Field(default_factory=list)
+    teams: list[UsageBucketView] = Field(
+        default_factory=list, description="Largest estimate first, which is the reading order.")
+    users: list[UsageBucketView] = Field(default_factory=list)
+    vendors: list[UsageBucketView] = Field(default_factory=list)
+    mtd_estimate_usd: float = 0.0
+    mtd_gpu_hours: float = 0.0
+    mtd_jobs: int = 0
+    note: str = ""
+
+
 class MetricsResponse(BaseModel):
     """What /v1/jobs/{id}/metrics returns.
 

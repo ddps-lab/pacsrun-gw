@@ -327,6 +327,28 @@ class TokenStore:
         principals = set(self._by_hash.values()) | set(self._by_email.values())
         return sorted({p.namespace for p in principals if p.team == team})
 
+    def team_of_namespace(self, namespace: str) -> str:
+        """Which team a namespace belongs to, or the namespace's own name.
+
+        The inverse of `namespaces_in_team`, and it reads BOTH maps for the same
+        reason that one does: a person who only ever signs in to the screen is in
+        `_by_email` and nowhere else, and reading one map alone reported $0.00
+        for a whole team on 2026-09-11.
+
+        Args:
+            namespace: the namespace to look up.
+
+        Returns:
+            The team, or the namespace's own name when nobody is registered in it
+            -- an operator namespace with no members is the common case, and
+            dropping it from a spending report would hide real money while
+            inventing a team for it would be a lie.
+        """
+        for principal in list(self._by_hash.values()) + list(self._by_email.values()):
+            if principal.namespace == namespace and principal.team:
+                return principal.team
+        return namespace
+
     def all_namespaces(self) -> list[str]:
         """Every namespace the token file names, sorted and deduplicated.
 

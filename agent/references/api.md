@@ -40,6 +40,7 @@ Authorization: Bearer <your token>
 | DELETE | `/v1/secrets/{name}` | Forget one registered name in your namespace. |
 | PUT | `/v1/secrets/{name}` | Register one value under one name, for jobs in your own namespace. |
 | GET | `/v1/stats` | What this caller's team has spent. |
+| GET | `/v1/usage` | Who spent what, day by day, across every namespace. Operators only. |
 | POST | `/v1/validate` | Check a job without running it. |
 
 ## Request and response shapes
@@ -101,6 +102,18 @@ What that runtime costs: the hours above times the rate below.
 | `basis` |  | Whose figure the total is. `measured` -- our own throughput table answered the hours. `user-supplied` -- it could not, and your `expected_hours` was multiplied by a published rate, so the arithmetic is ours and the uncertainty is yours. Empty when there is no total at all. |
 | `high` |  |  |
 | `low` |  |  |
+
+### DayUsageView
+
+One calendar day, UTC.
+
+| field | required | description |
+|---|---|---|
+| `date` | yes |  |
+| `estimate_usd` |  | The catalogue rate times the hours that fell on this day. AN ESTIMATE: a measured run computed to $11.07 against a $44.28 bill. |
+| `gpu_hours` |  |  |
+| `jobs` |  | Jobs that STARTED on this day. A run that crossed midnight is counted once, on the day it began -- its hours are split across the days it covers, but 'we ran two jobs' is not true of one run that crossed a date line. |
+| `unpriced_jobs` |  | Jobs on a machine with no price we know. Counted rather than absorbed, because a total that swallowed them would read as complete and be low. |
 
 ### EstimateResponse
 
@@ -551,6 +564,36 @@ What the server cannot read out of a container image.
 | `resumable` |  | A CLAIM ABOUT YOUR SCRIPT, not a feature the tool provides. Nothing here saves or restores anything: after a Recovering the container starts EMPTY and your script has to find its own checkpoint and continue. What does survive is the result path — the server writes `spec.resultPath` once from the job id and recovery reuses the same PacsJob, so a script may rely on that path being the same after a restart. Setting this true only tells the advice that losing the machine does not cost the whole run. |
 | `row_tokens` |  | Average length of ONE response, in tokens. Without it there is no runtime. Read it off a previous run's log if you have one. |
 | `vocab` |  | The model's vocabulary size. 151,936 is Qwen3-4B. This term dominates the memory calculation, so a different model needs its own. |
+
+### UsageBucketView
+
+One team, person or vendor.
+
+| field | required | description |
+|---|---|---|
+| `day_estimate_usd` |  | Yesterday's estimate. Yesterday and not today, because today is half finished and a report calling it 'yesterday' would print a number that grows while somebody reads it. |
+| `day_gpu_hours` |  |  |
+| `day_jobs` |  | The same, for the most recent COMPLETE day. |
+| `estimate_usd` |  |  |
+| `gpu_hours` |  |  |
+| `jobs` |  |  |
+| `name` | yes |  |
+| `unpriced_jobs` |  |  |
+
+### UsageResponse
+
+What /v1/usage returns: who spent what, day by day.
+
+| field | required | description |
+|---|---|---|
+| `days` |  |  |
+| `mtd_estimate_usd` |  |  |
+| `mtd_gpu_hours` |  |  |
+| `mtd_jobs` |  |  |
+| `note` |  |  |
+| `teams` |  | Largest estimate first, which is the reading order. |
+| `users` |  |  |
+| `vendors` |  |  |
 
 ### ValidateResponse
 
