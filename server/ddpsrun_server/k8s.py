@@ -559,8 +559,11 @@ class Cluster:
         THE RELAY CHAIN, spelled out. This call reaches the DRIVER pod — the
         GPU-less pod in OUR cluster — over the apiserver's exec subresource,
         an OUTBOUND WebSocket from this server. (A Lambda may OPEN WebSockets;
-        it is INBOUND ones a Function URL cannot accept, which is why there is
-        no terminal in the browser.) Inside that pod the argv starts shell.py,
+        it is INBOUND ones a Function URL cannot accept. That sentence used to
+        end "which is why there is no terminal in the browser"; there is one
+        now -- the gateway runs as a pod behind an ALB, so an inbound WebSocket
+        has somewhere to land. See `open_exec_channel` below and
+        HYPERUN-TERMINAL.) Inside that pod the argv starts shell.py,
         and shell.py tunnels the command into the workload container on the
         rented machine — verified live 2026-09-07, exit codes relay like ssh.
         The user types one line and the answer comes back from the GPU
@@ -645,6 +648,66 @@ class Cluster:
             code = None
         ws.close()
         return output, code
+
+    def open_exec_channel(self, namespace: str, job_name: str, slot: int,
+                          argv: list[str], tty: bool = True) -> Any:
+        """Open an exec channel to a driver pod and HAND IT BACK STILL OPEN.
+
+        HYPERUN-TERMINAL. `exec_in_driver` above runs one command and returns
+        what it printed; this returns the channel itself, because a terminal is
+        alive between two keystrokes and there is nothing to return yet. The
+        caller is `terminal.Terminal`, which owns the channel from here on --
+        including closing it.
+
+        WHY THIS CAN EXIST NOW AND COULD NOT BEFORE. The docstring on
+        `exec_in_driver` says a Lambda "may OPEN WebSockets; it is INBOUND ones a
+        Function URL cannot accept, which is why there is no terminal in the
+        browser". Both halves changed: the gateway is a pod
+        (config/deploy/hyperun-gw.yaml) so an inbound WebSocket has somewhere to
+        land, and a pod has no 15-minute execution cap so the outbound one can
+        stay open. This method is the outbound half.
+
+        Args:
+            namespace, job_name, slot: which driver pod, found by the same label
+                lookup the logs route uses.
+            argv: what to start in that pod.
+            tty: whether to ask the apiserver for a PTY. True is what makes
+                Ctrl+C, line editing and `top` work; it also means stderr is
+                merged into channel 1, because with a tty there is one stream by
+                definition and asking for a separate stderr makes the apiserver
+                REFUSE the request rather than ignore the contradiction.
+
+        Returns:
+            A `kubernetes.stream.ws_client.WSClient`. Its channel numbers and
+            the resize payload are documented in `terminal.py`.
+
+        Raises:
+            NotFound: no pod -- not created yet, or already collected.
+            ClusterError: the apiserver refused. A 403 here means the
+                ClusterRole lacks pods/exec (config/deploy/rbac.yaml).
+        """
+        pod = self.job_pod_name(namespace, job_name, slot)
+        from kubernetes.stream import stream
+
+        try:
+            return stream(
+                self._core.connect_get_namespaced_pod_exec,
+                name=pod,
+                namespace=namespace,
+                command=argv,
+                stdout=True,
+                # ★ NOT WITH A TTY. The apiserver answers 400 to
+                # `tty=true&stderr=true`; everything the command writes arrives
+                # on channel 1 instead.
+                stderr=not tty,
+                stdin=True,
+                tty=tty,
+                _preload_content=False,
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                raise NotFound(pod) from exc
+            raise ClusterError(_api_message(exc)) from exc
 
     def recent_log_lines(
         self, namespace: str, job_name: str, since_seconds: int

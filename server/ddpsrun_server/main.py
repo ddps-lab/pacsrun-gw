@@ -44,6 +44,7 @@ import logging
 import os
 import pathlib
 import re
+import asyncio
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -51,6 +52,7 @@ from typing import Annotated, Any
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import WebSocket, WebSocketDisconnect
 from fastapi import Response
 from fastapi.responses import PlainTextResponse
 
@@ -62,6 +64,7 @@ from . import measurements
 from . import monitor   # HYPERUN-MONITOR: the rules, shared with the CronJob
 from . import usage    # HYPERUN-USAGE: who spent what, day by day
 from . import notify
+from . import terminal as terminal_pump   # HYPERUN-TERMINAL
 from .auth import AuthError, Principal, TokenStore, UnknownUser, bearer_token
 from .config import Settings
 from . import secret_expiry
@@ -341,15 +344,39 @@ def require_principal(
         credential = bearer_token(authorization)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return principal_for_credential(request.app, credential)
 
-    verifier = getattr(request.app.state, "cognito", None)
+
+def principal_for_credential(application: FastAPI, credential: str) -> Principal:
+    """Turn one credential into a `Principal`, or raise the right HTTP error.
+
+    Split out of `require_principal` so the WebSocket route can share it. A
+    browser cannot set a header on a WebSocket -- `new WebSocket(url)` takes a
+    URL and a subprotocol list and nothing else -- so the terminal route reads
+    the credential out of the socket's FIRST MESSAGE and hands it here. The
+    checks are then the same ones every HTTP route makes, in the same order,
+    which is the point of factoring it rather than writing a second copy.
+
+    Args:
+        application: the FastAPI app, for `state.cognito` and `state.tokens`.
+        credential: the id_token or the static token, already unwrapped from
+            whatever carried it.
+
+    Returns:
+        The authenticated `Principal`.
+
+    Raises:
+        HTTPException: 401 when the credential identifies nobody, 403 when
+            Cognito vouched for a person nobody has registered here.
+    """
+    verifier = getattr(application.state, "cognito", None)
     if verifier is not None and cognito.looks_like_a_jwt(credential):
         try:
             identity = verifier.claims(credential)
         except cognito.TokenError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         try:
-            return request.app.state.tokens.principal_for_email(identity.email)
+            return application.state.tokens.principal_for_email(identity.email)
         except UnknownUser as exc:
             # 403, not 401. The sign-in worked; the person simply has no
             # namespace yet, and only an operator can change that. A 401 here
@@ -357,7 +384,7 @@ def require_principal(
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     try:
-        return request.app.state.tokens.principal_for(credential)
+        return application.state.tokens.principal_for(credential)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
@@ -2044,6 +2071,262 @@ def exec_in_job(
             "the output shown is what had arrived by then"
         ),
     )
+
+
+# HYPERUN-TERMINAL. How many terminals this PROCESS holds. Module level rather
+# than `app.state` because it counts OS threads, which belong to the process and
+# not to an app object a test may build a second copy of.
+TERMINAL_SLOTS = terminal_pump.Slots()
+
+# WebSocket close codes, from RFC 6455 section 7.4.1. Spelled out because the
+# numbers appear in the browser's `onclose` and a person reading the screen's
+# console needs to know which of ours it was.
+WS_NORMAL = 1000          # the shell ended, or the person closed the tab
+WS_POLICY = 1008          # we refused: no credential, not the owner, job is over
+WS_INTERNAL = 1011        # the apiserver refused, or something here broke
+
+
+@app.websocket("/v1/jobs/{job_id}/terminal")
+async def job_terminal(
+    websocket: WebSocket,
+    job_id: str,
+    namespace: str = "",
+    slot: int = 0,
+    target: str = "remote",
+) -> None:
+    """A terminal in the browser, open for as long as the person keeps it open.
+
+    HYPERUN-TERMINAL. `POST /v1/jobs/{id}/exec` above sends ONE LINE PER REQUEST
+    and pays 1.05 s of connection setup for each (measured 2026-09-15, three
+    empty commands: 1.12 / 0.76 / 1.05 s). This route opens the apiserver exec
+    channel ONCE and keeps it, so a keystroke costs a frame instead of a TLS
+    handshake, and the remote shell gets a real PTY -- which is what makes
+    Ctrl+C, arrow keys and `top` work at all.
+
+    THE MESSAGE PROTOCOL, both directions:
+
+      browser -> here    a BINARY frame is keystrokes, passed through untouched.
+                         a TEXT frame is JSON control:
+                           {"token": "..."} -- required, and must be FIRST
+                           {"resize": {"cols": 120, "rows": 34}}
+      here -> browser    a BINARY frame is terminal output, untouched.
+                         a TEXT frame is JSON status:
+                           {"ready": true, "pod": "...", "target": "remote"}
+                           {"exit": 0} | {"exit": null}
+                           {"error": "..."}
+
+    ★ THE CREDENTIAL COMES IN THE FIRST MESSAGE AND NOT IN THE URL. A browser
+    cannot put a header on a WebSocket, so the two other choices were a query
+    parameter and the `Sec-WebSocket-Protocol` trick. A query parameter is
+    written to the ALB access log and to the apiserver audit log, where an
+    id_token would sit in plain text for anyone with log access; the first
+    message is in the socket body, which neither logs. The socket is accepted
+    before the credential arrives -- there is no way to read a message
+    otherwise -- so nothing but a `receive` happens until it does, and
+    `terminal.AUTH_SECONDS` drops a peer that stays silent.
+
+    Args:
+        job_id: the job, as every other route names it.
+        namespace: whose namespace, subject to the same rules as elsewhere.
+        slot: which driver pod, for a job with `parallelism > 1`.
+        target: "remote" opens a shell on the RENTED MACHINE, by starting the
+            driver pod's own `shell.py` with a TTY. "driver" opens a shell in the
+            driver pod itself, which is where an operator looks when the rented
+            machine is not reachable yet.
+
+    ★ WHAT DOES NOT WORK YET, and it is a vendor and not a bug here. RunPod
+    rents a CONTAINER and has no k3s apiserver, so `shell.py` has no exec
+    WebSocket to open on it: it relays one line at a time through the driver's
+    unix socket instead (`run_through_socket`,
+    PACSrun/driver/common/shell.py:347) and answers "this form needs a command"
+    when asked for a prompt. The browser shows that sentence. aws, gcp and
+    shadeform all rent a machine we install k3s on, and all three work.
+    """
+    await websocket.accept()
+
+    # -- 1. who is this ------------------------------------------------------
+    try:
+        first = await asyncio.wait_for(websocket.receive_text(),
+                                       timeout=terminal_pump.AUTH_SECONDS)
+        hello = json.loads(first)
+        principal = principal_for_credential(app, str(hello.get("token") or ""))
+    except (asyncio.TimeoutError, WebSocketDisconnect):
+        await websocket.close(code=WS_POLICY)
+        return
+    except (ValueError, TypeError):
+        await _ws_refuse(websocket, "the first message must be "
+                                    '{"token": "..."} as JSON text')
+        return
+    except HTTPException as exc:
+        await _ws_refuse(websocket, str(exc.detail))
+        return
+
+    # -- 2. is it their job, and is it still running -------------------------
+    cluster: Cluster = app.state.cluster
+    name = resolve_object_name(job_id)
+    try:
+        ns = namespace_for(principal, namespace)
+        obj = require_owner(await asyncio.to_thread(cluster.get_job, ns, name),
+                            principal)
+    except HTTPException as exc:
+        await _ws_refuse(websocket, str(exc.detail))
+        return
+    except NotFound:
+        await _ws_refuse(websocket, "no such job")
+        return
+    except ClusterError as exc:
+        await _ws_refuse(websocket, str(exc), code=WS_INTERNAL)
+        return
+
+    phase = ((obj.get("status") or {}).get("phase")) or ""
+    if phase in FINISHED_PHASES:
+        await _ws_refuse(
+            websocket,
+            f"this job has finished ({phase}) — its containers are gone, so "
+            "there is nothing to open a terminal in")
+        return
+
+    # -- 3. what to start in the driver pod ----------------------------------
+    #
+    # ★ THE TERMINAL ALREADY EXISTED AND NOBODY COULD REACH IT. What
+    # `shell.py` does when it is given a TTY is precisely this feature's remote
+    # half, and it has been in the driver image since 2026-09-07:
+    #
+    #   PACSrun/driver/common/shell.py:592  tty.setraw(fd) on its own stdin, so
+    #                                       the driver pod's PTY stops echoing
+    #                                       and stops eating Ctrl+C
+    #   PACSrun/driver/common/shell.py:586  reads ONE BYTE at a time, so a
+    #                                       keystroke moves before Enter
+    #   PACSrun/driver/common/shell.py:599  exec_stream(..., tty=interactive) to
+    #                                       the workload container on the rented
+    #                                       machine
+    #
+    # An operator has been reaching it with `kubectl exec -it <driver-pod> --
+    # python3 /app/driver/aws/shell.py` all along. The only thing missing was a
+    # way IN from a browser, which is this route -- so `target=remote` starts
+    # exactly that program and adds no new code to the driver at all. A job
+    # submitted before this change works, because its image already has it.
+    #
+    # `interactive` there is `sys.stdin.isatty()`, which is why `tty=True` on
+    # the exec below is not decoration: without it shell.py sees a pipe and
+    # refuses, by design, rather than hanging.
+    #
+    # "driver" is the operator's escape hatch: a shell in the driver pod ITSELF,
+    # which exists even when the rented machine cannot be reached yet -- during
+    # placement, or when the k3s server never came up.
+    if target == "driver":
+        argv = ["sh", "-i"]
+    else:
+        argv = ["python3", "/app/driver/aws/shell.py", "--slot", str(slot)]
+
+    try:
+        TERMINAL_SLOTS.take()
+    except terminal_pump.TerminalBusy as exc:
+        await _ws_refuse(websocket, str(exc))
+        return
+
+    try:
+        channel = await asyncio.to_thread(
+            cluster.open_exec_channel, ns, name, slot, argv, True)
+    except NotFound:
+        TERMINAL_SLOTS.give_back()
+        await _ws_refuse(websocket,
+                         "no pod for this job yet (or it is already gone)")
+        return
+    except ClusterError as exc:
+        TERMINAL_SLOTS.give_back()
+        await _ws_refuse(websocket, str(exc), code=WS_INTERNAL)
+        return
+
+    # -- 4. pump until one side stops ----------------------------------------
+    loop = asyncio.get_running_loop()
+    outbound: asyncio.Queue = asyncio.Queue()
+    # `None` on the queue means the pump has ended; it is how the sender task
+    # learns to stop without polling a flag.
+    session = terminal_pump.Terminal(
+        channel,
+        outbound=lambda chunk: loop.call_soon_threadsafe(outbound.put_nowait, chunk),
+        on_close=lambda code: loop.call_soon_threadsafe(
+            outbound.put_nowait, {"exit": code}),
+    )
+    session.start()
+    await websocket.send_text(json.dumps(
+        {"ready": True, "job": name, "slot": slot, "target": target}))
+    if isinstance(hello.get("resize"), dict):
+        session.resize(int(hello["resize"].get("cols") or 80),
+                       int(hello["resize"].get("rows") or 24))
+
+    async def from_browser() -> None:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                return
+            data = message.get("bytes")
+            if data is not None:
+                session.write(data)
+                continue
+            text = message.get("text")
+            if not text:
+                continue
+            try:
+                control = json.loads(text)
+            except ValueError:
+                continue
+            size = control.get("resize")
+            if isinstance(size, dict):
+                session.resize(int(size.get("cols") or 80),
+                               int(size.get("rows") or 24))
+
+    async def to_browser() -> None:
+        while True:
+            item = await outbound.get()
+            if isinstance(item, dict):          # the pump has ended
+                await websocket.send_text(json.dumps(item))
+                return
+            await websocket.send_bytes(item)
+
+    tasks = [asyncio.create_task(from_browser()), asyncio.create_task(to_browser())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        # ★ NOTHING HERE MAY SIT BEHIND AN `await`, AND THAT IS NOT A STYLE
+        # CHOICE. When the server shuts down, the task running this route is
+        # CANCELLED -- and a cancellation delivered at an `await` inside a
+        # `finally` skips every line after it. An earlier version awaited
+        # `session.join` before giving the slot back, and the slot was never
+        # given back: measured 2026-09-16, the counter stayed at 1 for 4 s after
+        # the socket closed and would have stayed there for the life of the pod.
+        # Eight of those and the pod refuses every new terminal.
+        #
+        # The thread needs no join anyway. It is a daemon, it closes the
+        # apiserver channel in its own `finally`, and `close()` above has already
+        # told it to stop.
+        for task in tasks:
+            task.cancel()
+        session.close()
+        TERMINAL_SLOTS.give_back()
+        try:
+            await websocket.close(code=WS_NORMAL)
+        except RuntimeError:
+            pass        # the browser closed first, which is the normal exit
+
+
+async def _ws_refuse(websocket: WebSocket, reason: str,
+                     code: int = WS_POLICY) -> None:
+    """Say why, then close. A bare close code leaves the screen with a number.
+
+    The browser shows this text in the terminal, so a person who cannot open a
+    shell reads the reason in the place they were looking rather than in a
+    console they have to know to open.
+    """
+    try:
+        await websocket.send_text(json.dumps({"error": reason}))
+    except RuntimeError:
+        pass            # already gone; the close below is then a no-op too
+    try:
+        await websocket.close(code=code)
+    except RuntimeError:
+        pass
 
 
 @app.get("/v1/metrics/query")

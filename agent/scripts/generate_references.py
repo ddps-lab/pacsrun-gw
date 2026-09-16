@@ -124,6 +124,30 @@ def render_api() -> str:
                 f"{first_line or (operation.get('summary') or '').strip()} |"
             )
 
+    # ★ WEBSOCKET ROUTES ARE NOT IN THE OPENAPI DOCUMENT AT ALL. OpenAPI 3.1
+    # describes HTTP operations, and FastAPI leaves a `@app.websocket` route out
+    # of `app.openapi()` entirely -- so a page built only from that document
+    # would silently omit the browser terminal, and `test_references.py` would
+    # be the only thing that noticed. They are read off `app.routes` instead.
+    sockets = [route for route in app.routes
+               if route.__class__.__name__ == "APIWebSocketRoute"]
+    if sockets:
+        lines += [
+            "",
+            "## WebSocket routes",
+            "",
+            "These are not in the OpenAPI document above: it describes HTTP "
+            "operations only. The credential travels in the socket's FIRST "
+            "MESSAGE rather than in a header, because a browser cannot set a "
+            "header on a WebSocket.",
+            "",
+            "| path | what it does |",
+            "|---|---|",
+        ]
+        for route in sorted(sockets, key=lambda r: r.path):
+            first_line = ((route.endpoint.__doc__ or "").strip().split("\n")[0]).strip()
+            lines.append(f"| `{route.path}` | {first_line} |")
+
     lines += ["", "## Request and response shapes", ""]
 
     for name in sorted(document.get("components", {}).get("schemas", {})):

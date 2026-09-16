@@ -268,6 +268,16 @@ async function route() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [head, arg] = hash.split("/");
 
+  // HYPERUN-TERMINAL. Leaving the detail screen closes the shell. It is not the
+  // browser's to keep: the socket holds one of the gateway pod's eight terminal
+  // slots and an `sh` on a machine billing by the hour, and neither should
+  // outlive the screen that shows it. Navigating BACK to the same job is a fresh
+  // Open, which is honest -- the old shell is gone.
+  const goingToThisJob = head === "jobs" && arg &&
+    arg.split("@")[0] === termUI.jobKey;
+  if (termUI.open && !goingToThisJob) closeTerminal("");
+  if (!goingToThisJob) termUI.jobKey = null;
+
   try {
     if (head === "jobs" && arg) {
       // "<id>@<ns>": an operator viewing a foreign namespace carries it in the
@@ -606,6 +616,7 @@ async function drawDetail(jobId, ns = "") {
     ].join("");
 
     drawCompare(job);
+    drawTerminal(jobId, job);
     drawShell(jobId, job);
     await Promise.all([drawMetrics(jobId, job), drawLog(jobId)]);
     // A finished job has nothing left to ask about. Stopping the timers here is
@@ -627,22 +638,20 @@ const fact = (k, v) =>
    (PACSrun driver/common/shellsession.py) rather than being started fresh each
    time.
 
-   IT IS NOT A TTY, and that is a property of the transport rather than a corner
-   we cut. The API is a Lambda Function URL: an invocation is capped at 15
-   minutes and nothing in the gateway is alive between two of a person's
-   keystrokes, so there is no held-open stream for a pty to live on. No vim, no
-   top, no Ctrl-C mid-command. A true terminal needs a connection something
-   other than a Lambda invocation holds open — an API Gateway WebSocket — and
-   that is a separate piece of infrastructure, not a flag.
+   IT IS NOT A TTY, AND THE PANEL ABOVE IT NOW IS. When this was written the API
+   was a Lambda Function URL: an invocation is capped at 15 minutes, nothing in
+   the gateway was alive between two of a person's keystrokes, and a Function URL
+   cannot accept an inbound WebSocket at all — so there was no held-open stream
+   for a pty to live on, and the paragraph here said a real terminal needed a
+   different piece of infrastructure. It did, and it now has it: the gateway runs
+   as a pod behind an ALB, and the Terminal panel (drawTerminal, above) holds a
+   WebSocket open to /v1/jobs/{id}/terminal. vim, top and Ctrl+C work there.
 
-   AN EARLIER VERSION OF THIS PANEL PRINTED THE CLI COMMAND INSTEAD, on the
-   reasoning that "a terminal cannot run in this PAGE — the API is a Lambda
-   Function URL, which cannot accept the inbound WebSocket a browser terminal
-   needs". The premise is right and the conclusion was too wide: a WebSocket is
-   what a TTY needs, not what a line-oriented shell needs, and the CLI's own
-   prompt has always been a request loop over this very route. The CLI lines are
-   still printed below the terminal for anyone who would rather be in a real
-   shell. */
+   SO WHY KEEP THIS ONE. Two reasons, and neither is history. A line at a time is
+   what you want for a scripted check — one request, one answer, an exit code —
+   and it is the only shape RunPod has, because that vendor rents a container
+   with no apiserver to exec through. The CLI lines below are printed for anyone
+   who would rather be in their own terminal. */
 
 /* Everything the panel has to remember between two typed lines. It is here and
    not in the DOM because drawShell runs again on every 30-second poll, and the
@@ -774,6 +783,255 @@ async function shellRun(line, quiet) {
   }
 }
 
+/* The Terminal panel. HYPERUN-TERMINAL.
+
+   WHAT IS ON THE OTHER END. A WebSocket to /v1/jobs/{id}/terminal, which the
+   gateway holds open for as long as this panel is open. At the far end of it the
+   driver pod is running `shell.py` with a TTY, and that program has an exec
+   stream into the workload container on the rented machine. So the thing
+   receiving a keystroke is a real PTY: vim redraws, Ctrl+C interrupts, the
+   arrow keys walk the shell's own history, and `top` stays on one screen.
+
+   HOW THAT DIFFERS FROM THE SHELL PANEL BELOW, in one number. That panel is one
+   HTTPS request per line and each pays the connection: 1.12 s, 0.76 s, 1.05 s
+   for three empty commands, measured 2026-09-15 against the live gateway. Here
+   the connection is paid once.
+
+   ★ THE TOKEN GOES IN THE FIRST MESSAGE, NOT IN THE URL. `new WebSocket(url)`
+   cannot carry a header, and a token in a query string is written into the
+   ALB's access log and the apiserver's audit log in plain text. The socket body
+   is in neither.
+
+   WHY IT DOES NOT OPEN BY ITSELF. It starts a shell on a machine billing by the
+   hour and takes one of the gateway pod's eight terminal slots. Both are things
+   a person should ask for. The 300 KB of xterm.js is fetched on the same click,
+   so a reader who never opens a terminal never downloads it. */
+
+/* xterm.js, pinned to an exact version with an integrity hash. jsdelivr is
+   already trusted by this page for nothing else -- Google Fonts is the only
+   other outside origin -- so the hash is what makes that acceptable: the
+   browser refuses the file if a single byte differs from what was fetched and
+   hashed on 2026-09-16. Bump the version and the hash together or the panel
+   stops loading, which is the failure you want. */
+const XTERM = {
+  css: { href: "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css",
+         sri: "sha384-8Xk9wy/gzEDUKrXtrmCFa2bBuK3BpjpDuL/p0SeKQX19Khl/M+lHOgD/CyYf7efP" },
+  js: { src: "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js",
+        sri: "sha384-M169f14mRZOXm3hD/v2Ti0ThIT/RnAQagXA9nlE15yHAtrW19gdePJh/HaTzUOe/" },
+  fit: { src: "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js",
+         sri: "sha384-iF+jqbuti4XlB64clWgFWYEscb+UnSRv3VgVikGYZu+otNFnSHr7y7NcKfBnGizn" },
+};
+
+/* Everything the panel remembers between two polls. drawTerminal runs again
+   every 30 seconds and must not disturb an open session. */
+const termUI = { jobKey: null, open: false, socket: null, term: null,
+                 fit: null, onWindowResize: null, loading: null };
+
+/* Fetch xterm.js once, and hand every later caller the same promise.
+   Returns a promise that resolves when window.Terminal exists. */
+function loadXterm() {
+  if (window.Terminal && window.FitAddon) return Promise.resolve();
+  if (termUI.loading) return termUI.loading;
+  termUI.loading = new Promise((resolve, reject) => {
+    const sheet = document.createElement("link");
+    sheet.rel = "stylesheet";
+    sheet.href = XTERM.css.href;
+    sheet.integrity = XTERM.css.sri;
+    sheet.crossOrigin = "anonymous";
+    document.head.appendChild(sheet);
+
+    const script = (spec, then) => {
+      const tag = document.createElement("script");
+      tag.src = spec.src;
+      tag.integrity = spec.sri;
+      tag.crossOrigin = "anonymous";
+      tag.onload = then;
+      // A blocked or altered file fires `error` with no detail anywhere, so the
+      // message has to say what was being fetched or the panel just never opens.
+      tag.onerror = () => reject(new Error("could not load " + spec.src));
+      document.head.appendChild(tag);
+    };
+    script(XTERM.js, () => script(XTERM.fit, resolve));
+  });
+  return termUI.loading;
+}
+
+/* The wss:// address of one job's terminal. Derived from the API base, so a
+   deployment that moves moves this with it. */
+function terminalUrl(key) {
+  const base = store.server.replace(/^http/, "ws").replace(/\/+$/, "");
+  return `${base}/v1/jobs/${encodeURIComponent(key)}/terminal${nsQuery()}`;
+}
+
+function closeTerminal(why) {
+  if (termUI.onWindowResize) {
+    window.removeEventListener("resize", termUI.onWindowResize);
+    termUI.onWindowResize = null;
+  }
+  if (termUI.socket) {
+    // Stop the handlers first: closing fires onclose, and a handler that writes
+    // "disconnected" into a terminal we are about to dispose throws.
+    termUI.socket.onclose = null;
+    termUI.socket.onmessage = null;
+    try { termUI.socket.close(); } catch { /* already gone */ }
+    termUI.socket = null;
+  }
+  if (termUI.term) {
+    try { termUI.term.dispose(); } catch { /* already disposed */ }
+    termUI.term = null;
+  }
+  termUI.fit = null;
+  termUI.open = false;
+  const host = $("d-terminal-host");
+  if (host) { host.hidden = true; host.innerHTML = ""; }
+  const toggle = $("d-terminal-toggle");
+  if (toggle) toggle.textContent = "Open";
+  if (why) $("d-terminal-note").textContent = why;
+}
+
+async function openTerminal(key) {
+  const note = $("d-terminal-note");
+  note.textContent = "loading…";
+  try {
+    await loadXterm();
+  } catch (err) {
+    note.textContent = String(err.message || err);
+    return;
+  }
+  await refreshIfExpired();
+
+  const host = $("d-terminal-host");
+  host.hidden = false;
+  host.innerHTML = "";
+  const term = new window.Terminal({
+    convertEol: false,
+    cursorBlink: true,
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    fontSize: 13,
+    scrollback: 5000,
+    // Matches the page rather than xterm's default black, so the panel does not
+    // look like a screenshot pasted into the screen.
+    theme: { background: "#0f1115", foreground: "#d6dae2", cursor: "#7dd3fc" },
+  });
+  const fit = new window.FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(host);
+  fit.fit();
+  termUI.term = term;
+  termUI.fit = fit;
+  termUI.open = true;
+  $("d-terminal-toggle").textContent = "Close";
+
+  const socket = new WebSocket(terminalUrl(key));
+  socket.binaryType = "arraybuffer";
+  termUI.socket = socket;
+  note.textContent = "connecting…";
+
+  socket.onopen = () => {
+    // ★ FIRST MESSAGE, AND IT CARRIES THE SIZE TOO. Sending the size here rather
+    // than after "ready" means the remote PTY is the right width before the
+    // shell prints its first prompt; otherwise the prompt wraps at 80 columns
+    // and redraws on the first keystroke.
+    socket.send(JSON.stringify({
+      token: store.token,
+      resize: { cols: term.cols, rows: term.rows },
+    }));
+  };
+
+  socket.onmessage = (event) => {
+    if (typeof event.data !== "string") {
+      term.write(new Uint8Array(event.data));
+      return;
+    }
+    let message = {};
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (message.error) {
+      note.textContent = "refused";
+      term.write("\r\n\x1b[31m" + message.error + "\x1b[0m\r\n");
+      return;
+    }
+    if (message.ready) {
+      note.textContent = `connected (${message.target})`;
+      term.focus();
+      return;
+    }
+    if ("exit" in message) {
+      const code = message.exit;
+      term.write("\r\n\x1b[2m[the shell ended" +
+                 (code === null || code === undefined ? "" : ", exit " + code) +
+                 "]\x1b[0m\r\n");
+      note.textContent = "ended";
+    }
+  };
+
+  socket.onclose = () => {
+    note.textContent = "disconnected";
+    // Not reopened automatically. A terminal that reconnects by itself would
+    // start a SECOND shell on the machine without saying so, and the person
+    // would be typing into a session that has lost their `cd`.
+    if (termUI.term) {
+      termUI.term.write("\r\n\x1b[2m[disconnected — press Open to start a new " +
+                        "shell]\x1b[0m\r\n");
+    }
+  };
+
+  socket.onerror = () => { note.textContent = "connection failed"; };
+
+  // Keystrokes. xterm hands us the exact bytes a terminal would send, escape
+  // sequences for the arrow keys included, so nothing here interprets them.
+  term.onData((data) => {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(new TextEncoder().encode(data));
+    }
+  });
+
+  // A resize tells the far PTY, which is what stops vim drawing at the wrong
+  // width. The chain is: this message -> the gateway writes exec channel 4 ->
+  // kubelet resizes the driver pod's PTY -> shell.py gets SIGWINCH and forwards
+  // the new size to the rented machine (PACSRUN-TERMINAL-RESIZE).
+  term.onResize(({ cols, rows }) => {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ resize: { cols, rows } }));
+    }
+  });
+  termUI.onWindowResize = () => { try { fit.fit(); } catch { /* not mounted */ } };
+  window.addEventListener("resize", termUI.onWindowResize);
+}
+
+/* Mount the panel for one job. Runs on every 30-second poll, so almost every
+   call must do nothing. */
+function drawTerminal(jobId, job) {
+  const key = job.job_id || jobId;
+  const help = $("d-terminal-help");
+
+  if (TERMINAL.includes(job.phase)) {
+    if (termUI.open) closeTerminal("the job finished");
+    termUI.jobKey = key;
+    $("d-terminal-toggle").hidden = true;
+    $("d-terminal-note").textContent =
+      "this job has finished — its containers are gone";
+    help.textContent = "";
+    return;
+  }
+
+  $("d-terminal-toggle").hidden = false;
+  if (termUI.jobKey === key) return;      // already mounted; leave the session alone
+
+  if (termUI.open) closeTerminal("");
+  termUI.jobKey = key;
+  $("d-terminal-note").textContent = "";
+  help.textContent =
+    "A real PTY on the rented machine: vim, top, Ctrl+C and the arrow keys all " +
+    "work. RunPod jobs rent a container with no apiserver to exec through, so " +
+    "this answers with a sentence saying so; use the Shell panel below there.";
+
+  const toggle = $("d-terminal-toggle");
+  toggle.onclick = () => {
+    if (termUI.open) closeTerminal("closed");
+    else openTerminal(key);
+  };
+}
+
 function drawShell(jobId, job) {
   const key = job.job_id || jobId;
 
@@ -815,7 +1073,8 @@ function drawShell(jobId, job) {
   // has an id for shellRun to rewrite.
   $("d-shell").innerHTML =
     `<pre class="log" id="d-shell-out">one line per round trip, about a second each. ` +
-    `cd and exported variables survive between lines. Not a TTY — no vim, no top.\n</pre>` +
+    `cd and exported variables survive between lines. Not a TTY — the Terminal ` +
+    `panel above is.\n</pre>` +
     `<div class="shell-row">` +
     `<span class="shell-prompt mono" id="d-shell-prompt">${esc(key)}$</span>` +
     `<input id="d-shell-input" class="shell-input mono" type="text" autocomplete="off" ` +

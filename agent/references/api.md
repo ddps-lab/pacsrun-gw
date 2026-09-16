@@ -43,6 +43,14 @@ Authorization: Bearer <your token>
 | GET | `/v1/usage` | Who spent what, day by day, across every namespace. Operators only. |
 | POST | `/v1/validate` | Check a job without running it. |
 
+## WebSocket routes
+
+These are not in the OpenAPI document above: it describes HTTP operations only. The credential travels in the socket's FIRST MESSAGE rather than in a header, because a browser cannot set a header on a WebSocket.
+
+| path | what it does |
+|---|---|
+| `/v1/jobs/{job_id}/terminal` | A terminal in the browser, open for as long as the person keeps it open. |
+
 ## Request and response shapes
 
 ### AnalysisResponse

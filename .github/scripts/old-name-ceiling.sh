@@ -41,7 +41,16 @@ set -euo pipefail
 # Lower it, never raise it without one. The easiest 29 to remove are in terraform/lambda/
 # main.tf, whose `aws_lambda_function` and `aws_lambda_function_url` blocks now describe
 # something that no longer exists -- and would rebuild it on the next apply.
-BASELINE=712
+# ★ 2026-09-16: 712 -> 720, AND MOST OF THE RISE WAS ALREADY ON main. Measured the same
+# way on the merge-base: HEAD alone counted 718, so six of the eight arrived in commits that
+# did not raise this number and CI has been failing the check on main since. The browser
+# terminal adds the last two, both live identifiers this file already lists:
+#   server/tests/test_terminal.py:23   `from ddpsrun_server import ...` -- the python package
+#                                      directory, which a rename has to move on disk
+#   server/tests/test_terminal.py:243  `ddpsrun.io/owner`, the label the controller writes on
+#                                      every job and the server finds the owner by
+# The new module and the WebSocket route themselves carry NONE: terminal.py is 0.
+BASELINE=720
 
 # ★ `git ls-files` AND NOT `grep -r .`, and the difference is the whole check.
 # A recursive grep counts what is on the DISK: a virtualenv, a build directory,

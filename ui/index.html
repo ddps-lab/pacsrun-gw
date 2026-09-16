@@ -293,12 +293,36 @@
     <div id="d-files">-</div>
   </div>
 
+  <!-- Terminal: a REAL one, with a PTY on the rented machine. HYPERUN-TERMINAL.
+
+       The panel below this one sends one line per HTTPS request and waits about
+       a second for each; this one holds a WebSocket open to
+       /v1/jobs/{id}/terminal for as long as the panel is open, so a keystroke
+       costs a frame. vim, top, Ctrl+C and arrow keys all work, because what is
+       on the other end is a PTY rather than a line reader.
+
+       IT IS CLOSED UNTIL SOMEBODY ASKS. Opening it starts a shell on a machine
+       that is billing by the hour and holds one of the gateway's eight terminal
+       slots, so it is a button and not something the detail screen does on
+       arrival. xterm.js is fetched on that click too — 300 KB nobody pays for
+       unless they want a terminal. Filled by drawTerminal. -->
+  <div class="panel" id="d-terminal-panel">
+    <header>
+      <h2>Terminal</h2>
+      <span class="dim small" id="d-terminal-note"></span>
+      <div class="spacer"></div>
+      <button class="flat tiny" id="d-terminal-toggle" style="padding:4px 10px">Open</button>
+    </header>
+    <div id="d-terminal-host" hidden></div>
+    <p class="dim tiny" id="d-terminal-help"></p>
+  </div>
+
   <!-- Shell: `hyperun shell`, install line included — never kubectl, because a
        researcher with kubectl would not need this product. The command goes to
        POST /v1/jobs/{id}/exec, which relays through the driver pod into the
-       workload container on the rented machine. A terminal cannot run in this
-       PAGE (the API is a Lambda Function URL; no inbound WebSocket), so the
-       page teaches the CLI instead of pretending. Filled by drawShell. -->
+       workload container on the rented machine. One line per request, which is
+       what you want for a scripted check; the panel above is the one to open
+       when you need a prompt. Filled by drawShell. -->
   <div class="panel" id="d-shell-panel">
     <header><h2>Shell</h2></header>
     <div id="d-shell">-</div>
