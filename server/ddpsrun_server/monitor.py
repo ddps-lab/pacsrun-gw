@@ -391,7 +391,9 @@ def blocks_for(job_id: str, name: str, findings: list[dict], explanation: str,
 
     ★★ AI 가 쓴 문장은 자기 절에 따로 둔다. 앞 절들은 숫자와 규칙이 만든 사실이고
     이 절은 모델이 쓴 글이라, 한 덩어리로 섞으면 어디까지가 측정이고 어디부터가
-    추측인지 읽는 사람이 가를 수 없다. 이름표가 그 경계다.
+    추측인지 읽는 사람이 가를 수 없다. `[ AI 설명 ]` 이라는 이름표가 그 경계이고,
+    그것으로 충분하다 -- 절 안에 "이건 모델이 썼습니다" 를 한 줄 더 달았다가 뺐다.
+    이름표가 이미 말하고 있는 것을 다시 말하면 읽는 사람은 그 줄을 건너뛴다.
 
     Args:
         stop_state: STOP_DONE / STOP_IMPOSSIBLE / STOP_NOT_TRIED.
@@ -412,7 +414,7 @@ def blocks_for(job_id: str, name: str, findings: list[dict], explanation: str,
         # 읽는 사람이 다음에 하는 행동이 다른 두 문장이다.
         out += [
             {"type": "divider"},
-            {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 지금까지 ]*"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 진행 사항 ]*"}},
             {"type": "section", "fields": [
                 {"type": "mrkdwn", "text": f"*시간*\n`{hours:.1f}시간`"},
                 {"type": "mrkdwn", "text": f"*비용(추정)*\n`${cost_per_hour * hours:,.2f}`"},
@@ -421,7 +423,7 @@ def blocks_for(job_id: str, name: str, findings: list[dict], explanation: str,
 
     out += [
         {"type": "divider"},
-        {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 점검이 찾은 것 ]*"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 검토 사항 ]*"}},
     ]
     for finding in findings:
         out.append({"type": "section",
@@ -432,16 +434,11 @@ def blocks_for(job_id: str, name: str, findings: list[dict], explanation: str,
             {"type": "divider"},
             {"type": "section", "text": {"type": "mrkdwn", "text": "*[ AI 설명 ]*"}},
             {"type": "section", "text": {"type": "mrkdwn", "text": explanation}},
-            # 모델이 쓴 글이라는 것을 그 절 안에서 한 번 더 말한다. 위의 숫자는
-            # 측정이고 이 문단은 추측이며, 둘을 같은 무게로 읽으면 안 된다.
-            {"type": "context", "elements": [{"type": "mrkdwn",
-             "text": f"{UPSTAGE_MODEL} 이 위의 숫자를 보고 쓴 글입니다. 판정은 "
-                     f"모델이 아니라 점검이 했습니다."}]},
         ]
 
     out += [
         {"type": "divider"},
-        {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 기계 ]*"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 과금 사항 ]*"}},
         {"type": "section", "text": {"type": "mrkdwn",
          "text": _machine_line(stop_state or STOP_NOT_TRIED, stop_reason).strip().strip("_")}},
     ]

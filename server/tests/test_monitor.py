@@ -352,7 +352,7 @@ def test_the_dm_is_shaped_like_main_1():
     assert _kinds(blocks)[0] == "header"
     assert _kinds(blocks).count("divider") >= 3
     body = _text_of(blocks)
-    for label in ("[ 지금까지 ]", "[ 점검이 찾은 것 ]", "[ AI 설명 ]", "[ 기계 ]"):
+    for label in ("[ 진행 사항 ]", "[ 검토 사항 ]", "[ AI 설명 ]", "[ 과금 사항 ]"):
         assert label in body, f"{label} 절이 없다"
 
 
@@ -366,9 +366,11 @@ def test_the_ai_paragraph_is_in_its_own_labelled_section():
     assert len(labels) == 1
     at = labels[0]
     assert blocks[at + 1]["text"]["text"] == "모델이 쓴 문장"
-    # And the section says out loud that a model wrote it and did not decide it.
-    assert blocks[at + 2]["type"] == "context"
-    assert "판정은" in _text_of([blocks[at + 2]])
+    # The label is the whole boundary. A line inside the section saying "a model
+    # wrote this" was there and was removed: repeating what the heading already
+    # says is a line readers skip, and skipped lines make the ones that matter
+    # cheaper too.
+    assert "판정은 모델이 아니라" not in _text_of(blocks)
 
 
 def test_no_ai_section_at_all_when_the_model_said_nothing():
@@ -380,7 +382,7 @@ def test_the_money_leads_because_it_decides_what_happens_next():
     blocks = monitor.blocks_for("job-x", "exp", REGRESSION, "", 6.36, 9.74)
     body = _text_of(blocks)
     assert "$61.95" in body
-    assert body.index("[ 지금까지 ]") < body.index("[ 점검이 찾은 것 ]")
+    assert body.index("[ 진행 사항 ]") < body.index("[ 검토 사항 ]")
 
 
 def test_the_plain_text_carries_the_same_facts_as_the_blocks():
