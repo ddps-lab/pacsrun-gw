@@ -72,8 +72,8 @@ class Bucket:
     gpu_hours: float = 0.0
     estimate_usd: float = 0.0
     unpriced_jobs: int = 0
-    # The same figure for the most recent complete day, so a report can say
-    # "yesterday" without asking twice.
+    # The same figures for TODAY. Today is half-finished on purpose: a person
+    # watching a job wants the number that is still moving.
     day_gpu_hours: float = 0.0
     day_estimate_usd: float = 0.0
     day_jobs: int = 0
@@ -163,10 +163,14 @@ def summarise(jobs_by_namespace: dict[str, list[dict[str, Any]]],
     window = {(start + datetime.timedelta(days=i)).isoformat(): DayTotals(
         date=(start + datetime.timedelta(days=i)).isoformat()) for i in range(days)}
 
-    # The most recent COMPLETE day. `now`'s own date is half-finished, so a
-    # report that called it "yesterday's spend" would show a number that grows
-    # while somebody reads it.
-    yesterday = (end - datetime.timedelta(days=1)).isoformat()
+    # ★ TODAY, NOT YESTERDAY, AND THAT IS A DECISION. Today's date is
+    # half-finished, so this number grows while somebody reads it -- which is
+    # exactly what a person watching a job wants. The question the daily report
+    # answers is "what is running now and what has it cost", not "what did we
+    # spend on a day that is over". A finished day is still in `days` for anyone
+    # who wants it. (Changed 2026-09-16 at the user's request; the first version
+    # showed the last complete day for the opposite reason.)
+    today = end.isoformat()
     month_prefix = end.isoformat()[:7]
 
     teams: dict[str, Bucket] = {}
@@ -222,9 +226,9 @@ def summarise(jobs_by_namespace: dict[str, list[dict[str, Any]]],
                     if slice_cost is not None:
                         result.mtd_estimate_usd += slice_cost
 
-                # Yesterday's figures are kept per bucket so a report can print
-                # "who spent what yesterday" without a second pass.
-                if date_key == yesterday:
+                # Today's figures are kept per bucket so a report can print
+                # "who is spending what today" without a second pass.
+                if date_key == today:
                     for table, key in ((teams, team), (users, owner), (vendors, vendor)):
                         b = bucket(table, key)
                         b.day_gpu_hours += slice_hours
@@ -239,7 +243,7 @@ def summarise(jobs_by_namespace: dict[str, list[dict[str, Any]]],
                 window[first_day].jobs += 1
             if first_day[:7] == month_prefix:
                 result.mtd_jobs += 1
-            if first_day == yesterday:
+            if first_day == today:
                 for table, key in ((teams, team), (users, owner), (vendors, vendor)):
                     bucket(table, key).day_jobs += 1
 

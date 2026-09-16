@@ -571,9 +571,9 @@ One team, person or vendor.
 
 | field | required | description |
 |---|---|---|
-| `day_estimate_usd` |  | Yesterday's estimate. Yesterday and not today, because today is half finished and a report calling it 'yesterday' would print a number that grows while somebody reads it. |
+| `day_estimate_usd` |  | TODAY's estimate. Today and not the last complete day: this number is still moving, which is what somebody watching a running job wants. A finished day is in `days` for anyone who needs one. |
 | `day_gpu_hours` |  |  |
-| `day_jobs` |  | The same, for the most recent COMPLETE day. |
+| `day_jobs` |  | The same, for TODAY (UTC). |
 | `estimate_usd` |  |  |
 | `gpu_hours` |  |  |
 | `jobs` |  |  |

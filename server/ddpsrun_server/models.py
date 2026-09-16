@@ -1720,14 +1720,13 @@ class UsageBucketView(BaseModel):
     gpu_hours: float = 0.0
     estimate_usd: float = 0.0
     unpriced_jobs: int = 0
-    day_jobs: int = Field(
-        default=0, description="The same, for the most recent COMPLETE day.")
+    day_jobs: int = Field(default=0, description="The same, for TODAY (UTC).")
     day_gpu_hours: float = 0.0
     day_estimate_usd: float = Field(
         default=0.0,
-        description="Yesterday's estimate. Yesterday and not today, because today is half "
-        "finished and a report calling it 'yesterday' would print a number that grows while "
-        "somebody reads it.",
+        description="TODAY's estimate. Today and not the last complete day: this number is "
+        "still moving, which is what somebody watching a running job wants. A finished day "
+        "is in `days` for anyone who needs one.",
     )
 
 

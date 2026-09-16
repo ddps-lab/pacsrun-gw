@@ -188,9 +188,12 @@ def test_the_window_is_clamped_rather_than_answered_short():
     assert len(out.days) == usage.MAX_DAYS
 
 
-def test_yesterdays_figures_are_yesterdays_and_not_todays():
-    # ★ TODAY IS HALF FINISHED. A report that called today's partial spend
-    # "yesterday" would print a number that grows while somebody reads it.
+def test_the_day_figures_are_todays_and_still_moving():
+    # ★ TODAY AND NOT THE LAST COMPLETE DAY. Today is half finished, so this
+    # number grows while somebody reads it -- which is what a person watching a
+    # running job wants. The question is "what is running now and what has it
+    # cost", not "what did we spend on a day that is over"; a finished day is in
+    # `days` for anyone who needs one.
     jobs = {"ns": [
         job("yday", "2026-09-15T00:00:00Z", "2026-09-15T02:00:00Z",
             owner="alice", usd_per_hour=5.0),
@@ -198,8 +201,12 @@ def test_yesterdays_figures_are_yesterdays_and_not_todays():
     ]}
     out = usage.summarise(jobs, {}, when("2026-09-16T06:00:00"), days=5)
     alice = out.users[0]
-    assert alice.day_estimate_usd == pytest.approx(10.0), "only the 2 h that ran yesterday"
+    # The still-running job has been going 6 h at $5, and yesterday's 2 h are NOT
+    # in the day figure.
+    assert alice.day_estimate_usd == pytest.approx(30.0)
     assert alice.day_jobs == 1
+    # Both are still in the window total.
+    assert alice.estimate_usd == pytest.approx(40.0)
 
 
 def test_month_to_date_covers_the_month_the_window_ends_in():
