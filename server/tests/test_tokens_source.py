@@ -172,19 +172,85 @@ def test_a_new_person_is_picked_up_without_a_restart(fake_boto, tmp_path, monkey
     # the time in a loaded full run (2026-09-16), which is the least useful shape
     # a failure can take.
     deadline = __import__("time").monotonic() + 10
+    people = 0
     while __import__("time").monotonic() < deadline:
         try:
-            if len(json.loads(target.read_text())["tokens"]) == 2:
-                break
+            people = len(json.loads(target.read_text())["tokens"])
         except (OSError, ValueError):
-            pass          # mid-write, or not written yet
+            pass          # not written yet
+        if people == 2:
+            break
         __import__("time").sleep(0.01)
 
     assert reloads, "the refresh thread never called back"
-    assert len(json.loads(target.read_text())["tokens"]) == 2, (
+    # ★ THE NUMBER THE LOOP READ, NOT A SECOND READ OF THE FILE. The first
+    # version re-read the file here, unguarded, and in CI on 2026-09-16 that read
+    # landed in the window `path.write_text` leaves open between truncating and
+    # writing: `json.loads` was handed `''` and the failure looked like a timing
+    # bug in this test. It was not. `fetch_to_file` now writes a temp file and
+    # renames it, so that window no longer exists -- and this reads the value the
+    # loop already validated, so the test cannot re-open one.
+    assert people == 2, (
         "the thread never picked up the second person. It re-fetches every 0.01 s "
         "here, so ten seconds is not a timing problem -- look at whether "
         "fetch_to_file still writes the path it is given")
+
+
+def test_a_reader_never_sees_a_half_written_token_file(fake_boto, tmp_path,
+                                                        monkeypatch, stopper):
+    """★ THE FILE IS REWRITTEN FOR THE LIFE OF THE POD, AND SOMEBODY IS READING IT.
+
+    `path.write_text` opens with "w", which TRUNCATES FIRST -- so between that
+    truncate and the write the token file on disk is ZERO BYTES. `refresh_forever`
+    reopens that window every 60 s in the pod, which is 1,440 times a day.
+
+    This is the test that was missing. CI found the window by accident on
+    2026-09-16, through a DIFFERENT test that re-read the file and was handed
+    `''`, and the failure read like a timing bug in that test.
+
+    Here a reader thread does nothing but read, as fast as it can, while the
+    refresh runs every 0.01 s. Any read that returns something that is not the
+    whole document is recorded, and one is enough to fail.
+    """
+    import threading as _threading
+    import time as _time
+
+    monkeypatch.setenv("HYPERUN_TOKENS_SECRET_ID", "s")
+    target = tmp_path / "t.json"
+    tokens_source.fetch_to_file(target)          # so the first read has something
+
+    torn = []
+    reads = [0]
+    reading = _threading.Event()
+
+    def read_hard():
+        reading.set()
+        while not stopper.is_set():
+            try:
+                text = target.read_text()
+            except OSError:
+                continue                          # the file being renamed under us is fine
+            reads[0] += 1
+            try:
+                json.loads(text)["tokens"]
+            except (ValueError, KeyError, TypeError):
+                torn.append(repr(text[:40]))
+                return
+
+    reader = _threading.Thread(target=read_hard, daemon=True)
+    reader.start()
+    reading.wait(2)
+
+    tokens_source.refresh_forever(target, lambda: None, seconds=0.01, stop=stopper)
+    _time.sleep(1.0)
+    stopper.set()
+    reader.join(2)
+
+    assert reads[0] > 100, f"the reader barely ran ({reads[0]} reads); it proves nothing"
+    assert not torn, (
+        f"a reader saw {len(torn)} incomplete token file(s), first {torn[0]}. "
+        "fetch_to_file has to write a temp file and os.replace it: a truncate "
+        "followed by a write is two steps and a reader can land between them")
 
 
 def test_a_failed_refresh_does_not_kill_the_thread(fake_boto, tmp_path, monkeypatch, stopper):

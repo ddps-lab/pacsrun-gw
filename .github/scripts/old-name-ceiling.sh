@@ -50,7 +50,9 @@ set -euo pipefail
 #   server/tests/test_terminal.py:243  `ddpsrun.io/owner`, the label the controller writes on
 #                                      every job and the server finds the owner by
 # The new module and the WebSocket route themselves carry NONE: terminal.py is 0.
-BASELINE=720
+# 2026-09-16, 두 번째: 720 -> 701. terraform/lambda/ 에서 죽은 Lambda block 을 지우면서
+# 19개가 같이 사라졌다. 이 파일이 "가장 쉬운 29개" 라고 지목했던 바로 그 자리다.
+BASELINE=701
 
 # ★ `git ls-files` AND NOT `grep -r .`, and the difference is the whole check.
 # A recursive grep counts what is on the DISK: a virtualenv, a build directory,

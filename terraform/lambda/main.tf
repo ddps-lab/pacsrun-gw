@@ -1,30 +1,53 @@
-// The gateway function, its identity, and the two things it reads at cold start.
+// ★ THIS MODULE NO LONGER BUILDS A LAMBDA, AND THE DIRECTORY IS STILL CALLED ONE.
 //
-// END-TO-END FLOW of one request, and what this module has to exist for:
+// The gateway ran as a Lambda behind a Function URL until 2026-09-15. It now runs
+// as a POD in the EKS cluster (config/deploy/hyperun-gw.yaml) behind an ALB built
+// by the AWS Load Balancer Controller from config/deploy/hyperun-gateway.yaml.
+// The move was made for one reason and it is worth keeping written down: a
+// Function URL cannot accept an INBOUND WebSocket, so a browser terminal was
+// impossible, and a 15-minute execution cap meant nothing in the gateway was
+// alive between two of a person's keystrokes.
 //
-//   1. A user's CLI or browser calls the Function URL over HTTPS with a ddpsrun
-//      token. `aws_lambda_function_url.gw` is what gives the function an address
-//      at all; without it a Lambda has no way to be called from outside AWS.
-//   2. The function reads the token list from Secrets Manager. On a pod this was
-//      a mounted file; Lambda has no mounts, so it is a call, cached for the life
-//      of the execution environment.
-//   3. It calls eks:DescribeCluster to learn the apiserver endpoint and CA. On a
-//      pod both were files under /var/run/secrets; here neither exists.
-//   4. It signs an EKS token with its own execution role and calls the apiserver.
-//      `aws_eks_access_entry.gw` is what makes that role a principal the cluster
-//      recognises, and `kubernetes_groups` is what carries it into RBAC.
+// `aws_lambda_function.gw` and `aws_lambda_function_url.gw` were removed from
+// AWS with a targeted destroy of exactly those two resources, and the blocks that
+// described them are removed from this file TODAY (2026-09-16) -- until now they
+// were still here, so the next `terraform apply` would have built the Lambda
+// again and put a second, stale copy of the API on the internet.
+//
+// WHAT IS STILL HERE, and all of it is still real:
+//
+//   aws_secretsmanager_secret.tokens   the token list the pod reads every 60 s.
+//                                      ★ The pod reads THIS secret. It is the one
+//                                      resource in this module that is on the
+//                                      live path.
+//   aws_iam_role.gw                    `<name>-lambda`, trusting
+//                                      lambda.amazonaws.com. ☆ NOTHING ASSUMES IT
+//                                      ANY MORE -- see below.
+//   aws_eks_access_entry.gw            that role, as a principal the cluster
+//                                      recognises. Dead with the role.
+//   aws_cloudwatch_log_group.gw        /aws/lambda/<name>. Holds the old logs and
+//                                      receives nothing. Kept so the history is
+//                                      not thrown away by a plan.
+//
+// ☆ WHAT THE POD ACTUALLY USES, AND IT IS NOT IN TERRAFORM AT ALL. Measured
+// 2026-09-16 with `aws eks describe-pod-identity-association`: the ServiceAccount
+// `hyperun-system/hyperun-gw` is associated with the IAM role `hyperun-gw`, whose
+// trust policy names `pods.eks.amazonaws.com`. That role, that association, the
+// ACM certificate for the API's hostname and its Route 53 record were all made by
+// hand. Bringing them under terraform is an import, not a create, and it is a
+// decision to take with the operator rather than in a commit.
+//
+// COST of what remains. Secrets Manager is $0.40 per secret per month plus $0.05
+// per 10,000 API calls; the pod reads it once every 60 s, which is 43,200 calls a
+// month, so about $0.62/month all together. The log group ingests nothing now and
+// bills only for what it stores. The ALB in front of the pod is $16.43/month and
+// is NOT in this module -- the load balancer controller builds it from a
+// Kubernetes object.
 //
 // WHAT THIS MODULE DELIBERATELY DOES NOT DO. It does not create the
 // ClusterRoleBinding that gives `var.kubernetes_group` its permissions. That is a
 // Kubernetes object in `config/deploy/rbac.yaml`, and creating it here would make
-// every plan depend on the cluster being reachable. The outputs print the command.
-//
-// COST, all of it. The function is free at this scale: 1M requests and 400,000
-// GB-seconds a month are free, and 10,000 requests at 512 MB for 200 ms is 1,000
-// GB-seconds. A Function URL costs nothing. Secrets Manager is $0.40 per secret
-// per month plus $0.05 per 10,000 API calls. CloudWatch logs are $0.50 per GB
-// ingested. What this does NOT cover is the EKS control plane ($73/month) or the
-// node the operator runs on, neither of which this module touches.
+// every plan depend on the cluster being reachable.
 //
 // Grep anchor: DDPSRUN-LAMBDA
 
@@ -304,105 +327,21 @@ resource "aws_cloudwatch_log_group" "gw" {
   tags              = var.tags
 }
 
-// --------------------------------------------------------------- the function
-
-resource "aws_lambda_function" "gw" {
-  function_name = var.name
-  role          = aws_iam_role.gw.arn
-  runtime       = "python3.12"
-  handler       = "ddpsrun_server.lambda_handler.handler"
-  memory_size   = var.memory_mb
-  timeout       = var.timeout_seconds
-  tags          = var.tags
-
-  // The package is built and uploaded by CI, not by terraform. Measured
-  // 2026-09-01 the dependencies are 92.4 MB unzipped against Lambda's 250 MB
-  // limit, so this is a zip and not a container image.
-  //
-  // terraform creates the function with a placeholder on the very first apply and
-  // ignores the code afterwards: otherwise every plan would want to revert
-  // whatever CI last published.
-  filename         = "${path.module}/placeholder.zip"
-  source_code_hash = filebase64sha256("${path.module}/placeholder.zip")
-
-  // ★★★ READ BEFORE APPLYING THIS RESOURCE. `environment.variables` is a whole
-  // map, so terraform reconciles EVERY key in it -- including any value that was
-  // set by hand outside terraform, which it removes without singling it out.
-  //
-  // MEASURED 2026-09-08: an `apply -target=aws_lambda_function.gw` intended to
-  // change one variable also emptied all four DDPSRUN_COGNITO_* values, because
-  // they had been set by hand and terraform.tfvars still had them blank. Sign-in
-  // broke. The plan DID say so -- four `~ "..." -> ""` lines -- and the mistake
-  // was reading `Plan: 1 to change` as "one thing changes": that counts
-  // RESOURCES, not attributes.
-  //
-  // So before any apply that touches this resource: check that every variable
-  // below has its real value in terraform.tfvars, and read the plan's `~` lines
-  // one by one rather than its summary count.
-  environment {
-    variables = {
-      DDPSRUN_RESULT_BUCKET    = var.result_bucket
-      DDPSRUN_RESULT_PREFIX    = var.result_prefix
-      DDPSRUN_SERVICE_ACCOUNT  = var.service_account
-      DDPSRUN_TOKENS_SECRET_ID = aws_secretsmanager_secret.tokens.name
-      DDPSRUN_CLUSTER_NAME     = var.cluster_name
-      DDPSRUN_SECRET_BINDINGS  = jsonencode(var.secret_bindings)
-
-      // DDPSRUN-COGNITO-WIRING. All four empty means the server accepts static
-      // tokens only, which is what it did before Cognito existed and what a
-      // local run still does. They are set together or not at all: a pool id
-      // with no client id would refuse every token rather than accept a wrong
-      // one, but it would also be a half-configured deployment nobody meant.
-      DDPSRUN_COGNITO_POOL_ID      = var.cognito_pool_id
-      DDPSRUN_COGNITO_CLIENT_ID    = var.cognito_client_id
-      DDPSRUN_COGNITO_REGION       = var.cognito_pool_id == "" ? "" : var.region
-      DDPSRUN_COGNITO_LOGIN_DOMAIN = var.cognito_login_domain
-
-      // DDPSRUN-REGISTER. Empty means the server reports
-      // `registration_requests: false`, the screen draws no button, and no IAM
-      // permission exists for it either (the policy has a count).
-      DDPSRUN_REGISTER_NOTIFY_TO   = var.register_notify_to
-      DDPSRUN_REGISTER_NOTIFY_FROM = var.register_notify_from != "" ? var.register_notify_from : var.register_notify_to
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [filename, source_code_hash, layers]
-  }
-
-  depends_on = [aws_cloudwatch_log_group.gw]
-}
-
-// WHAT GIVES THE FUNCTION AN ADDRESS. Without this a Lambda can only be invoked
-// through the AWS API, which needs AWS credentials — the exact thing our users do
-// not have. This is what replaces the ALB, the Gateway API objects, the load
-// balancer controller, the ACM certificate and the Route53 record.
-resource "aws_lambda_function_url" "gw" {
-  function_name = aws_lambda_function.gw.function_name
-
-  // The function checks the ddpsrun token itself. AWS_IAM here would require the
-  // caller to hold AWS credentials, which is the problem this whole service
-  // exists to remove.
-  authorization_type = "NONE"
-
-  // CORS IS DECLARED ONLY WHEN THERE IS AN ORIGIN TO ALLOW. Lambda refuses a cors
-  // block with an empty allow_origins:
-  //
-  //   InvalidParameterValueException: You can't leave AllowOrigins as empty when
-  //   Cors is enabled.
-  //
-  // Which is the right refusal — "CORS enabled, nobody allowed" is a contradiction
-  // rather than a safe default. Until the screen exists there is no browser origin,
-  // and the CLI is not a browser and never sends an Origin header, so it is
-  // unaffected either way.
-  dynamic "cors" {
-    for_each = length(var.cors_allow_origins) > 0 ? [1] : []
-    content {
-      allow_origins     = var.cors_allow_origins
-      allow_methods     = ["GET", "POST"]
-      allow_headers     = ["authorization", "content-type"]
-      max_age           = 3600
-      allow_credentials = false
-    }
-  }
-}
+// ---------------------------------------------------------------------------
+// REMOVED 2026-09-16: aws_lambda_function.gw and aws_lambda_function_url.gw.
+//
+// Both were destroyed in AWS on 2026-09-15 with a targeted destroy that named
+// exactly those two addresses, so `aws_secretsmanager_secret.tokens` -- which
+// holds every token hash and cannot be rebuilt from this repository -- was never
+// in the plan. The state has not listed them since. Leaving the BLOCKS behind
+// meant the next unqualified `terraform apply` would create the function again,
+// with the placeholder zip that answers 503, and publish a second address for an
+// API that already has one.
+//
+// The variables they used (memory_mb, timeout_seconds, cors_allow_origins, and
+// the four cognito_*) are still declared in variables.tf and still set in
+// terraform.tfvars. Deleting a variable while a tfvars file still assigns it is
+// an error, and the tfvars file is not in git -- so they stay until somebody
+// clears both in the same change. The pod reads its own settings from
+// config/deploy/hyperun-gw.yaml, not from here.
+// ---------------------------------------------------------------------------

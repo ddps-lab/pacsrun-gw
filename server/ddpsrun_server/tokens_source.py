@@ -118,8 +118,33 @@ def fetch_to_file(path: pathlib.Path, sid: str = "") -> bool:
     if body is None:
         body = base64.b64decode(response["SecretBinary"]).decode("utf-8")
 
+    # ★ WRITE SOMEWHERE ELSE AND RENAME, NEVER STRAIGHT INTO `path`.
+    # `write_text` opens with "w", which TRUNCATES FIRST: between that truncate
+    # and the write there is a moment when the token file on disk is ZERO BYTES.
+    # `refresh_forever` re-writes this file on an interval for the life of the
+    # pod, so that window comes round for ever.
+    #
+    # MEASURED 2026-09-16 in CI: `test_a_new_person_is_picked_up_without_a_restart`
+    # read the file mid-write and `json.loads` was handed `''`. In the test the
+    # refresh runs every 0.01 s, which is what made a rare window a frequent one --
+    # but a window that opens 1,440 times a day in the pod is not a test problem.
+    #
+    # `os.replace` is atomic on POSIX: a reader sees the old file or the new one
+    # and never a half of either. The temp file is made in the SAME directory
+    # because rename across filesystems is not atomic, and /tmp is often its own.
+    # It is the shape `PACSrun/driver/common/remotek8s.py` already uses for the
+    # credential file, for the same reason written out there.
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
+    try:
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        # A failed write must not leave a temp file behind every 60 s.
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
     # Both names, so a process whose other variables are still the old ones finds
     # the path too (HYPERUN-ENV-RENAME).
     os.environ["HYPERUN_TOKENS_PATH"] = str(path)
