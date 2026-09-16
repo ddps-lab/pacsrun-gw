@@ -278,8 +278,28 @@ def test_the_first_message_must_carry_a_credential(client, cluster):
     with open_terminal(client) as ws:
         ws.send_text(json.dumps({"hello": "there"}))
         answer = json.loads(ws.receive_text())
-    assert "error" in answer
+    # ★ NOT "unknown token", WHICH IS WHAT IT USED TO SAY. A message with no
+    # token reached the credential check as "" and got an answer that is true and
+    # misleading: the reader goes and checks their token, and the fault is in
+    # their client. Measured against the live gateway 2026-09-16.
+    assert "{\"token\"" in answer["error"], answer
     assert cluster.opened == [], "nothing may be opened before we know who it is"
+
+
+def test_a_first_message_that_is_not_an_object_says_so_rather_than_vanishing(
+        client, cluster):
+    # `json.loads("[1,2]")` is a list, and `.get` on a list raises AttributeError.
+    # Nothing caught it, so the socket closed with no message and the browser
+    # showed a bare close code.
+    cluster.objects[("lab-alice", OBJECT_NAME)] = running_job()
+    with open_terminal(client) as ws:
+        ws.send_text("[1, 2]")
+        answer = json.loads(ws.receive_text())
+    assert "error" in answer
+    with open_terminal(client) as ws:
+        ws.send_text("not json at all")
+        answer = json.loads(ws.receive_text())
+    assert "JSON" in answer["error"]
 
 
 def test_a_credential_nobody_holds_is_refused_in_the_terminal_itself(client, cluster):

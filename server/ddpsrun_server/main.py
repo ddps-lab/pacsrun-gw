@@ -2149,14 +2149,27 @@ async def job_terminal(
         first = await asyncio.wait_for(websocket.receive_text(),
                                        timeout=terminal_pump.AUTH_SECONDS)
         hello = json.loads(first)
-        principal = principal_for_credential(app, str(hello.get("token") or ""))
     except (asyncio.TimeoutError, WebSocketDisconnect):
         await websocket.close(code=WS_POLICY)
         return
-    except (ValueError, TypeError):
-        await _ws_refuse(websocket, "the first message must be "
-                                    '{"token": "..."} as JSON text')
+    except ValueError:
+        await _ws_refuse(websocket, "the first message has to be JSON text: "
+                                    '{"token": "..."}')
         return
+    # ★ THE SHAPE IS CHECKED BEFORE THE CREDENTIAL, AND SAYING SO IS THE POINT.
+    # `json.loads("[1,2]")` is a LIST, and `.get` on a list raises AttributeError
+    # -- which no `except` here caught, so the socket closed with nothing written
+    # and the browser showed a bare close code. And a message with no `token` at
+    # all used to reach the credential check as "", whose honest answer is
+    # "unknown token" -- true, and it sends the reader off to check a token when
+    # what is wrong is their client. Measured against the live gateway
+    # 2026-09-16: `{"nothing": "here"}` answered `{"error": "unknown token"}`.
+    if not isinstance(hello, dict) or not hello.get("token"):
+        await _ws_refuse(websocket, 'the first message has to carry the '
+                                    'credential: {"token": "..."}')
+        return
+    try:
+        principal = principal_for_credential(app, str(hello["token"]))
     except HTTPException as exc:
         await _ws_refuse(websocket, str(exc.detail))
         return
