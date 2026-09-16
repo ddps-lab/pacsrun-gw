@@ -16,12 +16,17 @@
 # names Group `ddpsrun-gw`). So a `secrets` verb added up there would be a
 # secrets verb in kube-system. The write path gets its own Role at the bottom
 # of this file, bound one namespace at a time -- see DDPSRUN-USER-SECRET.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: ddpsrun-gw
-  namespace: ddpsrun-system
----
+# ★ THE ServiceAccount IS NOT HERE ANY MORE. It used to be declared in this file, in a
+# namespace called `ddpsrun-system` that no longer exists -- the gateway moved to a pod in
+# `hyperun-system` on 2026-09-15 and its ServiceAccount is declared beside it in
+# hyperun-gw.yaml. Leaving the old object here made `onboard.sh` FAIL HALFWAY on 2026-09-16:
+#
+#     Error from server (NotFound): error when creating "STDIN":
+#     namespaces "ddpsrun-system" not found
+#
+# by which point the namespace, the ServiceAccount and two Roles had already been created. A
+# manifest that describes objects in a namespace that was deleted is not stale documentation,
+# it is a broken onboarding.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -91,9 +96,17 @@ roleRef:
   kind: ClusterRole
   name: ddpsrun-gw
 subjects:
+  # ★★ THE SUBJECT IS THE POD'S OWN ServiceAccount, AND IT WAS POINTING AT A GHOST. Until
+  # 2026-09-16 this named `ddpsrun-gw` in `ddpsrun-system`, a namespace deleted with the
+  # Lambda migration -- so the binding this file created in a new tenant namespace granted
+  # nothing to anybody, and the gateway could not read a single job there. The working
+  # namespaces had been fixed BY HAND during the migration, so nothing showed it until a new
+  # tenant was onboarded. Checked against the live cluster:
+  #     kubectl get rolebinding hyperun-gw -n ddps-ljk8540009 -o jsonpath='{.subjects}'
+  #     [{"kind":"ServiceAccount","name":"hyperun-gw","namespace":"hyperun-system"}]
   - kind: ServiceAccount
-    name: ddpsrun-gw
-    namespace: ddpsrun-system
+    name: hyperun-gw
+    namespace: hyperun-system
 ---
 # The binding that makes the services/proxy verb above reach anything. Prometheus lives in
 # pacsrun-system, which is NOT a tenant namespace, so the per-tenant bindings never covered it.
@@ -132,9 +145,20 @@ subjects:
   # Binding a ServiceAccount instead grants nothing and says nothing: `kubectl apply` succeeds,
   # the binding exists, and every request is still refused. `aws eks describe-access-entry
   # --principal-arn <the lambda role>` is what settles which subject is real.
-  - kind: Group
-    name: ddpsrun-gw
-    apiGroup: rbac.authorization.k8s.io
+  # ★ A ServiceAccount AND NOT A Group, SINCE 2026-09-16. `Group: ddpsrun-gw` was how the
+  # LAMBDA authenticated: an EKS access entry mapped its IAM role into that group. The gateway
+  # is a pod now and presents its ServiceAccount, which is in no group at all -- so every
+  # binding still naming the group granted nothing to the thing that is actually running.
+  # Live proof, on the namespace that works because it was fixed by hand during the migration:
+  #     kubectl get rolebinding hyperun-gw-prometheus -n pacsrun-system -o jsonpath='{.subjects}'
+  #     [{"kind":"ServiceAccount","name":"hyperun-gw","namespace":"hyperun-system"}]
+  # A ServiceAccount subject takes NO apiGroup -- the core group is "" and naming
+  # rbac.authorization.k8s.io here is refused outright:
+  #     subjects[0].apiGroup: Unsupported value: "rbac.authorization.k8s.io"
+  # The line was left over from the Group subject this replaced.
+  - kind: ServiceAccount
+    name: hyperun-gw
+    namespace: hyperun-system
 ---
 # DDPSRUN-USER-SECRET. What `PUT /v1/secrets/{name}` needs, and not one verb more.
 #
@@ -202,6 +226,11 @@ subjects:
   # gateway is a Lambda, it proves who it is with an EKS access entry, and RBAC
   # sees the kubernetesGroup that entry maps to. Binding a ServiceAccount here
   # applies cleanly and grants nothing.
-  - kind: Group
-    name: ddpsrun-gw
-    apiGroup: rbac.authorization.k8s.io
+  # See the note on the prometheus binding above: the Lambda's group is not what a pod presents.
+  # A ServiceAccount subject takes NO apiGroup -- the core group is "" and naming
+  # rbac.authorization.k8s.io here is refused outright:
+  #     subjects[0].apiGroup: Unsupported value: "rbac.authorization.k8s.io"
+  # The line was left over from the Group subject this replaced.
+  - kind: ServiceAccount
+    name: hyperun-gw
+    namespace: hyperun-system
