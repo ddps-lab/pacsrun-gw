@@ -2631,11 +2631,20 @@ def get_analysis(
                 "end cannot be read from outside; one whose image has no python3 cannot "
                 "either.")
 
+    # ★ A RUN THAT IS GOING FINE IS WORTH A SENTENCE TOO (2026-09-16, asked for).
+    # Until today the model was called only when the rules had found a fault, so the
+    # screen's button was dead on every healthy job -- which is most of them, and the
+    # numbers are just as worth reading there. The two cases take two prompts because
+    # `PROMPT` opens with "the check has already decided there is a problem": handed an
+    # empty findings list it would go looking for the fault it was told exists.
     explanation = ""
-    if explain and found:
-        explanation = monitor.explain(
-            found, reading.metric_series,
-            os.environ.get("HYPERUN_UPSTAGE_API_KEY", "").strip())
+    if explain:
+        key = os.environ.get("HYPERUN_UPSTAGE_API_KEY", "").strip()
+        if found:
+            explanation = monitor.explain(found, reading.metric_series, key)
+        else:
+            explanation = monitor.describe(
+                reading.metric_series, reading.progress, key)
 
     return AnalysisResponse(
         findings=[

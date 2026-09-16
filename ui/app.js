@@ -1035,7 +1035,15 @@ async function drawLearning(jobId, m, query) {
     : `<p class="dim small">Checks passed: ${(a.checked || []).join(", ")}.` +
       (a.note ? ` ${esc(a.note)}` : "") + `</p>`;
 
-  $("d-explain").disabled = !found.length;
+  // ★ NOT `!found.length` ANY MORE. The button used to be dead whenever the rules found
+  // nothing -- which is most jobs, and their numbers are just as worth reading. What made it
+  // dead was a real worry, that a model asked to explain an empty list invents a fault; the
+  // server answers that by using a DIFFERENT prompt when there is nothing wrong, one that
+  // says outright that the check found nothing. There is still nothing to say about a job
+  // that printed no metrics at all, and this panel is hidden in that case anyway.
+  $("d-explain").disabled = false;
+  $("d-explain").textContent = found.length
+    ? "Explain these numbers" : "What has this run done?";
   $("d-explain").onclick = async () => {
     $("d-explain").disabled = true;
     $("d-explain-note").textContent = "asking…";

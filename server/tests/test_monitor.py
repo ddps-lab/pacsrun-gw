@@ -454,3 +454,34 @@ def test_blocks_are_sent_with_the_text_and_not_instead_of_it(monkeypatch):
                           blocks=[{"type": "divider"}]) is True
     assert sent["text"] == "미리보기"
     assert sent["blocks"] == [{"type": "divider"}]
+
+
+# ------------------------------------------------- HYPERUN-EXPLAIN-OK
+
+
+def test_a_healthy_run_gets_its_own_prompt_and_not_the_fault_one():
+    """★ TWO PROMPTS BECAUSE ONE OF THEM ASSERTS A FAULT EXISTS.
+
+    `PROMPT` opens with "자동 점검이 이미 '문제가 있다' 고 판정했습니다" and every sentence
+    after it is built on there being something to explain. Handed an empty findings list it
+    would go looking for the fault it was told exists -- and a model asked to explain nothing
+    invents something. So a run with no findings takes DESCRIBE_PROMPT, which says outright
+    that the check found nothing and forbids making one up.
+    """
+    assert "문제가 있다" in monitor.PROMPT
+    assert "아무 문제도 찾지 못했습니다" in monitor.DESCRIBE_PROMPT
+    assert "문제를 만들어 내지 마십시오" in monitor.DESCRIBE_PROMPT
+    # Both keep the English terms, which is the rule that produced "걸음" once.
+    for prompt in (monitor.PROMPT, monitor.DESCRIBE_PROMPT):
+        assert "걸음" in prompt, "the bad example has to stay, or the model writes it again"
+        assert "번역하지 마십시오" in prompt
+
+
+def test_describe_says_nothing_without_a_key_or_without_numbers():
+    # Both are supported answers, not errors: the panel shows the table either way, and a
+    # deployment with no Upstage account must still serve.
+    assert monitor.describe([], None, "some-key") == ""
+    series = [monitor.metrics.MetricSeries(name="out", fields=["loss"], rows=[{"step": 1}],
+                                           first_step=1, last_step=1, row_count=1, trends={})]
+    assert monitor.describe(series, None, "") == ""
+

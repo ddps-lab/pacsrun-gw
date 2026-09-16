@@ -184,9 +184,15 @@ const METRICS = {
   await drawLearning("job-y", METRICS, "");
   check(nodes["d-learning-findings"].innerHTML.includes("Checks passed"),
         "a healthy run says which checks passed rather than showing nothing");
-  check(nodes["d-explain"].disabled === true,
-        "and the explain button is off: there is nothing to explain, and a model asked to " +
-        "explain an empty list will invent something");
+  // ★ THE BUTTON IS ON FOR A HEALTHY RUN TOO, SINCE 2026-09-16. It used to be off, and the
+  // worry behind that was real -- a model asked to explain an empty findings list invents a
+  // fault. The server answers that by using a DIFFERENT prompt when nothing is wrong, one
+  // that says outright that the check found nothing and forbids making one up. Turning the
+  // button off instead meant the numbers on most jobs could never be explained at all.
+  check(nodes["d-explain"].disabled === false,
+        "the explain button works on a healthy run too");
+  check(nodes["d-explain"].textContent === "What has this run done?",
+        "and it says which question it is going to answer")
 
   // ------------------------------------------------------------------ a broken number
 

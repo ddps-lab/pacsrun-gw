@@ -328,6 +328,102 @@ PROMPT = """훈련 job 을 감시하는 중입니다. 자동 점검이 이미 "�
 """
 
 
+DESCRIBE_PROMPT = """훈련 job 의 숫자를 읽고 있습니다. 자동 점검은 **아무 문제도 찾지 못했습니다.**
+당신이 할 일은 이 실행이 지금까지 무엇을 했는지 job 을 낸 연구자에게 말해 주는 것입니다.
+
+그 학습이 스스로 남긴 숫자 (학습마다 처음 몇 줄과 마지막 몇 줄):
+{series}
+
+진행 상황:
+{progress}
+
+세 문장 안에 쓰십시오.
+  1. 어느 값이 목표이고 그 값이 어떻게 움직였는지. 근거로 쓴 숫자를 그대로 적으십시오
+  2. 그 움직임의 모양. 꾸준히 갔는지 한 번에 튀었는지, 아직 움직이는 중인지 멎었는지
+  3. 지금 시점에서 봐 둘 만한 것 한 가지
+
+★ 정식 용어는 영어 그대로 씁니다. 번역하지 마십시오.
+  step, epoch, batch, loss, learning rate, gradient, checkpoint, optimizer,
+  overfitting, warmup, scheduler — 이것들은 이 분야의 이름입니다. 한국어로 옮기면
+  읽는 사람이 자기 로그와 코드에서 그 단어를 다시 못 찾습니다.
+      step 을 "걸음" 이라고 쓰지 마십시오. "5 step", "step 마다" 입니다.
+      metric 을 "메트릭", series 를 "시리즈" 처럼 소리 나는 대로 옮기지 마십시오.
+
+★★ 문제를 만들어 내지 마십시오. 점검이 아무것도 못 찾았습니다. "이상은 없어 보입니다" 정도는
+괜찮지만, 없는 결함을 짐작해서 쓰면 연구자가 멀쩡한 실행을 뜯어보게 됩니다.
+
+★★★ 원인을 단정하지 마십시오. 위에 있는 것은 어느 값이 어떻게 움직였는가 뿐이고,
+learning rate 도 batch size 도 data 도 위에 없습니다.
+
+★ 그 밖의 문장 규칙
+  * 번역투를 쓰지 마십시오. "해당 ~ 의", "~ 에 대하여", "~ 하는 것" 을 반복하지 마십시오.
+  * "~ 로 보입니다", "~ 인 것으로 판단됩니다" 같은 보고서 말투를 피하고 "~ 입니다",
+    "~ 같습니다" 로 끝내십시오.
+  * 숫자는 단위와 함께 쓰십시오.
+
+이렇게 쓰십시오:
+  out 의 loss 가 목표인데, 처음 5 step 평균 6.106 에서 마지막 5 step 평균 0.5492 로 91%
+  내려갔습니다. 한 번에 떨어진 것이 아니라 step 마다 꾸준히 내려갔고 마지막 구간에서는 거의
+  평평합니다. 이쯤에서 더 돌려도 얻는 것이 적을 수 있으니 eval 결과를 한 번 보십시오.
+"""
+
+
+def describe(series: list[metrics.MetricSeries], progress, api_key: str,
+             timeout: float = 20.0) -> str:
+    """Say what a run that is going FINE has been doing. HYPERUN-EXPLAIN-OK.
+
+    ★ WHY A SECOND PROMPT RATHER THAN THE SAME ONE. `PROMPT` opens with "자동 점검이
+    이미 '문제가 있다' 고 판정했습니다" and tells the model not to re-judge -- every
+    sentence of it is built on there being a fault to explain. Handed an empty
+    findings list it would look for the fault it was told exists, and a model asked
+    to explain nothing invents something. So the two cases get two prompts and the
+    caller picks by whether the rules found anything.
+
+    Args:
+        series: the trainings' own numbers.
+        progress: the `Progress` reading, or None. It is what lets the answer say
+            whether the run is still going.
+        api_key: the Upstage credential.
+        timeout: seconds to wait.
+
+    Returns:
+        The model's text, or "" when it could not be reached or there is nothing to
+        describe. An empty answer is supported everywhere this is called.
+    """
+    if not api_key or not series:
+        return ""
+    trimmed = []
+    for s in series[:4]:
+        trimmed.append({
+            "series": s.name,
+            "fields": s.fields,
+            "first_rows": [_rounded(r) for r in s.rows[:3]],
+            "last_rows": [_rounded(r) for r in s.rows[-3:]],
+            "steps": [s.first_step, s.last_step],
+        })
+    where = "알 수 없음"
+    if progress is not None:
+        where = (f"{progress.step}/{progress.total_steps} step, "
+                 f"{progress.elapsed} 경과, 남은 예상 {progress.remaining}")
+    body = json.dumps({
+        "model": UPSTAGE_MODEL,
+        "messages": [{"role": "user", "content": DESCRIBE_PROMPT.format(
+            series=json.dumps(trimmed, ensure_ascii=False, indent=2),
+            progress=where)}],
+        "max_tokens": 400,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        UPSTAGE_URL, data=body,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            answer = json.loads(response.read())
+        return answer["choices"][0]["message"]["content"].strip()
+    except (urllib.error.URLError, KeyError, ValueError, TimeoutError) as exc:
+        logger.warning("could not reach the model: %s", exc)
+        return ""
+
+
 def _rounded(row: dict) -> dict:
     """Every float in one row cut to four significant figures.
 
