@@ -546,6 +546,24 @@ def parse_gpu(line: str) -> GpuSample | None:
     )
 
 
+def _elapsed_seconds(text: str) -> int:
+    """`4:02:35` or `05:54` as a number of seconds. 0 for anything unreadable.
+
+    tqdm writes H:MM:SS once an hour has passed and MM:SS before that, so both shapes
+    turn up in one log. Unreadable answers 0, which loses a comparison rather than
+    winning one -- the direction that cannot promote a bar nobody can read.
+    """
+    parts = text.split(":")
+    try:
+        numbers = [int(p) for p in parts]
+    except ValueError:
+        return 0
+    seconds = 0
+    for value in numbers:
+        seconds = seconds * 60 + value
+    return seconds
+
+
 def parse_progress(line: str) -> Progress | None:
     """Pull the training run's position out of a log line.
 
@@ -572,9 +590,13 @@ def parse_progress(line: str) -> Progress | None:
     # every reader of Progress, works in seconds per step; converting here is
     # what keeps the unit out of the rest of the file. A rate of 0 cannot be
     # inverted and is not a real reading either, so the line is discarded.
+    # A rate of zero is not a reading in either unit. tqdm prints `0.00s/it` on the
+    # first line of a bar, before any item has finished; only the `it/s` half of this
+    # was guarded, so that first line produced a Progress whose projected total was
+    # `total * 0 / 3600` -- 0.00 h.
+    if pace <= 0:
+        return None
     if match.group("unit") == "it/s":
-        if pace <= 0:
-            return None
         pace = 1 / pace
     return Progress(
         step=step,
@@ -650,9 +672,26 @@ def scan(lines: object, window_seconds: int) -> Metrics:
         if sample is not None:
             legacy.append(sample)
             continue
-        # A progress line is overwritten many times a run; the last one wins.
+        # ★★ THE LONGEST-RUNNING BAR WINS, NOT THE LAST ONE, AND THE DIFFERENCE IS
+        # WHAT THE SCREEN SHOWED. "The last one wins" is right for ONE tqdm bar and
+        # wrong for a run that has several -- and a Hugging Face training has several:
+        # the training loop, the dataset `map`, and one per checkpoint write.
+        #
+        # Measured on job-a72cfb29b593 (2026-09-16). The last progress-shaped line in
+        # its log was not the training's:
+        #     4000/4000 [05:54<00:00, 11.29it/s]   <- the training
+        #     1/1 [00:00<00:00,  4.21it/s]         <- `Writing model shards`, and this
+        #                                             is the line that won
+        # so the panel read Elapsed 00:00, Remaining 00:00, Projected total 0.00 h on a
+        # job that had just trained for six minutes.
+        #
+        # ELAPSED IS THE TEST, not the step total: a dataset `map` over 8,000 rows has a
+        # bigger total than a 4,000-step training and is over in seconds. "Which of
+        # these bars IS the run" is a question about time, so it is answered with time.
         found = parse_progress(line)
-        if found is not None:
+        if found is not None and (
+                progress is None
+                or _elapsed_seconds(found.elapsed) >= _elapsed_seconds(progress.elapsed)):
             progress = found
 
     # WHY THESE TWO NOTES NO LONGER BLAME THE USER'S SCRIPT. They used to send the

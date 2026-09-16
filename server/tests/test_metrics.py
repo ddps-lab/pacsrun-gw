@@ -443,3 +443,54 @@ def test_a_job_that_prints_no_metric_line_reports_an_empty_list_and_not_an_error
     # memory until the end, both land here. Neither is a failure.
     reading = m.scan(["2026-09-15T00:00:00Z PACSRUN_GPU=94,38200,45440,71,298"], 3600)
     assert reading.metric_series == []
+
+
+# ------------------------------------------------- which tqdm bar is the run
+
+
+def test_the_training_bar_wins_over_the_one_that_came_last():
+    """★ MEASURED ON job-a72cfb29b593 (2026-09-16), AND THE SCREEN WAS WRONG BECAUSE OF IT.
+
+    A Hugging Face training prints several tqdm bars: the training loop, the dataset `map`,
+    and one per checkpoint write. "The last one wins" then picks whichever finished most
+    recently, which at the end of a run is `Writing model shards: 1/1`. The panel read
+    Elapsed 00:00, Remaining 00:00, Projected total 0.00 h on a job that had just trained
+    for six minutes.
+    """
+    lines = [
+        "2026-09-16T05:00:00Z 4000/4000 [05:54<00:00, 11.29it/s]",
+        "2026-09-16T05:00:01Z 1/1 [00:00<00:00,  4.21it/s]",
+    ]
+    progress = m.scan(lines, 3600).progress
+    assert progress is not None
+    assert progress.total_steps == 4000, "the model-shard writer was read as the training"
+    assert progress.elapsed == "05:54"
+
+
+def test_a_long_dataset_map_does_not_beat_a_longer_training():
+    # ★ ELAPSED AND NOT THE STEP TOTAL. A `map` over 8,000 rows has a bigger total than a
+    # 4,000-step training and is over in seconds; "which of these IS the run" is a question
+    # about time.
+    lines = [
+        "2026-09-16T05:00:00Z 8000/8000 [00:12<00:00, 654.0it/s]",
+        "2026-09-16T05:00:01Z 4000/4000 [05:54<00:00, 11.29it/s]",
+    ]
+    assert m.scan(lines, 3600).progress.total_steps == 4000
+
+
+def test_the_hour_long_form_is_compared_correctly():
+    # tqdm writes H:MM:SS past an hour and MM:SS before it, and both turn up in one log.
+    # Comparing them as strings would make "59:00" beat "4:02:35".
+    lines = [
+        "2026-09-16T05:00:00Z 350/556 [4:02:35<2:22:44, 41.57s/it]",
+        "2026-09-16T05:00:01Z 100/100 [59:00<00:00, 35.40s/it]",
+    ]
+    assert m.scan(lines, 3600).progress.total_steps == 556
+
+
+def test_a_zero_rate_is_not_a_reading_in_either_unit():
+    # tqdm prints `0.00s/it` on the first line of a bar, before any item has finished. Only
+    # the it/s half was guarded, so that line produced a projected total of 0.00 h.
+    assert m.parse_progress("0/4000 [00:00<00:00,  0.00s/it]") is None
+    assert m.parse_progress("0/4000 [00:00<00:00,  0.00it/s]") is None
+
