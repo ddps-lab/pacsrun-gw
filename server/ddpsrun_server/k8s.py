@@ -237,6 +237,53 @@ class Cluster:
                 raise NotFound(name) from exc
             raise ClusterError(f"could not delete {name}: {exc.reason}") from exc
 
+    def set_stopped(self, namespace: str, name: str, stopped: bool) -> dict[str, Any]:
+        """Ask for one PacsJob to be PAUSED, or to run again. HYPERUN-JOB-STOP.
+
+        WHAT IT DOES AND WHAT IT DELIBERATELY DOES NOT. It writes one boolean into
+        `spec.stopped` and nothing else. The pause itself happens far from here:
+        PACSrun's controller puts an annotation on the driver pod, the kubelet
+        copies it into the pod, and the DRIVER -- which holds the cloud credential
+        this server has never had -- calls the vendor's stop.
+
+        ★ SO THE ANSWER IS "ASKED", NOT "STOPPED". The machine pauses seconds to a
+        minute later, and on the vendors where it CANNOT pause -- Shadeform has no
+        stop API, a spot instance has no stopped state, a RunPod pod with no volume
+        would lose everything -- it never does. `status.phase` going to `Stopped` is
+        the only statement that it happened, and it is the driver that causes it.
+
+        WHY A MERGE PATCH AND NOT A REPLACE. A replace would carry this server's
+        idea of the whole spec, and it does not have one: the object may have been
+        edited by an operator or by a newer controller since it was read. A merge
+        patch names the one field it means.
+
+        Args:
+            namespace: the caller's namespace, from their token.
+            name: the PacsJob's Kubernetes name.
+            stopped: True to ask for a pause, False to ask it to run again.
+
+        Returns:
+            The patched object, so the caller can report the phase it had.
+
+        Raises:
+            NotFound: no object of that name in that namespace.
+            ClusterError: anything else.
+        """
+        try:
+            return self._custom.patch_namespaced_custom_object(
+                group=PACSJOB_GROUP,
+                version=PACSJOB_VERSION,
+                plural=PACSJOB_PLURAL,
+                namespace=namespace,
+                name=name,
+                body={"spec": {"stopped": stopped}},
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                raise NotFound(name) from exc
+            raise ClusterError(
+                f"could not {'pause' if stopped else 'resume'} {name}: {exc.reason}") from exc
+
     def list_jobs(self, namespace: str) -> list[dict[str, Any]]:
         """Every PacsJob in one namespace.
 

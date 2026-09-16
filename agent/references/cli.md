@@ -16,6 +16,8 @@ hyperun <command> [options]
 |---|---|
 | `hyperun login` | sign in and store the result |
 | `hyperun delete` | delete a job -- it stops and disappears from the list |
+| `hyperun pause` | pause a running job, KEEPING its machine |
+| `hyperun resume` | let a paused job run again |
 | `hyperun logout` | delete the stored token |
 | `hyperun explain` | what this tool is and how to use it (asks the server) |
 | `hyperun schema` | the exact shape of a submit request (asks the server) |
@@ -55,6 +57,22 @@ Deletes the PacsJob. That is the only stop the CRD offers: PACSrun watches for t
 |---|---|---|
 | `job_id` | yes | the id `submit` printed |
 | `--yes`, `-y` |  | skip the confirmation. For scripts, which have nobody to answer it. |
+
+## hyperun pause
+
+Asks for the job's machine to be paused. Compute billing stops; the disk keeps costing, and on RunPod a stopped volume costs MORE than a running one ($0.20/GB-month against $0.10). Unlike `delete`, the job stays in the list and everything it has produced stays on the machine.  IT ASKS. The pause happens seconds to a minute later, and on some vendors it cannot happen at all: Shadeform has no stop API, a spot instance has no stopped state, and a RunPod pod with no volume disk would lose everything it has produced -- so the driver refuses rather than destroying the run, and says why in the job's log. `hyperun status` shows the phase reaching Stopped when it actually did.
+
+| argument | required | what it does |
+|---|---|---|
+| `job_id` | yes | the id `submit` printed |
+
+## hyperun resume
+
+Asks for a paused job to run again on the machine it kept. If the vendor cannot give the machine back -- RunPod says plainly that a restarted pod may be allocated zero GPUs -- the job STAYS paused and says so, rather than going to buy a different machine, which would be a recovery wearing a resume's name.
+
+| argument | required | what it does |
+|---|---|---|
+| `job_id` | yes | the id `submit` printed |
 
 ## hyperun logout
 

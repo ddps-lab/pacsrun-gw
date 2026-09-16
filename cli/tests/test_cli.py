@@ -1222,3 +1222,53 @@ def test_a_failure_that_is_not_a_lost_session_is_not_retried(fake, monkeypatch, 
     assert run(["shell", "job-a8acdef80a07"]) == 0
     assert calls["n"] == 1, "retrying an unrelated failure would double every bad command"
     assert "did not answer in JSON" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------- HYPERUN-JOB-STOP
+
+
+def test_pause_and_resume_are_two_verbs_over_one_boolean(monkeypatch, capsys):
+    """★ `pause` AND `resume` RATHER THAN `stop --undo`. One verb with a flag is one verb
+    and two readings; a person asking to pause a job and a person asking to resume one are
+    doing opposite things and should type opposite words."""
+    calls = []
+
+    class FakeClient:
+        def set_stopped(self, job_id, stopped):
+            calls.append((job_id, stopped))
+            return {"phase": "Stopped" if stopped else "Running", "stopped": stopped}
+
+    monkeypatch.setattr(cli, "client_from_config", lambda: FakeClient())
+
+    assert cli.main(["pause", "job-abc123abc123"]) == 0
+    assert cli.main(["resume", "job-abc123abc123"]) == 0
+    assert calls == [("job-abc123abc123", True), ("job-abc123abc123", False)]
+
+
+def test_pause_says_it_asked_rather_than_that_it_stopped(monkeypatch, capsys):
+    """★★ THE WORD MATTERS. The machine pauses up to a minute later, and on some vendors it
+    never does. "paused" here would tell somebody a $6/hour machine had stopped billing when
+    it had not."""
+    class FakeClient:
+        def set_stopped(self, job_id, stopped):
+            return {"phase": "Running", "stopped": True}
+
+    monkeypatch.setattr(cli, "client_from_config", lambda: FakeClient())
+    cli.main(["pause", "job-abc123abc123"])
+    out = capsys.readouterr().out
+    assert "asked to pause" in out
+    assert "Running right now" in out, "the phase has to be the real one, not the request"
+    # And the two things a person needs to know next.
+    assert "cannot pause" in out
+    assert "7 days" in out, "a job left paused stops being protected, and that has to be said"
+
+
+def test_a_refusal_from_the_server_is_not_swallowed(monkeypatch, capsys):
+    class FakeClient:
+        def set_stopped(self, job_id, stopped):
+            raise cli.ServerError("this job has finished (Succeeded)")
+
+    monkeypatch.setattr(cli, "client_from_config", lambda: FakeClient())
+    assert cli.main(["pause", "job-abc123abc123"]) != 0
+    assert "Succeeded" in capsys.readouterr().err
+

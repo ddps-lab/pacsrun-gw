@@ -279,6 +279,34 @@ def build_parser() -> argparse.ArgumentParser:
         "the job's result path are NOT deleted.",
     )
     cancel.add_argument("job_id", help="the id `submit` printed")
+
+    # HYPERUN-JOB-STOP. `pause` and `resume` are two verbs over one boolean, because that
+    # is how a person thinks about it -- `stop --undo` would be one verb and two readings.
+    pause = sub.add_parser(
+        "pause",
+        help="pause a running job, KEEPING its machine",
+        description="Asks for the job's machine to be paused. Compute billing stops; the "
+        "disk keeps costing, and on RunPod a stopped volume costs MORE than a running one "
+        "($0.20/GB-month against $0.10). Unlike `delete`, the job stays in the list and "
+        "everything it has produced stays on the machine.\n\n"
+        "IT ASKS. The pause happens seconds to a minute later, and on some vendors it "
+        "cannot happen at all: Shadeform has no stop API, a spot instance has no stopped "
+        "state, and a RunPod pod with no volume disk would lose everything it has "
+        "produced -- so the driver refuses rather than destroying the run, and says why "
+        "in the job's log. `hyperun status` shows the phase reaching Stopped when it "
+        "actually did.",
+    )
+    pause.add_argument("job_id", help="the id `submit` printed")
+
+    resume = sub.add_parser(
+        "resume",
+        help="let a paused job run again",
+        description="Asks for a paused job to run again on the machine it kept. If the "
+        "vendor cannot give the machine back -- RunPod says plainly that a restarted pod "
+        "may be allocated zero GPUs -- the job STAYS paused and says so, rather than going "
+        "to buy a different machine, which would be a recovery wearing a resume's name.",
+    )
+    resume.add_argument("job_id", help="the id `submit` printed")
     cancel.add_argument(
         "--yes", "-y", action="store_true",
         help="skip the confirmation. For scripts, which have nobody to answer it.",
@@ -1076,6 +1104,47 @@ def cmd_delete(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _pause_or_resume(args: argparse.Namespace, stopped: bool) -> int:
+    """One boolean, two verbs. HYPERUN-JOB-STOP.
+
+    ★ IT PRINTS WHAT WAS ASKED AND WHAT HAS HAPPENED, and they are different things. The
+    request lands immediately; the machine pauses seconds to a minute later, because the
+    controller writes an annotation and the kubelet copies it into the driver pod on its
+    own period. On the vendors where a pause cannot happen it never will, and the reason
+    reaches the job's log rather than this reply -- only the driver, which holds the cloud
+    credential, knows which of those it is.
+    """
+    verb = "pause" if stopped else "resume"
+    try:
+        job = client_from_config().set_stopped(args.job_id, stopped)
+    except ServerError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_SERVER
+    phase = job.get("phase", "?")
+    print(f"asked to {verb} {args.job_id}; it is {phase} right now")
+    if stopped:
+        print("  the machine pauses in up to a minute. `hyperun status "
+              f"{args.job_id}` shows Stopped when it actually has, and the job's log says "
+              "so if this vendor cannot pause it.")
+        print("  the disk keeps costing while it is paused, and the orphan sweep stops "
+              "protecting a job left paused for 7 days.")
+    else:
+        print(f"  `hyperun status {args.job_id}` shows it Running again once the machine "
+              "comes back. If the vendor has no GPU to give, it STAYS Stopped and says so "
+              "rather than buying a different machine.")
+    return EXIT_OK
+
+
+def cmd_pause(args: argparse.Namespace) -> int:
+    """Pause a running job, keeping its machine."""
+    return _pause_or_resume(args, True)
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    """Let a paused job run again."""
+    return _pause_or_resume(args, False)
+
+
 def bar(percent: float, width: int = 20) -> str:
     """Draw a progress bar.
 
@@ -1382,6 +1451,8 @@ COMMANDS = {
     "delete": cmd_delete,
     # The old spelling, kept as an alias -- see the comment on the parser.
     "cancel": cmd_delete,
+    "pause": cmd_pause,
+    "resume": cmd_resume,
     "logout": cmd_logout,
     "explain": cmd_explain,
     "schema": cmd_schema,

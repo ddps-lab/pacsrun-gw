@@ -1678,6 +1678,82 @@ def cancel_job(
     return Response(status_code=204)
 
 
+@app.post("/v1/jobs/{job_id}/stop", response_model=JobView)
+def stop_job(
+    request: Request,
+    job_id: str,
+    principal: PrincipalDep,
+    namespace: str = NAMESPACE_QUERY,
+    resume: bool = Query(
+        default=False,
+        description="Set it to run the job again instead of pausing it. The same "
+        "route both ways, because it writes one boolean and a second route would "
+        "be a second place for that boolean's meaning to drift.",
+    ),
+) -> JobView:
+    """Pause a running job, keeping its machine — or let it run again.
+
+    HYPERUN-JOB-STOP. This writes `spec.stopped` and NOTHING ELSE. Everything that
+    actually happens is downstream of it:
+
+      1. PACSrun's controller sees the field and puts an annotation on the driver pod
+      2. the kubelet copies that annotation into the pod, on ITS OWN period —
+         a minute by default, which is why a pause is not instant
+      3. the DRIVER — the only thing holding the cloud credential — calls the
+         vendor's stop and exits 22
+      4. the controller reads that exit code and the phase becomes `Stopped`
+
+    ★ SO A 200 FROM HERE MEANS "ASKED", NOT "STOPPED", and the response says which:
+    `stopped` is the request, `phase` is what happened. On the vendors where a pause
+    CANNOT happen it never will — Shadeform has no stop API at all, a spot instance
+    has no stopped state, and a RunPod pod with no volume disk would lose everything
+    it has produced, so the driver refuses rather than destroying the run. The reason
+    reaches the job's log, because only the driver knows which of those it is.
+
+    ★★ AND A PAUSED MACHINE IS STILL BILLING STORAGE. It is the compute that stops:
+    an EBS volume is about $0.08/GB-month, and a RunPod volume is DEARER stopped than
+    running ($0.20 against $0.10). The orphan sweep protects a paused job for 7 days
+    and then stops protecting it, so a job left paused is not left for ever.
+
+    Args:
+        job_id: the job, as every other route names it.
+        namespace: whose namespace, under the same rules as elsewhere.
+        resume: run it again instead of pausing it.
+
+    Returns:
+        The job as it now reads, so a caller sees both the request and the phase.
+
+    Raises:
+        HTTPException: 404 for an unknown job, 409 for one that has finished —
+            there is nothing left to pause — and 502 when the apiserver refused.
+    """
+    cluster: Cluster = request.app.state.cluster
+    name = resolve_object_name(job_id)
+    ns = namespace_for(principal, namespace)
+    try:
+        obj: dict[str, Any] = require_owner(cluster.get_job(ns, name), principal)
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail="no such job") from exc
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    phase = ((obj.get("status") or {}).get("phase")) or ""
+    if phase in FINISHED_PHASES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"this job has finished ({phase}), so there is nothing to "
+            f"{'resume' if resume else 'pause'}",
+        )
+
+    try:
+        patched = cluster.set_stopped(ns, name, not resume)
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail="no such job") from exc
+    except ClusterError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JobView.from_pacsjob(patched)
+
+
 @app.get("/v1/jobs/{job_id}/spec", response_model=JobSpecResponse)
 def get_job_spec(
     request: Request,

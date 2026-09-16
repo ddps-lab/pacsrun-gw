@@ -40,12 +40,21 @@ rules:
   # comes back 403 — which is how it shipped on 2026-09-02: the route, the CLI
   # command and the button were all correct, and the cluster refused them.
   #
-  # No `update` or `patch`. A submitted job is not edited; it is cancelled and
-  # submitted again. Being able to rewrite somebody's spec after the fact is not
-  # something this server needs.
+  # ★ `patch` IS FOR ONE BOOLEAN AND WAS ADDED ON 2026-09-16 (HYPERUN-JOB-STOP).
+  # The paragraph above used to end "No `update` or `patch`. A submitted job is not
+  # edited; it is cancelled and submitted again", and that was true until a job could
+  # be PAUSED. `spec.stopped` is the one field a person changes after submitting, and
+  # it is a request rather than an edit to the work: it does not touch the image, the
+  # script, the resources or the result path.
+  #
+  # `update` IS STILL REFUSED, and the difference is what keeps the paragraph's point.
+  # An update carries a whole object -- this server's idea of every field, including
+  # ones an operator or a newer controller may have changed since it read them. A merge
+  # patch names the one field it means. So the narrow verb is granted and the wide one
+  # is not.
   - apiGroups: ["pacsrun.io"]
     resources: ["pacsjobs"]
-    verbs: ["create", "get", "list", "delete"]
+    verbs: ["create", "get", "list", "patch", "delete"]
   # Find the pod behind a job, so `/v1/jobs/{id}/logs` knows whose stdout to read.
   # `list` and not `get`: the server looks a pod up by label, never by name.
   - apiGroups: [""]

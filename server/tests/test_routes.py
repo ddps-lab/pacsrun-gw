@@ -30,6 +30,8 @@ class FakeCluster:
         self.objects: dict[tuple[str, str], dict] = {}
         self.logs: dict[tuple[str, str], list[str]] = {}
         self.execs: list[tuple[str, str, int, list[str], int]] = []
+        # HYPERUN-JOB-STOP. (namespace, name, stopped) for every pause or resume.
+        self.stop_calls: list[tuple[str, str, bool]] = []
         self.exec_answer: tuple[str, int | None] = ("", 0)
         # DDPSRUN-USER-SECRET. namespace -> {name: value}. The VALUES are kept
         # here only so a test can assert the server passed the right one down;
@@ -105,6 +107,12 @@ class FakeCluster:
             return self.objects[(namespace, name)]
         except KeyError:
             raise k8s.NotFound(name) from None
+
+    def set_stopped(self, namespace, name, stopped):
+        obj = self.get_job(namespace, name)
+        obj.setdefault("spec", {})["stopped"] = stopped
+        self.stop_calls.append((namespace, name, stopped))
+        return obj
 
     def delete_job(self, namespace, name):
         try:
@@ -2368,3 +2376,81 @@ def test_a_namespace_that_cannot_be_read_does_not_empty_the_whole_report(client,
 def test_the_window_cannot_be_asked_for_beyond_the_cap(client, cluster):
     assert as_root(client, "GET", "/v1/usage?days=9999").status_code == 422
     assert as_root(client, "GET", "/v1/usage?days=0").status_code == 422
+
+
+# ------------------------------------------------------------- HYPERUN-JOB-STOP
+
+
+def running_job_for_stop(owner="alice", phase="Running"):
+    return {
+        "metadata": {"name": OBJECT_NAME,
+                     "labels": {"ddpsrun.io/owner": owner, "ddpsrun.io/job-id": JOB_ID}},
+        "spec": {"parallelism": 1},
+        "status": {"phase": phase},
+    }
+
+
+def test_pausing_writes_the_request_and_says_it_is_only_a_request(client, cluster):
+    """★ A 200 HERE MEANS "ASKED", NOT "STOPPED", and the body has to show both.
+
+    The machine pauses seconds to a minute later -- the kubelet copies the controller's
+    annotation into the driver pod on its own period -- and on some vendors it never does.
+    A screen that read the request as the outcome would tell somebody a $6/hour machine had
+    stopped billing when it had not.
+    """
+    cluster.objects[("lab-alice", OBJECT_NAME)] = running_job_for_stop()
+    answer = as_alice(client, "POST", f"/v1/jobs/{JOB_ID}/stop")
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert body["stopped"] is True, "the request is not reported"
+    assert body["phase"] == "Running", "the phase must still be what it actually is"
+    assert cluster.stop_calls == [("lab-alice", OBJECT_NAME, True)]
+
+
+def test_resuming_is_the_same_route_the_other_way(client, cluster):
+    job = running_job_for_stop()
+    job["spec"]["stopped"] = True
+    job["status"]["phase"] = "Stopped"
+    cluster.objects[("lab-alice", OBJECT_NAME)] = job
+    answer = as_alice(client, "POST", f"/v1/jobs/{JOB_ID}/stop?resume=true")
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["stopped"] is False
+    assert cluster.stop_calls == [("lab-alice", OBJECT_NAME, False)]
+
+
+def test_a_finished_job_cannot_be_paused(client, cluster):
+    # There is nothing left to pause, and 404 would send somebody hunting for a typo.
+    cluster.objects[("lab-alice", OBJECT_NAME)] = running_job_for_stop(phase="Succeeded")
+    answer = as_alice(client, "POST", f"/v1/jobs/{JOB_ID}/stop")
+    assert answer.status_code == 409
+    assert "Succeeded" in answer.json()["detail"]
+    assert cluster.stop_calls == []
+
+
+def test_somebody_elses_job_cannot_be_paused(client, cluster):
+    # ★ alice and bob share the namespace `lab-alice`, so a check that stopped at the
+    # namespace would let bob pause alice's job -- and a pause is a change to her run.
+    cluster.objects[("lab-alice", OBJECT_NAME)] = running_job_for_stop(owner="alice")
+    answer = client.request("POST", f"/v1/jobs/{JOB_ID}/stop",
+                            headers={"Authorization": "Bearer bob-token"})
+    assert answer.status_code == 404
+    assert cluster.stop_calls == []
+
+
+def test_an_unknown_job_is_not_patched(client, cluster):
+    answer = as_alice(client, "POST", f"/v1/jobs/{JOB_ID}/stop")
+    assert answer.status_code == 404
+    assert cluster.stop_calls == []
+
+
+def test_the_job_view_carries_the_request_and_the_time_it_actually_paused(client, cluster):
+    job = running_job_for_stop()
+    job["spec"]["stopped"] = True
+    job["status"]["phase"] = "Stopped"
+    job["status"]["stoppedAt"] = "2026-09-16T05:00:00Z"
+    cluster.objects[("lab-alice", OBJECT_NAME)] = job
+    body = as_alice(client, "GET", f"/v1/jobs/{JOB_ID}").json()
+    assert body["stopped"] is True
+    assert body["stopped_at"] == "2026-09-16T05:00:00Z", (
+        "the sweep measures its 7-day protection from this, so the screen has to show it")
+

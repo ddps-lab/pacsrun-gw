@@ -29,6 +29,7 @@ Authorization: Bearer <your token>
 | GET | `/v1/jobs/{job_id}/logs` | One window of a job's output. Ask again for more. |
 | GET | `/v1/jobs/{job_id}/metrics` | GPU usage and training progress, read out of the job's own log. |
 | GET | `/v1/jobs/{job_id}/spec` | The submission this job was created from, with secrets removed. |
+| POST | `/v1/jobs/{job_id}/stop` | Pause a running job, keeping its machine — or let it run again. |
 | GET | `/v1/login-config` | Where to send someone to sign in. |
 | GET | `/v1/metrics/query` | Ask the in-cluster Prometheus one instant query. |
 | GET | `/v1/namespaces` | Which namespaces this caller may read — the screen's namespace picker. |
@@ -294,6 +295,8 @@ What `GET /v1/jobs/{id}` returns.
 | `recovery_count` |  | How many times the job lost its machine and was restarted. |
 | `result_path` |  | Where the output is. This is the one place a namespace name crosses the API boundary, because it is part of the S3 key. The screen now downloads through /v1/jobs/{id}/artifacts instead, but this field stays: the CLI and scripts read results with `aws s3 sync <this>`. |
 | `started_at` |  | When the job's pod first ran, from status.startedAt (PACSRUN-JOB-CLOCK). Absent while the job is still waiting for a machine, which is exactly what makes queue time visible: started_at - created_at is the wait, finished_at - started_at is the run. |
+| `stopped` |  | Whether a pause has been ASKED FOR, from spec.stopped. ★ It is the request and not the outcome: the machine pauses seconds to a minute later, and on some vendors it cannot pause at all -- Shadeform has no stop API, a spot instance has no stopped state, a RunPod pod with no volume would lose everything. `phase == 'Stopped'` is the statement that it actually happened. A screen that read this one as 'paused' would tell somebody a $6/hour machine had stopped billing when it had not. |
+| `stopped_at` |  | When the machine was actually paused, from status.stoppedAt. The orphan sweep measures the 7-day protection from it: a job left paused longer than that stops being protected and its machine is swept. |
 | `user` |  | Who submitted it. Read from the ddpsrun.io/owner label the server itself wrote at submit time, so it cannot be forged by editing the object: a caller can only ever see their own namespace anyway. |
 | `vendor` |  | Who it was rented from, e.g. runpod, aws. |
 

@@ -750,6 +750,22 @@ class JobView(BaseModel):
         default=0,
         description="How many times the job lost its machine and was restarted.",
     )
+    stopped: bool = Field(
+        default=False,
+        description="Whether a pause has been ASKED FOR, from spec.stopped. "
+        "★ It is the request and not the outcome: the machine pauses seconds to a "
+        "minute later, and on some vendors it cannot pause at all -- Shadeform has "
+        "no stop API, a spot instance has no stopped state, a RunPod pod with no "
+        "volume would lose everything. `phase == 'Stopped'` is the statement that it "
+        "actually happened. A screen that read this one as 'paused' would tell "
+        "somebody a $6/hour machine had stopped billing when it had not.",
+    )
+    stopped_at: str | None = Field(
+        default=None,
+        description="When the machine was actually paused, from status.stoppedAt. "
+        "The orphan sweep measures the 7-day protection from it: a job left paused "
+        "longer than that stops being protected and its machine is swept.",
+    )
     cost_usd: float | None = Field(
         default=None,
         description="What this job has cost so far, in dollars: the hours "
@@ -831,6 +847,8 @@ class JobView(BaseModel):
             gpu=gpu,
             vendor=vendor,
             recovery_count=int(status.get("recoveryCount", 0) or 0),
+            stopped=bool(spec.get("stopped", False)),
+            stopped_at=status.get("stoppedAt"),
             cost_usd=cost,
             result_path=spec.get("resultPath"),
         )

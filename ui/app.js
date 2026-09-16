@@ -616,6 +616,7 @@ async function drawDetail(jobId, ns = "") {
     ].join("");
 
     drawCompare(job);
+    drawStopButton(jobId, job);
     drawTerminal(jobId, job);
     await Promise.all([drawMetrics(jobId, job), drawLog(jobId)]);
     // A finished job has nothing left to ask about. Stopping the timers here is
@@ -2326,6 +2327,59 @@ $("d-again").onclick = () => {
    asked why a cancelled job showed no cancelled state. It has none because the
    object is gone. The confirm names what survives — the result path — because
    that is the part people are actually afraid of losing. */
+/* The Pause / Resume button. HYPERUN-JOB-STOP.
+
+   ★ IT SAYS WHAT WAS ASKED, NOT WHAT HAPPENED, AND THOSE ARE DIFFERENT. Pressing it writes
+   `spec.stopped`; the machine pauses up to a minute later, because the controller puts an
+   annotation on the driver pod and the kubelet copies it in on its own period. On some
+   vendors it never happens at all -- Shadeform has no stop API, a spot instance has no
+   stopped state, a RunPod pod with no volume disk would lose everything it has produced.
+   So the label goes to "Pausing…" and only the PHASE reaching `Stopped` says it worked.
+
+   ★★ AND IT IS NOT THE SAME AS DELETE. Delete hands the machine back and the run is gone;
+   pause keeps both. The confirm says which, because those are the two things a person is
+   choosing between and the words alone do not carry it. */
+function drawStopButton(jobId, job) {
+  const button = $("d-pause");
+  // A finished job has nothing to pause, and a Compared job never rented anything.
+  button.hidden = TERMINAL.includes(job.phase);
+  if (button.hidden) return;
+
+  const paused = job.phase === "Stopped";
+  const asked = job.stopped;
+  // Four states and not two: "asked and not yet done" is its own, and a button that
+  // showed "Resume" the moment somebody pressed Pause would be claiming the machine had
+  // stopped while it was still running.
+  button.textContent = paused ? "Resume" : asked ? "Pausing…" : "Pause";
+  button.disabled = asked && !paused;
+
+  button.onclick = async () => {
+    const resume = paused;
+    if (!resume && !window.confirm(
+          `Pause ${$("d-name").textContent}?\n\n` +
+          `The machine is KEPT, not handed back — compute billing stops and the disk keeps ` +
+          `costing. Everything the run has produced stays on it, and Resume picks it up.\n\n` +
+          `Some machines cannot be paused: a spot instance, and a RunPod pod with no volume ` +
+          `disk. Those refuse and keep running, and the job's log says why.`)) return;
+
+    button.disabled = true;
+    button.textContent = resume ? "Resuming…" : "Pausing…";
+    try {
+      await call(`/v1/jobs/${jobId}/stop${resume ? "?resume=true" : ""}` + nsQuery(resume ? "&" : "?"),
+                 { method: "POST" });
+      $("d-message").innerHTML = note("ok", resume
+        ? "asked to resume. It shows Running again once the machine comes back; if the vendor "
+          + "has no GPU to give it stays Stopped and says so rather than buying a different one."
+        : "asked to pause. The machine stops within about a minute, and the phase shows Stopped "
+          + "when it actually has. A job left paused stops being protected after 7 days.");
+    } catch (err) {
+      $("d-message").innerHTML = note("err", err.message);
+      button.disabled = false;
+      button.textContent = resume ? "Resume" : "Pause";
+    }
+  };
+}
+
 $("d-cancel").onclick = async () => {
   const jobId = $("d-id").textContent.trim();
   if (!jobId) return;

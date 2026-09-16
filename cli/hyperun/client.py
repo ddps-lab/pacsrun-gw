@@ -132,6 +132,27 @@ class Client:
         """
         self._call("DELETE", f"/v1/jobs/{job_id}")
 
+    def set_stopped(self, job_id: str, stopped: bool) -> dict:
+        """Ask for a job to be PAUSED, keeping its machine -- or to run again.
+
+        ★ IT ASKS. The machine pauses seconds to a minute later, and on some vendors it
+        cannot pause at all. What comes back carries both: `stopped` is the request,
+        `phase` is what has actually happened.
+
+        Args:
+            job_id: an id the server issued.
+            stopped: True to pause, False to resume.
+
+        Returns:
+            The job as it now reads.
+
+        Raises:
+            ServerError: 404 for no such job of yours, 409 for one that has finished,
+                502 when the cluster could not be reached.
+        """
+        suffix = "" if stopped else "?resume=true"
+        return self._call("POST", f"/v1/jobs/{job_id}/stop{suffix}") or {}
+
     def status(self, job_id: str) -> dict[str, Any]:
         """Read one job's state."""
         return self._call("GET", f"/v1/jobs/{job_id}").json()
