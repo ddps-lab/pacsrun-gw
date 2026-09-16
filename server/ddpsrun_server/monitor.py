@@ -260,8 +260,8 @@ PROMPT = """훈련 job 을 감시하는 중입니다. 자동 점검이 이미 "�
 {series}
 
 세 문장 안에 쓰십시오. 읽는 사람은 자기 모델은 잘 알지만 오늘 이 실행을 아직 안 봤습니다.
-  1. 어느 값이 목표이고 그 값이 어떻게 움직였는지
-  2. 가장 그럴듯한 원인. 근거로 쓴 숫자를 그대로 적으십시오
+  1. 어느 값이 목표이고 그 값이 어떻게 움직였는지. 근거로 쓴 숫자를 그대로 적으십시오
+  2. 그 움직임의 모양. 꾸준히 갔는지 한 번에 튀었는지, 언제부터인지
   3. 지금 확인해볼 것 한 가지
 
 ★ 정식 용어는 영어 그대로 씁니다. 번역하지 마십시오.
@@ -282,17 +282,29 @@ PROMPT = """훈련 job 을 감시하는 중입니다. 자동 점검이 이미 "�
   * "~ 로 보입니다", "~ 인 것으로 판단됩니다" 같은 보고서 말투를 피하고 "~ 입니다",
     "~ 같습니다" 로 끝내십시오.
   * 숫자는 단위와 함께 쓰십시오.
+  * ★★ 원인을 단정하지 마십시오. 위에 있는 것은 어느 값이 어떻게 움직였는가 뿐이고,
+    learning rate 도 batch size 도 optimizer 설정도 data 도 위에 없습니다. 그것들
+    중 무엇이 원인인지는 이 숫자만으로 알 수 없습니다. "learning rate 가 너무 큽니다"
+    라고 쓰면 연구자는 그것을 고치러 갑니다 — 원인이 다른 데 있으면 GPU 시간을 한 번 더
+    태웁니다. 대신 "무엇을 확인해보십시오" 라고 쓰십시오.
   * ★ 위에 준 숫자만 쓰십시오. 없는 값을 지어내지 마십시오. learning rate 나 batch
-    size 가 위에 없으면 그 값이 얼마인지 말하지 말고 "로그에서 확인하세요" 라고만
-    하십시오. 안 준 값을 지어내면 연구자가 그 숫자를 찾으러 갑니다.
+    size 가 위에 없으면 그 값이 얼마인지 말하지 마십시오.
   * 이 실행이 괜찮다고 쓰지 마십시오. 점검이 이미 아니라고 했습니다.
 
 이렇게 쓰십시오:
   bank/adapters/AD/iter_1 의 score 가 목표인데, 처음 5 step 평균 2.85 에서 마지막 5 step
-  평균 2.14 로 24.9% 떨어졌습니다. step 마다 0.027 씩 꾸준히 내려가서 learning rate 가 너무
-  큽니다. 로그에서 learning rate 를 확인하고 절반으로 줄여서 다시 돌려보세요.
+  평균 2.14 로 24.9% 떨어졌습니다. 한 번 튄 것이 아니라 step 마다 0.027 씩 꾸준히
+  내려갔습니다. learning rate 와 data 를 확인해보십시오.
 
-여기서 learning rate 의 값을 말하지 않은 것에 주의하십시오. 위에 그 값이 없었기 때문입니다.
+여기서 원인을 하나로 찍지 않은 것에 주의하십시오. 위에 있는 것은 score 값뿐이고, 그것만으로
+무엇이 그렇게 만들었는지는 알 수 없습니다.
+
+이렇게 쓰지 마십시오:
+  ... step 마다 0.027 씩 꾸준히 내려가서 learning rate 가 너무 큽니다. 로그에서 learning
+  rate 를 확인하고 절반으로 줄여서 다시 돌려보세요.
+
+이 문장이 나쁜 이유는 숫자를 지어내서가 아닙니다. learning rate 를 원인으로 단정했는데,
+그렇게 판단할 근거가 위에 없기 때문입니다.
 
 이렇게 쓰지 마십시오:
   해당 훈련 시리즈의 *score* 컬럼이 목표 지표이며, 처음 다섯 걸음 평균 2.85 에서 마지막
@@ -393,16 +405,18 @@ STOP_IMPOSSIBLE = "impossible"
 STOP_NOT_TRIED = "not_tried"
 
 
-def _machine_line(stop_state: str, reason: str) -> str:
-    if stop_state == STOP_DONE:
-        return ("\n_기계를 멈췄습니다. 이제 저장소 값만 나갑니다. 다시 켜려면 "
-                "`hyperun resume` 을 쓰십시오._")
-    if stop_state == STOP_IMPOSSIBLE:
-        detail = f" {reason}" if reason else ""
-        return ("\n_★ 이 job 은 멈출 수 없어서 계속 과금되고 있습니다."
-                f"{detail} 멈추려면 `hyperun cancel` 로 지우는 수밖에 없고, 그러면 "
-                "빌린 기계를 돌려주면서 지금까지 한 것도 함께 잃습니다._")
-    return "\n_아무것도 멈추지 않았습니다. 계속 과금됩니다._"
+def _stop_word(stop_state: str) -> str:
+    """`stop` 이거나 `running`. 두 가지뿐이다.
+
+    ★ 세 상태를 두 낱말로 줄인 것이고, 그 셋은 위에 그대로 남아 있다. 읽는 사람이 이
+    줄에서 알고 싶은 것은 하나다 -- **기계가 지금 돌고 있는가.** 멈출 수 없어서 돌고
+    있는 것과 아무도 안 멈춰서 돌고 있는 것은 이 질문에 같은 답이고, 둘을 갈라 쓰면
+    한 줄짜리 자리에 이유가 들어가 눈에 안 들어온다. 이유는 [ 검토 사항 ] 이 말한다.
+
+    돈은 바로 위 [ 진행 사항 ] 의 비용(추정)이 이미 말하고 있다. 그래서 이 줄은
+    "계속 과금됩니다" 를 되풀이하지 않는다.
+    """
+    return "stop" if stop_state == STOP_DONE else "running"
 
 
 # 어느 rule 이 먼저 제목이 되는가. 한 job 이 여러 개를 동시에 낼 수 있고, 제목은
@@ -467,7 +481,10 @@ def blocks_for(job_id: str, name: str, findings: list[dict], explanation: str,
             {"type": "divider"},
             {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 진행 사항 ]*"}},
             {"type": "section", "fields": [
-                {"type": "mrkdwn", "text": f"*시간*\n`{hours:.1f}시간`"},
+                # `Hour`, not 시간. Main 4 in cloud-usage says Hour for the same
+                # reason the user gave there: a person reading this against the
+                # cost report should meet one word, not two.
+                {"type": "mrkdwn", "text": f"*Hour*\n`{hours:.1f}`"},
                 {"type": "mrkdwn", "text": f"*비용(추정)*\n`${cost_per_hour * hours:,.2f}`"},
             ]},
         ]
@@ -487,11 +504,12 @@ def blocks_for(job_id: str, name: str, findings: list[dict], explanation: str,
             {"type": "section", "text": {"type": "mrkdwn", "text": explanation}},
         ]
 
+    # 제목 밑의 `*이름*  ·  \`job-...\`` 와 같은 모양이다. 절 이름과 문장을 쓰던
+    # 자리인데, 여기서 답할 것은 한 낱말이라 한 줄로 줄였다.
     out += [
         {"type": "divider"},
-        {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 과금 사항 ]*"}},
         {"type": "section", "text": {"type": "mrkdwn",
-         "text": _machine_line(stop_state or STOP_NOT_TRIED, stop_reason).strip().strip("_")}},
+         "text": f"*중단 여부*  ·  `{_stop_word(stop_state or STOP_NOT_TRIED)}`"}},
     ]
     return out
 
@@ -510,7 +528,7 @@ def message_for(job_id: str, name: str, findings: list[dict], explanation: str,
     parts = [head, "\n".join(f"• {f['detail']}" for f in findings)]
     if explanation:
         parts.append(f"\n[AI 설명] {explanation}")
-    parts.append(_machine_line(stop_state, stop_reason))
+    parts.append(f"중단 여부: {_stop_word(stop_state)}")
     return "\n".join(parts)
 
 
