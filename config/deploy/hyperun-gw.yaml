@@ -259,6 +259,12 @@ spec:
             # secret. Two copies of "who is allowed in" is the one duplication
             # this system must not have, and the two run side by side for the
             # length of the migration.
+            # HYPERUN-CORS. Where the screen is served from, comma separated. WITHOUT
+            # IT A BROWSER CANNOT READ ANY ANSWER FROM THIS API and the login page
+            # falls back to token sign-in with no error anywhere -- the Lambda's
+            # Function URL used to add these headers and an ALB does not (2026-09-16).
+            - name: HYPERUN_UI_ORIGINS
+              value: <UI_ORIGIN>
             - name: HYPERUN_TOKENS_SECRET_ID
               value: <TOKENS_SECRET_ID>
             # Where the fetched copy is written. Must be under a writable mount:

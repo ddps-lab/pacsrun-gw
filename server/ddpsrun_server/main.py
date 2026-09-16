@@ -49,6 +49,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi import Response
 from fastapi.responses import PlainTextResponse
@@ -245,6 +246,64 @@ app = FastAPI(
     description="Submit a GPU job and get results back. No kubectl, no AWS account.",
     lifespan=lifespan,
 )
+
+# HYPERUN-CORS. The screen is on a different origin from this API and always has
+# been, so a browser will not hand it a response without permission.
+#
+# ★ THIS WAS NOT NEEDED UNTIL 2026-09-16, AND THE REGRESSION WAS SILENT. The
+# Lambda Function URL carried its own CORS configuration -- `AllowOrigins` naming
+# the CloudFront domain -- and added the headers itself, so this application never
+# had to. Moving to an ALB (step 1b) removed the thing that was doing it: an ALB
+# forwards what the backend sends and adds nothing.
+#
+# WHAT IT LOOKED LIKE, which is why it took a person noticing rather than an alarm.
+# Nothing 500s and nothing appears in a log. `app.js` asks for /v1/login-config
+# inside a try/catch, the browser refuses to hand it the body, the catch returns
+# `{enabled: false}`, and the page reads that as "this deployment has no Cognito"
+# -- so it offers "Sign in with a token" and looks like a deliberate choice. The
+# server was answering 200 with the right body the whole time.
+def ui_origins(env: dict[str, str] | None = None) -> list[str]:
+    """Which origins the screen may be served from. Comma separated.
+
+    Both variable names, as everything else here reads both (HYPERUN-ENV-RENAME).
+    """
+    env = dict(os.environ) if env is None else env
+    raw = env.get("HYPERUN_UI_ORIGINS") or env.get("DDPSRUN_UI_ORIGINS") or ""
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+def add_cors(application: FastAPI, origins: list[str]) -> bool:
+    """Let the named origins read this API's answers. Returns whether any were.
+
+    ★ A LIST AND NEVER `*`. Credentials travel on these requests -- the screen
+    sends `Authorization` on every call after login -- and an API that let any
+    page read them would let any page a logged-in person visits act as them.
+    Browsers refuse a wildcard with credentials anyway, so `*` here would not
+    even be the permissive thing it looks like; it would be the broken one.
+
+    NO ORIGINS IS A REAL STATE, not a misconfiguration to raise on: a local run
+    and the test suite are in it. It is logged rather than ignored, because the
+    symptom on a real deployment is a screen quietly offering the wrong login.
+    """
+    if not origins:
+        logger.warning(
+            "HYPERUN_UI_ORIGINS is not set, so no CORS headers are sent. A browser on "
+            "another origin will silently fail to read /v1/login-config and the screen "
+            "will offer token sign-in instead of Google.")
+        return False
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        # `Authorization` is what makes every call after login a non-simple
+        # request, so a deployment that forgot it works until somebody logs in.
+        allow_headers=["Authorization", "Content-Type"],
+    )
+    return True
+
+
+add_cors(app, ui_origins())
 
 
 def require_principal(
