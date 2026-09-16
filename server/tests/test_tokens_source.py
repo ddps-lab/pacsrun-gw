@@ -164,12 +164,27 @@ def test_a_new_person_is_picked_up_without_a_restart(fake_boto, tmp_path, monkey
     fake_boto["body"] = json.dumps({"tokens": DIRECTORY["tokens"] + [
         {"email": "bob@example.com", "user": "bob", "namespace": "ddps-bob", "team": "ddps"}]})
 
-    deadline = __import__("time").monotonic() + 5
-    while not reloads and __import__("time").monotonic() < deadline:
+    # ★ WAIT FOR THE NEW DOCUMENT, NOT FOR ANY CALLBACK. The thread ticks every
+    # 0.01 s, so its FIRST tick can land before the line above -- it then writes
+    # the one-person directory, appends to `reloads`, and a test that waited on
+    # `reloads` alone would go on to assert two people against a file holding
+    # one. That is the whole failure: it passed alone and failed about a third of
+    # the time in a loaded full run (2026-09-16), which is the least useful shape
+    # a failure can take.
+    deadline = __import__("time").monotonic() + 10
+    while __import__("time").monotonic() < deadline:
+        try:
+            if len(json.loads(target.read_text())["tokens"]) == 2:
+                break
+        except (OSError, ValueError):
+            pass          # mid-write, or not written yet
         __import__("time").sleep(0.01)
 
     assert reloads, "the refresh thread never called back"
-    assert len(json.loads(target.read_text())["tokens"]) == 2
+    assert len(json.loads(target.read_text())["tokens"]) == 2, (
+        "the thread never picked up the second person. It re-fetches every 0.01 s "
+        "here, so ten seconds is not a timing problem -- look at whether "
+        "fetch_to_file still writes the path it is given")
 
 
 def test_a_failed_refresh_does_not_kill_the_thread(fake_boto, tmp_path, monkeypatch, stopper):

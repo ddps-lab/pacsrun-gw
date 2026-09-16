@@ -219,7 +219,21 @@ UPSTAGE_MODEL = os.environ.get("HYPERUN_UPSTAGE_MODEL", "solar-pro3")
 # that question has already been answered by `findings_for`, and answering it
 # again is exactly where this model failed twice on 2026-09-15.
 # ★ THE PROMPT IS WRITTEN IN KOREAN AND CARRIES A BAD EXAMPLE, and both are there
-# because of what the first version actually produced. Asked in English for "at most
+# because of what each version actually produced. Two rounds of this:
+#
+#   round 1 (English instructions) -> 해당 훈련 시리즈의 *score* 컬럼이 ... 학습률
+#                                     과다 설정이 가장 의심됩니다
+#   round 2 (Korean, translationese named) -> 처음 다섯 걸음 평균 2.85 에서 ...
+#
+# `걸음` is `step` translated, and translating it is the mistake: a researcher
+# reads `step` in tqdm's own output, in their trainer's config and in every
+# tutorial, and cannot grep a Korean word for it. Round 2 also said `학습률` in
+# one sentence and `learning_rate` in the next, so the same quantity had two
+# names inside one answer.
+#
+# So the prompt now has a NAMED LIST of terms that stay English -- step, epoch,
+# batch, loss, learning rate, gradient, checkpoint, optimizer, overfitting,
+# warmup, scheduler -- and a rule that one answer uses one name for one thing. Asked in English for "at most
 # four sentences in Korean", `solar-pro3` answered (2026-09-16, a real DM):
 #
 #   해당 훈련 시리즈의 *score* 컬럼이 목표 지표이며 ... 학습률 과다 설정이 가장 의심됩니다
@@ -245,32 +259,63 @@ PROMPT = """훈련 job 을 감시하는 중입니다. 자동 점검이 이미 "�
 그 학습이 스스로 남긴 숫자 (학습마다 처음 몇 줄과 마지막 몇 줄):
 {series}
 
-한국어로 세 문장 안에 쓰십시오. 읽는 사람은 자기 모델은 잘 알지만 오늘 이 실행을 아직 안 봤습니다.
+세 문장 안에 쓰십시오. 읽는 사람은 자기 모델은 잘 알지만 오늘 이 실행을 아직 안 봤습니다.
   1. 어느 값이 목표이고 그 값이 어떻게 움직였는지
   2. 가장 그럴듯한 원인. 근거로 쓴 숫자를 그대로 적으십시오
   3. 지금 확인해볼 것 한 가지
 
-문장 규칙 — 이걸 어기면 읽는 사람이 무슨 말인지 모릅니다.
+★ 정식 용어는 영어 그대로 씁니다. 번역하지 마십시오.
+  step, epoch, batch, loss, learning rate, gradient, checkpoint, optimizer,
+  overfitting, warmup, scheduler — 이것들은 이 분야의 이름입니다. 한국어로 옮기면
+  읽는 사람이 자기 로그와 코드에서 그 단어를 다시 못 찾습니다.
+      step 을 "걸음" 이라고 쓰지 마십시오. "5 step", "step 마다" 입니다.
+      learning rate 를 "학습률" 로 바꿨다가 다음 문장에서 learning_rate 로 돌아가지
+      마십시오. 한 답 안에서 한 이름만 씁니다.
+      metric 을 "메트릭", series 를 "시리즈" 처럼 소리 나는 대로 옮기지 마십시오.
+      열 이름과 파일 이름도 영어 그대로, 별표나 백틱 없이. score, loss,
+      bank/adapters/AD/iter_1.
+
+★ 그 밖의 문장 규칙
   * 번역투를 쓰지 마십시오. "해당 ~ 의", "~ 에 대하여", "~ 하는 것" 을 반복하지 마십시오.
-  * 영어를 소리 나는 대로 옮기지 마십시오. series 를 "시리즈" 라고 쓰지 말고, 학습 이름을
-    그대로 쓰거나 "이 학습" 이라고 하십시오. metric 을 "메트릭" 이라고 하지 마십시오.
   * 없는 한자어를 만들지 마십시오. "과다 설정" 이 아니라 "너무 큽니다".
-  * 열 이름과 파일 이름은 영어 그대로, 별표나 백틱 없이 쓰십시오. score, loss,
-    bank/adapters/AD/iter_1.
-  * 숫자는 단위와 함께 쓰십시오.
+  * "~ 쪽이 의심됩니다" 처럼 둘러 말하지 말고 "~ 가 너무 큽니다" 라고 쓰십시오.
   * "~ 로 보입니다", "~ 인 것으로 판단됩니다" 같은 보고서 말투를 피하고 "~ 입니다",
     "~ 같습니다" 로 끝내십시오.
+  * 숫자는 단위와 함께 쓰십시오.
+  * ★ 위에 준 숫자만 쓰십시오. 없는 값을 지어내지 마십시오. learning rate 나 batch
+    size 가 위에 없으면 그 값이 얼마인지 말하지 말고 "로그에서 확인하세요" 라고만
+    하십시오. 안 준 값을 지어내면 연구자가 그 숫자를 찾으러 갑니다.
   * 이 실행이 괜찮다고 쓰지 마십시오. 점검이 이미 아니라고 했습니다.
 
 이렇게 쓰십시오:
-  bank/adapters/AD/iter_1 의 score 가 목표인데, 처음 다섯 걸음 평균 2.85 에서 마지막 다섯
-  걸음 평균 2.14 로 24% 떨어졌습니다. 한 걸음마다 0.027 씩 꾸준히 내려가서, 학습률이 너무
-  큰 쪽이 의심됩니다. 로그에서 learning_rate 를 확인하고 절반으로 줄여서 다시 돌려보십시오.
+  bank/adapters/AD/iter_1 의 score 가 목표인데, 처음 5 step 평균 2.85 에서 마지막 5 step
+  평균 2.14 로 24.9% 떨어졌습니다. step 마다 0.027 씩 꾸준히 내려가서 learning rate 가 너무
+  큽니다. 로그에서 learning rate 를 확인하고 절반으로 줄여서 다시 돌려보세요.
+
+여기서 learning rate 의 값을 말하지 않은 것에 주의하십시오. 위에 그 값이 없었기 때문입니다.
 
 이렇게 쓰지 마십시오:
-  해당 훈련 시리즈의 *score* 컬럼이 목표 지표이며, 2.85 → 2.14 로 약 24% 감소하였습니다.
-  학습률 과다 설정이 가장 의심되는 것으로 판단됩니다.
+  해당 훈련 시리즈의 *score* 컬럼이 목표 지표이며, 처음 다섯 걸음 평균 2.85 에서 마지막
+  다섯 걸음 평균 2.14 로 약 24% 감소하였습니다. 학습률 과다 설정이 가장 의심되는 것으로
+  판단됩니다.
 """
+
+
+def _rounded(row: dict) -> dict:
+    """Every float in one row cut to four significant figures.
+
+    Integers are left alone -- a step number is a step number -- and anything
+    that is not a number passes through. Applied to what the MODEL sees, never
+    to what the rules decided on: a threshold compared against a rounded value
+    would fire differently from one compared against the real one.
+    """
+    out = {}
+    for key, value in row.items():
+        if isinstance(value, bool) or not isinstance(value, float):
+            out[key] = value
+            continue
+        out[key] = float(f"{value:.4g}")
+    return out
 
 
 def explain(findings: list[dict], series: list[metrics.MetricSeries],
@@ -292,13 +337,19 @@ def explain(findings: list[dict], series: list[metrics.MetricSeries],
     """
     if not api_key:
         return ""
+    # ★ ROUNDED BEFORE IT GOES OUT, and this is not cosmetic. A float like
+    # 2.1399999999999997 or a slope of 0.02699203007518797 is what python's
+    # repr gives, and the model quotes what it is given -- so the researcher's
+    # Slack message reads like a machine talking to itself. Four significant
+    # figures is more than any of these decisions needs.
+    findings = [_rounded(f) for f in findings]
     trimmed = []
     for s in series[:4]:
         trimmed.append({
             "series": s.name,
             "fields": s.fields,
-            "first_rows": s.rows[:3],
-            "last_rows": s.rows[-3:],
+            "first_rows": [_rounded(r) for r in s.rows[:3]],
+            "last_rows": [_rounded(r) for r in s.rows[-3:]],
             "steps": [s.first_step, s.last_step],
         })
     body = json.dumps({
