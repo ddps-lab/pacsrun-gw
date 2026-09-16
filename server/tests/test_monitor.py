@@ -159,6 +159,33 @@ def test_nine_trainings_are_judged_one_by_one():
 # ---------------------------------------------------------------- the message
 
 
+def test_the_message_says_the_machine_was_stopped_when_it_was():
+    # ★ A READER WHO THINKS THE PLATFORM DID NOT STOP IT WILL GO AND STOP SOMETHING
+    # THAT IS ALREADY STOPPED, which on RunPod means a pod that has already
+    # released its GPU and may not get one back.
+    text = monitor.message_for("job-x", "exp", [{"rule": "nan", "detail": "NaN"}], "",
+                               None, None, stop_state=monitor.STOP_DONE)
+    assert "멈췄습니다" in text
+    assert "resume" in text, "stopping without saying how to resume is a dead end"
+    assert "계속 과금" not in text
+
+
+def test_a_job_that_cannot_be_stopped_says_why_and_that_it_is_still_billing():
+    # "cannot be stopped" with no reason reads as a platform fault. It is not: it
+    # is a property of what was bought or how it was configured, and the reason
+    # travels from `driver/common/stopcapability.py` rather than being re-worded
+    # here -- two places writing the same refusal is two places to keep in step.
+    reason = ("this job bought a spot instance, and a plain spot instance has no stopped "
+              "state.")
+    text = monitor.message_for("job-x", "exp", [{"rule": "nan", "detail": "NaN"}], "",
+                               None, None, stop_state=monitor.STOP_IMPOSSIBLE,
+                               stop_reason=reason)
+    assert "멈출 수 없어서 계속 과금" in text
+    assert "spot" in text
+    # And it must name the only lever that IS available, with its cost.
+    assert "cancel" in text and "잃습니다" in text
+
+
 def test_the_message_says_nothing_was_stopped():
     # ★ A READER WHO THINKS THE PLATFORM ALREADY STOPPED THE JOB WILL NOT GO AND
     # STOP IT. The monitor cannot stop anything yet -- stopping today means

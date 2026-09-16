@@ -218,22 +218,59 @@ UPSTAGE_MODEL = os.environ.get("HYPERUN_UPSTAGE_MODEL", "solar-pro3")
 # verdict and told to explain it. It is never asked whether the run is healthy --
 # that question has already been answered by `findings_for`, and answering it
 # again is exactly where this model failed twice on 2026-09-15.
-PROMPT = """A training job is being watched. Automated checks have already decided that
-something is wrong; your job is NOT to re-judge that, it is to explain it to the
-researcher who submitted the job.
+# ★ THE PROMPT IS WRITTEN IN KOREAN AND CARRIES A BAD EXAMPLE, and both are there
+# because of what the first version actually produced. Asked in English for "at most
+# four sentences in Korean", `solar-pro3` answered (2026-09-16, a real DM):
+#
+#   해당 훈련 시리즈의 *score* 컬럼이 목표 지표이며 ... 학습률 과다 설정이 가장 의심됩니다
+#
+# Three separate faults in one sentence. `시리즈` is "series" spelled phonetically,
+# which is not a Korean word for anything and cannot be looked up. `*score*` is
+# markdown the model added to a column name. `과다 설정` is a Sino-Korean compound
+# nobody says -- the Korean for it is "너무 큽니다". None of that is a failure to
+# understand the numbers; it is a failure of register, and the fix for register is a
+# worked example of the register you want, not more instructions.
+#
+# WHY THE RULES ARE IN KOREAN. A model asked in English to write Korean translates,
+# and translation is exactly where this went wrong. Asking in the target language
+# gets the target language's own sentence shapes.
+#
+# AND IT IS STILL NEVER ASKED TO JUDGE. The findings are handed to it as settled.
+PROMPT = """훈련 job 을 감시하는 중입니다. 자동 점검이 이미 "문제가 있다" 고 판정했습니다.
+당신이 할 일은 다시 판정하는 것이 아니라, 그 판정을 job 을 낸 연구자에게 설명하는 것입니다.
 
-What the checks found:
+점검이 찾은 것:
 {findings}
 
-The training's own numbers (first rows and last rows of each series):
+그 학습이 스스로 남긴 숫자 (학습마다 처음 몇 줄과 마지막 몇 줄):
 {series}
 
-Write at most four sentences in Korean, for a researcher who knows their own
-model but has not looked at this run today:
-  1. which column looks like the objective, and what it did,
-  2. what the most likely cause is, naming the specific numbers you used,
-  3. one concrete thing they could check.
-Do not say the run is fine. The checks have already said it is not."""
+한국어로 세 문장 안에 쓰십시오. 읽는 사람은 자기 모델은 잘 알지만 오늘 이 실행을 아직 안 봤습니다.
+  1. 어느 값이 목표이고 그 값이 어떻게 움직였는지
+  2. 가장 그럴듯한 원인. 근거로 쓴 숫자를 그대로 적으십시오
+  3. 지금 확인해볼 것 한 가지
+
+문장 규칙 — 이걸 어기면 읽는 사람이 무슨 말인지 모릅니다.
+  * 번역투를 쓰지 마십시오. "해당 ~ 의", "~ 에 대하여", "~ 하는 것" 을 반복하지 마십시오.
+  * 영어를 소리 나는 대로 옮기지 마십시오. series 를 "시리즈" 라고 쓰지 말고, 학습 이름을
+    그대로 쓰거나 "이 학습" 이라고 하십시오. metric 을 "메트릭" 이라고 하지 마십시오.
+  * 없는 한자어를 만들지 마십시오. "과다 설정" 이 아니라 "너무 큽니다".
+  * 열 이름과 파일 이름은 영어 그대로, 별표나 백틱 없이 쓰십시오. score, loss,
+    bank/adapters/AD/iter_1.
+  * 숫자는 단위와 함께 쓰십시오.
+  * "~ 로 보입니다", "~ 인 것으로 판단됩니다" 같은 보고서 말투를 피하고 "~ 입니다",
+    "~ 같습니다" 로 끝내십시오.
+  * 이 실행이 괜찮다고 쓰지 마십시오. 점검이 이미 아니라고 했습니다.
+
+이렇게 쓰십시오:
+  bank/adapters/AD/iter_1 의 score 가 목표인데, 처음 다섯 걸음 평균 2.85 에서 마지막 다섯
+  걸음 평균 2.14 로 24% 떨어졌습니다. 한 걸음마다 0.027 씩 꾸준히 내려가서, 학습률이 너무
+  큰 쪽이 의심됩니다. 로그에서 learning_rate 를 확인하고 절반으로 줄여서 다시 돌려보십시오.
+
+이렇게 쓰지 마십시오:
+  해당 훈련 시리즈의 *score* 컬럼이 목표 지표이며, 2.85 → 2.14 로 약 24% 감소하였습니다.
+  학습률 과다 설정이 가장 의심되는 것으로 판단됩니다.
+"""
 
 
 def explain(findings: list[dict], series: list[metrics.MetricSeries],
@@ -286,13 +323,53 @@ def explain(findings: list[dict], series: list[metrics.MetricSeries],
 # ------------------------------------------------------------------ the message
 
 
+# ★ WHAT HAPPENED TO THE MACHINE, WHICH IS THE LAST LINE OF EVERY MESSAGE AND THE
+# ONE MOST LIKELY TO BE ACTED ON. A reader who thinks the platform already stopped
+# the job will not go and stop it, and a reader who thinks it did not will go and
+# stop something that is already stopped. So the message never leaves it implied,
+# and the three states are kept apart by name rather than by a boolean:
+#
+#   STOP_DONE      the machine was paused. Billing is now storage only.
+#   STOP_IMPOSSIBLE  it CANNOT be paused, and the reason is a property of what was
+#                  bought or how it was configured -- Shadeform has no stop API at
+#                  all, a spot instance has no stopped state, a RunPod pod with no
+#                  volume would lose everything. The reason travels with it,
+#                  because "cannot be stopped" with no reason reads as a fault.
+#   STOP_NOT_TRIED   nothing was attempted. Today this is every message: the
+#                  monitor tells a person and the person decides.
+STOP_DONE = "done"
+STOP_IMPOSSIBLE = "impossible"
+STOP_NOT_TRIED = "not_tried"
+
+
+def _machine_line(stop_state: str, reason: str) -> str:
+    if stop_state == STOP_DONE:
+        return ("\n_기계를 멈췄습니다. 이제 저장소 값만 나갑니다. 다시 켜려면 "
+                "`hyperun resume` 을 쓰십시오._")
+    if stop_state == STOP_IMPOSSIBLE:
+        detail = f" {reason}" if reason else ""
+        return ("\n_★ 이 job 은 멈출 수 없어서 계속 과금되고 있습니다."
+                f"{detail} 멈추려면 `hyperun cancel` 로 지우는 수밖에 없고, 그러면 "
+                "빌린 기계를 돌려주면서 지금까지 한 것도 함께 잃습니다._")
+    return "\n_아무것도 멈추지 않았습니다. 계속 과금됩니다._"
+
+
 def message_for(job_id: str, name: str, findings: list[dict], explanation: str,
-                cost_per_hour: float | None, hours: float | None) -> str:
+                cost_per_hour: float | None, hours: float | None,
+                stop_state: str = STOP_NOT_TRIED, stop_reason: str = "") -> str:
     """The Slack DM, assembled from what is known rather than from a template.
 
     The money goes in because it is the number that decides what the reader does
     next. "Your job looks wrong" and "your job looks wrong and has spent $62 so
     far" are different messages.
+
+    Args:
+        stop_state: one of STOP_DONE / STOP_IMPOSSIBLE / STOP_NOT_TRIED. Defaults
+            to NOT_TRIED, which is what every message says today.
+        stop_reason: for IMPOSSIBLE, the sentence from
+            `driver/common/stopcapability.py` naming the mechanism. Carried
+            through rather than re-worded here: two places writing the same
+            refusal is two places to keep in step.
     """
     head = f":warning: *{name}* (`{job_id}`) 이(가) 이상합니다."
     if cost_per_hour and hours:
@@ -301,9 +378,7 @@ def message_for(job_id: str, name: str, findings: list[dict], explanation: str,
     parts = [head, body]
     if explanation:
         parts.append(f"\n{explanation}")
-    # Said in every message rather than assumed: a reader who thinks the platform
-    # already stopped the job will not go and stop it.
-    parts.append("\n_아무것도 멈추지 않았습니다. 계속 과금됩니다._")
+    parts.append(_machine_line(stop_state, stop_reason))
     return "\n".join(parts)
 
 
