@@ -299,3 +299,127 @@ def test_the_directory_is_fetched_before_it_is_read(monkeypatch, tmp_path):
     monkeypatch.setattr(monitor.k8s.Cluster, "connect", staticmethod(lambda: NoJobs()))
     assert monitor.run_once() == 0
     assert fetched, "the directory was read without being fetched first"
+
+
+# ---------------------------------------------------------------- the DM's shape
+
+
+def _kinds(blocks):
+    return [b["type"] for b in blocks]
+
+
+def _text_of(blocks):
+    import json as _json
+    return _json.dumps(blocks, ensure_ascii=False)
+
+
+REGRESSION = [{"rule": "regression", "series": "bank/adapters/AD/iter_1",
+               "field": "score", "change_ratio": -0.249,
+               "detail": "bank/adapters/AD/iter_1: score went the wrong way"}]
+
+
+def test_the_headline_says_what_is_wrong_rather_than_that_something_is():
+    # ★ "이(가) 이상합니다" is gone. It hid the particle behind a bracket, and it
+    # said nothing: a reader who got a warning already knows something is wrong
+    # and wants to know WHAT. The rule already knows, so the headline uses it.
+    blocks = monitor.blocks_for("job-x", "exp", REGRESSION, "", None, None)
+    head = blocks[0]["text"]["text"]
+    assert "이(가)" not in head
+    assert head == "학습이 제대로 되고 있지 않습니다"
+
+
+@pytest.mark.parametrize("rule,expected", [
+    ("crash", "오류"), ("nan", "깨졌"), ("silent", "아무 말"), ("regression", "학습이"),
+])
+def test_each_rule_has_its_own_headline(rule, expected):
+    blocks = monitor.blocks_for("job-x", "exp", [{"rule": rule, "detail": "d"}],
+                                "", None, None)
+    assert expected in blocks[0]["text"]["text"]
+
+
+def test_a_job_with_several_findings_gets_the_most_actionable_headline():
+    # A crash explains every other rule that fired, so it leads. The order is
+    # "what does the reader do first", not severity.
+    both = [{"rule": "regression", "detail": "d"}, {"rule": "crash", "detail": "d"}]
+    assert "오류" in monitor.blocks_for("j", "n", both, "", None, None)[0]["text"]["text"]
+
+
+def test_the_dm_is_shaped_like_main_1():
+    # header, then sections under `[ ... ]` labels, with dividers between. The
+    # cost report in cloud-usage is that shape and the same person reads both in
+    # the same Slack.
+    blocks = monitor.blocks_for("job-x", "exp", REGRESSION, "설명", 6.36, 9.74)
+    assert _kinds(blocks)[0] == "header"
+    assert _kinds(blocks).count("divider") >= 3
+    body = _text_of(blocks)
+    for label in ("[ 지금까지 ]", "[ 점검이 찾은 것 ]", "[ AI 설명 ]", "[ 기계 ]"):
+        assert label in body, f"{label} 절이 없다"
+
+
+def test_the_ai_paragraph_is_in_its_own_labelled_section():
+    # ★ THE LABEL IS THE BOUNDARY. Everything above it is measurement; this
+    # paragraph is a model's prose. Run together, a reader cannot tell where the
+    # numbers stop and the guessing starts.
+    blocks = monitor.blocks_for("job-x", "exp", REGRESSION, "모델이 쓴 문장", None, None)
+    labels = [i for i, b in enumerate(blocks)
+              if b.get("text", {}).get("text") == "*[ AI 설명 ]*"]
+    assert len(labels) == 1
+    at = labels[0]
+    assert blocks[at + 1]["text"]["text"] == "모델이 쓴 문장"
+    # And the section says out loud that a model wrote it and did not decide it.
+    assert blocks[at + 2]["type"] == "context"
+    assert "판정은" in _text_of([blocks[at + 2]])
+
+
+def test_no_ai_section_at_all_when_the_model_said_nothing():
+    blocks = monitor.blocks_for("job-x", "exp", REGRESSION, "", None, None)
+    assert "[ AI 설명 ]" not in _text_of(blocks)
+
+
+def test_the_money_leads_because_it_decides_what_happens_next():
+    blocks = monitor.blocks_for("job-x", "exp", REGRESSION, "", 6.36, 9.74)
+    body = _text_of(blocks)
+    assert "$61.95" in body
+    assert body.index("[ 지금까지 ]") < body.index("[ 점검이 찾은 것 ]")
+
+
+def test_the_plain_text_carries_the_same_facts_as_the_blocks():
+    # Slack uses `text` for the notification preview. Somebody who reads only the
+    # preview must not get a different story from somebody who opens it.
+    text = monitor.message_for("job-x", "exp", REGRESSION, "설명", 6.36, 9.74)
+    assert "학습이 제대로 되고 있지 않습니다" in text
+    assert "$61.95" in text
+    assert "[AI 설명]" in text
+
+
+def test_blocks_are_sent_with_the_text_and_not_instead_of_it(monkeypatch):
+    # A message with blocks and no text arrives as a silent push saying nothing.
+    sent = {}
+
+    class Fake:
+        def __init__(self, body):
+            self._body = body
+
+        def read(self):
+            import json as _json
+            return _json.dumps(self._body).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_open(request, timeout=None):
+        import json as _json
+        payload = _json.loads(request.data)
+        if request.full_url.endswith("conversations.open"):
+            return Fake({"ok": True, "channel": {"id": "D1"}})
+        sent.update(payload)
+        return Fake({"ok": True})
+
+    monkeypatch.setattr(monitor.urllib.request, "urlopen", fake_open)
+    assert monitor.notify("U1", "미리보기", "a-token",
+                          blocks=[{"type": "divider"}]) is True
+    assert sent["text"] == "미리보기"
+    assert sent["blocks"] == [{"type": "divider"}]

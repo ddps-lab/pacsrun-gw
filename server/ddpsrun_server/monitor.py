@@ -354,35 +354,120 @@ def _machine_line(stop_state: str, reason: str) -> str:
     return "\n_아무것도 멈추지 않았습니다. 계속 과금됩니다._"
 
 
+# 어느 rule 이 먼저 제목이 되는가. 한 job 이 여러 개를 동시에 낼 수 있고, 제목은
+# 하나뿐이다. 순서는 "읽는 사람이 먼저 할 일" 순이지 심각도 순이 아니다 -- crash 는
+# 로그를 열면 답이 있고, NaN 은 다시 돌려야 하고, 침묵은 기다릴지 말지를 정해야 하고,
+# 추세는 판단이 필요하다.
+_HEADLINES = (
+    ("crash", "job 이 오류를 내고 멈춰 있습니다"),
+    ("nan", "학습 숫자가 깨졌습니다"),
+    ("silent", "job 이 아무 말도 하지 않습니다"),
+    ("regression", "학습이 제대로 되고 있지 않습니다"),
+)
+
+
+def _headline(findings: list[dict]) -> str:
+    """제목 한 줄.
+
+    ★ "이(가) 이상합니다" 를 그만 쓴다. 그 문장은 조사를 괄호로 피해 간 자리가
+    눈에 걸리고, 무엇보다 아무것도 말하지 않는다 -- 읽는 사람은 이미 경고를 받았고
+    알고 싶은 것은 "무엇이" 다. rule 이 그것을 이미 알고 있으므로 제목에 그대로 쓴다.
+    """
+    kinds = {f.get("rule") for f in findings}
+    for rule, text in _HEADLINES:
+        if rule in kinds:
+            return text
+    return "job 을 확인해 주십시오"
+
+
+def blocks_for(job_id: str, name: str, findings: list[dict], explanation: str,
+               cost_per_hour: float | None, hours: float | None,
+               stop_state: str = "", stop_reason: str = "") -> list[dict]:
+    """Slack Block Kit 으로 짠 DM.
+
+    ★ Main 1 과 같은 짜임이다. header 하나, 그 아래로 `[ ... ]` 이름표를 단 절들,
+    절 사이에 divider. cloud-usage 의 비용 보고서가 그 모양이고, 같은 사람이 같은
+    Slack 에서 읽으므로 두 보고서가 서로 다른 모양일 이유가 없다.
+
+    ★★ AI 가 쓴 문장은 자기 절에 따로 둔다. 앞 절들은 숫자와 규칙이 만든 사실이고
+    이 절은 모델이 쓴 글이라, 한 덩어리로 섞으면 어디까지가 측정이고 어디부터가
+    추측인지 읽는 사람이 가를 수 없다. 이름표가 그 경계다.
+
+    Args:
+        stop_state: STOP_DONE / STOP_IMPOSSIBLE / STOP_NOT_TRIED.
+        stop_reason: IMPOSSIBLE 일 때 `stopcapability` 가 준 이유.
+
+    Returns:
+        Block Kit 블록 목록. `notify` 가 이것과 fallback 문장을 함께 보낸다.
+    """
+    out: list[dict] = [
+        {"type": "header",
+         "text": {"type": "plain_text", "text": _headline(findings), "emoji": True}},
+        {"type": "section",
+         "text": {"type": "mrkdwn", "text": f"*{name}*  ·  `{job_id}`"}},
+    ]
+
+    if cost_per_hour and hours:
+        # 돈이 제일 먼저 온다. "뭔가 이상하다" 와 "뭔가 이상한데 $62 를 썼다" 는
+        # 읽는 사람이 다음에 하는 행동이 다른 두 문장이다.
+        out += [
+            {"type": "divider"},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 지금까지 ]*"}},
+            {"type": "section", "fields": [
+                {"type": "mrkdwn", "text": f"*시간*\n`{hours:.1f}시간`"},
+                {"type": "mrkdwn", "text": f"*비용(추정)*\n`${cost_per_hour * hours:,.2f}`"},
+            ]},
+        ]
+
+    out += [
+        {"type": "divider"},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 점검이 찾은 것 ]*"}},
+    ]
+    for finding in findings:
+        out.append({"type": "section",
+                    "text": {"type": "mrkdwn", "text": "• " + finding["detail"]}})
+
+    if explanation:
+        out += [
+            {"type": "divider"},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "*[ AI 설명 ]*"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": explanation}},
+            # 모델이 쓴 글이라는 것을 그 절 안에서 한 번 더 말한다. 위의 숫자는
+            # 측정이고 이 문단은 추측이며, 둘을 같은 무게로 읽으면 안 된다.
+            {"type": "context", "elements": [{"type": "mrkdwn",
+             "text": f"{UPSTAGE_MODEL} 이 위의 숫자를 보고 쓴 글입니다. 판정은 "
+                     f"모델이 아니라 점검이 했습니다."}]},
+        ]
+
+    out += [
+        {"type": "divider"},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*[ 기계 ]*"}},
+        {"type": "section", "text": {"type": "mrkdwn",
+         "text": _machine_line(stop_state or STOP_NOT_TRIED, stop_reason).strip().strip("_")}},
+    ]
+    return out
+
+
 def message_for(job_id: str, name: str, findings: list[dict], explanation: str,
                 cost_per_hour: float | None, hours: float | None,
                 stop_state: str = STOP_NOT_TRIED, stop_reason: str = "") -> str:
-    """The Slack DM, assembled from what is known rather than from a template.
+    """같은 내용의 평문. Slack 의 알림 미리보기와, 블록을 못 그리는 곳을 위한 것.
 
-    The money goes in because it is the number that decides what the reader does
-    next. "Your job looks wrong" and "your job looks wrong and has spent $62 so
-    far" are different messages.
-
-    Args:
-        stop_state: one of STOP_DONE / STOP_IMPOSSIBLE / STOP_NOT_TRIED. Defaults
-            to NOT_TRIED, which is what every message says today.
-        stop_reason: for IMPOSSIBLE, the sentence from
-            `driver/common/stopcapability.py` naming the mechanism. Carried
-            through rather than re-worded here: two places writing the same
-            refusal is two places to keep in step.
+    블록이 본문이고 이것이 대체본이다. 그래도 같은 사실을 같은 순서로 담는다 --
+    미리보기만 보고 넘기는 사람이 다른 이야기를 읽으면 안 된다.
     """
-    head = f":warning: *{name}* (`{job_id}`) 이(가) 이상합니다."
+    head = f"{_headline(findings)}  |  {name} ({job_id})"
     if cost_per_hour and hours:
-        head += f"\n지금까지 {hours:.1f}시간, 약 ${cost_per_hour * hours:.2f}."
-    body = "\n".join(f"• {f['detail']}" for f in findings)
-    parts = [head, body]
+        head += f"\n지금까지 {hours:.1f}시간, 약 ${cost_per_hour * hours:,.2f}"
+    parts = [head, "\n".join(f"• {f['detail']}" for f in findings)]
     if explanation:
-        parts.append(f"\n{explanation}")
+        parts.append(f"\n[AI 설명] {explanation}")
     parts.append(_machine_line(stop_state, stop_reason))
     return "\n".join(parts)
 
 
-def notify(slack_user_id: str, text: str, token: str, timeout: float = 10.0) -> bool:
+def notify(slack_user_id: str, text: str, token: str, timeout: float = 10.0,
+           blocks: list[dict] | None = None) -> bool:
     """Send one Slack DM. Returns whether it went.
 
     Written here with urllib rather than importing cloud-usage's `send_dm`,
@@ -406,8 +491,13 @@ def notify(slack_user_id: str, text: str, token: str, timeout: float = 10.0) -> 
         if not opened.get("ok"):
             logger.warning("slack refused to open a DM: %s", opened.get("error"))
             return False
-        sent = call("chat.postMessage",
-                    {"channel": opened["channel"]["id"], "text": text})
+        # `text` TRAVELS EVEN WHEN BLOCKS DO. Slack uses it for the notification
+        # preview and for any client that cannot draw blocks, and a message with
+        # blocks and no text arrives as a silent push saying nothing.
+        payload = {"channel": opened["channel"]["id"], "text": text}
+        if blocks:
+            payload["blocks"] = blocks
+        sent = call("chat.postMessage", payload)
         if not sent.get("ok"):
             logger.warning("slack refused the message: %s", sent.get("error"))
             return False
@@ -530,9 +620,11 @@ def run_once() -> int:
 
             lines = cluster.job_log_window(namespace, name, WINDOW_SECONDS, 10000)
             series = metrics.scan(lines, WINDOW_SECONDS).metric_series
-            text = message_for(labels.get("ddpsrun.io/job-id", name), display, findings,
-                               explain(findings, series, upstage), None, None)
-            if notify(slack_id_for(owner), text, slack):
+            explanation = explain(findings, series, upstage)
+            job_id = labels.get("ddpsrun.io/job-id", name)
+            text = message_for(job_id, display, findings, explanation, None, None)
+            blocks = blocks_for(job_id, display, findings, explanation, None, None)
+            if notify(slack_id_for(owner), text, slack, blocks=blocks):
                 messaged += 1
     return messaged
 

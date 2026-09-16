@@ -65,8 +65,12 @@ def load_env_file(path: pathlib.Path) -> dict:
     return out
 
 
-def build_message(owner: str, explanation: str) -> tuple[str, list]:
-    """monitor.py 가 진짜로 만드는 메시지. 여기서 다시 만들지 않는다."""
+def build_message(owner: str, explanation: str) -> tuple[str, list, list]:
+    """monitor.py 가 진짜로 만드는 메시지. 여기서 다시 만들지 않는다.
+
+    Returns:
+        (평문, 블록, 점검 결과). 평문은 Slack 의 알림 미리보기용이고 블록이 본문이다.
+    """
     import time as _time
 
     lines = []
@@ -83,7 +87,10 @@ def build_message(owner: str, explanation: str) -> tuple[str, list]:
     text = monitor.message_for(
         "job-a24568ecfc16", "c3-job1-fix", findings, explanation,
         cost_per_hour=6.36, hours=9.74)
-    return text, findings
+    blocks = monitor.blocks_for(
+        "job-a24568ecfc16", "c3-job1-fix", findings, explanation,
+        cost_per_hour=6.36, hours=9.74)
+    return text, blocks, findings
 
 
 def main() -> int:
@@ -126,16 +133,27 @@ def main() -> int:
         if not upstage:
             print("[dm] --explain 인데 HYPERUN_UPSTAGE_API_KEY 가 없다. 설명 없이 보낸다")
         else:
-            _, findings = build_message(args.to, "")
-            reading = None
+            _, _, findings = build_message(args.to, "")
             explanation = monitor.explain(findings, [], upstage)
             print(f"[dm] 모델 답 {len(explanation)}자")
 
-    text, findings = build_message(args.to, explanation)
+    text, blocks, findings = build_message(args.to, explanation)
     print(f"[dm] 규칙이 잡은 것 {len(findings)}건: "
           f"{', '.join(f['rule'] for f in findings)}")
     print("-" * 70)
-    print(text)
+    for b in blocks:
+        kind = b.get("type")
+        if kind == "header":
+            print("=" * 70); print(" " + b["text"]["text"]); print("=" * 70)
+        elif kind == "divider":
+            print("-" * 70)
+        elif kind == "context":
+            print("  " + " ".join(e.get("text", "") for e in b.get("elements", [])))
+        elif "fields" in b:
+            for f in b["fields"]:
+                print("   " + f["text"].replace("\n", "  "))
+        else:
+            print(" " + b["text"]["text"])
     print("-" * 70)
 
     if args.dry_run:
@@ -145,7 +163,7 @@ def main() -> int:
         print("[dm] 토큰이 없어서 보낼 수 없다")
         return 2
 
-    ok = monitor.notify(slack_id, text, token)
+    ok = monitor.notify(slack_id, text, token, blocks=blocks)
     print(f"[dm] 발송 {'성공' if ok else '실패'}")
     if ok:
         print(f"[dm] Slack 에서 bot 과의 DM 을 확인하십시오. 받는 사람: {args.to}")
