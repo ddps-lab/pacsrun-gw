@@ -142,7 +142,7 @@ def _direction(field_name: str) -> int:
 
 
 def findings_for(reading: metrics.Metrics, lines: list[str], now: float,
-                 last_line_at: float | None) -> list[dict]:
+                 last_line_at: float | None, running: bool = True) -> list[dict]:
     """What is wrong with one job, by arithmetic alone.
 
     Args:
@@ -151,6 +151,20 @@ def findings_for(reading: metrics.Metrics, lines: list[str], now: float,
         now: unix time, passed in so tests do not have to wait.
         last_line_at: unix time of the newest log line, or None when the window
             was empty.
+        running: whether the job is still going. ★ THE SILENCE RULE IS THE ONLY
+            ONE THAT DEPENDS ON IT, and without it that rule is wrong about
+            every job that ever ends. "Nothing has been printed for 49 minutes"
+            is measured from the newest log line, and a job that FINISHED
+            stopped printing because it finished -- so thirty minutes after any
+            `Succeeded`, the screen reported a fault that was the job working
+            correctly. Seen on job-a72cfb29b593 and job-9207bd84665f, which both
+            succeeded (2026-09-16).
+
+            The Slack path never had this: `run_once` skips anything not in
+            RUNNING_PHASES. It is the FE's Learning panel, through
+            `GET /v1/jobs/{id}/analysis`, that asks about finished jobs -- and
+            that route did not pass the phase. The default is True because every
+            caller that does not know is asking about a job it is watching.
 
     Returns:
         Zero or more findings, each a dict with `rule`, `detail` and the numbers
@@ -171,7 +185,8 @@ def findings_for(reading: metrics.Metrics, lines: list[str], now: float,
         if found:
             break
 
-    if last_line_at is not None:
+    # A finished job is silent BECAUSE it finished. See `running` above.
+    if running and last_line_at is not None:
         quiet = now - last_line_at
         if quiet > SILENT_SECONDS:
             found.append({

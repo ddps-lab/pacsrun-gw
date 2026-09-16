@@ -317,17 +317,6 @@
     <p class="dim tiny" id="d-terminal-help"></p>
   </div>
 
-  <!-- Shell: `hyperun shell`, install line included — never kubectl, because a
-       researcher with kubectl would not need this product. The command goes to
-       POST /v1/jobs/{id}/exec, which relays through the driver pod into the
-       workload container on the rented machine. One line per request, which is
-       what you want for a scripted check; the panel above is the one to open
-       when you need a prompt. Filled by drawShell. -->
-  <div class="panel" id="d-shell-panel">
-    <header><h2>Shell</h2></header>
-    <div id="d-shell">-</div>
-  </div>
-
   <div class="panel" id="d-log-panel">
     <header>
       <h2>Logs</h2>

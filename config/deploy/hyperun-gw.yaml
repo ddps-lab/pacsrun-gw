@@ -265,6 +265,23 @@ spec:
             # Function URL used to add these headers and an ALB does not (2026-09-16).
             - name: HYPERUN_UI_ORIGINS
               value: <UI_ORIGIN>
+            # ★ WITHOUT THIS THE SCREEN'S "Explain these numbers" BUTTON SAYS THE
+            # MODEL COULD NOT BE REACHED, AND NOTHING EVER TRIED TO REACH IT.
+            # `monitor.explain` returns "" on its first line when the key is empty,
+            # and the FE renders that as the same message a timeout would give --
+            # so a missing variable and a broken third party looked identical
+            # (2026-09-16). The CronJob had the key from the start; the gateway
+            # pod, which serves the button, never did.
+            #
+            # `optional: true` because the key buys a SENTENCE and nothing else.
+            # The rules are arithmetic and run without it; a deployment with no
+            # Upstage account should start and answer, not crash-loop.
+            - name: HYPERUN_UPSTAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hyperun-monitor
+                  key: upstage-api-key
+                  optional: true
             - name: HYPERUN_TOKENS_SECRET_ID
               value: <TOKENS_SECRET_ID>
             # Where the fetched copy is written. Must be under a writable mount:

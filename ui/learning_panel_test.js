@@ -82,10 +82,24 @@ global.call = async (route) => {
   };
 };
 
+/* The two word lists are `const NAME = [...]` spanning a line or two; this lifts the array
+ * literal out of app.js so the test cannot drift from the words the screen actually uses. */
+const extract_const = (name) => {
+  const src = SRC.slice(SRC.indexOf(`const ${name} = `) + `const ${name} = `.length);
+  return src.slice(0, src.indexOf("];") + 1);
+};
+
 /* WRAPPED IN PARENTHESES AND ASSIGNED, rather than `eval(extract(...))` on its own -- the same
  * note submit_form_test.js carries beside it. This file is "use strict", and a declaration
  * inside a strict-mode eval is local to that eval, so the bare form defines a function nobody
  * outside can see and the test then fails with `drawLearning is not defined`. */
+// ★ `betterDirection` AND ITS TWO WORD LISTS COME FIRST, because trendLabel calls it. A
+// strict-mode eval keeps its declarations local, so each of these has to be assigned into this
+// scope by hand -- pulling trendLabel alone gives `betterDirection is not defined` at the first
+// row drawn.
+const BETTER_UP = eval(extract_const("BETTER_UP"));
+const BETTER_DOWN = eval(extract_const("BETTER_DOWN"));
+const betterDirection = eval(`(${extract("betterDirection")})`);
 const trendLabel = eval(`(${extract("trendLabel")})`);
 const drawLearning = eval(`(${extract("drawLearning")})`);
 
@@ -185,6 +199,26 @@ const METRICS = {
   await drawLearning("job-z", NAN, "");
   check(nodes["d-learning"].innerHTML.includes("NaN"),
         "a NaN is named in the table rather than shown as a number");
+
+  // ★ THE CHANGE COLUMN HAS TO SAY WHICH WAY IS BETTER (2026-09-16). It used to read
+  // `-24.9%` and stop, and a reader had to already know that down is good for `loss` and bad
+  // for `score` before the number meant anything. This panel exists to be glanced at.
+  check(trendLabel(trend(2.0, 1.0, -0.5, false), "train_loss").includes("better"),
+        "loss going down is better");
+  check(trendLabel(trend(1.0, 2.0, 1.0, false), "train_loss").includes("worse"),
+        "loss going up is worse, and is marked as wrong");
+  check(trendLabel(trend(2.85, 2.14, -0.249, false), "score").includes("worse"),
+        "score going down is worse -- the real run this panel was built for");
+  check(trendLabel(trend(0.1, 0.9, 8.0, false), "eval_acc").includes("better"),
+        "accuracy going up is better");
+
+  // ★★ AND IT MUST SAY NOTHING WHEN THE NAME SAYS NOTHING. `grad_norm` and `learning_rate`
+  // have no better direction, and colouring them would be the screen inventing a verdict.
+  for (const field of ["grad_norm", "learning_rate", "epoch", "step_time"]) {
+    const label = trendLabel(trend(1.0, 2.0, 1.0, false), field);
+    check(!label.includes("better") && !label.includes("worse") && !label.includes("wrong"),
+          `${field} gets a number and no verdict, because its name does not say which way is good`);
+  }
 
   console.log(failures.length ? `\n${failures.length} FAILED` : "\nall ok");
   process.exit(failures.length ? 1 : 0);

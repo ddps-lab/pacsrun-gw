@@ -617,7 +617,6 @@ async function drawDetail(jobId, ns = "") {
 
     drawCompare(job);
     drawTerminal(jobId, job);
-    drawShell(jobId, job);
     await Promise.all([drawMetrics(jobId, job), drawLog(jobId)]);
     // A finished job has nothing left to ask about. Stopping the timers here is
     // also where the billing for this screen stops.
@@ -628,160 +627,17 @@ async function drawDetail(jobId, ns = "") {
 const fact = (k, v) =>
   `<div class="fact"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`;
 
-/* The Shell panel. PACSRUN-SHELL-SESSION.
+/* THE SHELL PANEL IS GONE (2026-09-16). It sent ONE LINE PER HTTPS REQUEST and
+   waited about a second for each -- 1.12 s, 0.76 s, 1.05 s for three empty
+   commands, measured 2026-09-15 against the live gateway. The Terminal panel
+   below holds a WebSocket open instead, so a keystroke costs a frame, and it
+   reaches a real PTY: vim, top, Ctrl+C and the arrow keys all work, on every
+   vendor including RunPod (PACSRUN-RUNPOD-PTY).
 
-   WHAT IT IS AND WHAT IT IS NOT. One typed line is one POST to this server's
-   /v1/jobs/{id}/exec, which relays through the job's driver pod into the
-   workload container on the rented machine and brings the output back. `cd`, an
-   exported variable and an activated venv survive from one line to the next,
-   because the shell they run in stays alive in the DRIVER POD
-   (PACSrun driver/common/shellsession.py) rather than being started fresh each
-   time.
-
-   IT IS NOT A TTY, AND THE PANEL ABOVE IT NOW IS. When this was written the API
-   was a Lambda Function URL: an invocation is capped at 15 minutes, nothing in
-   the gateway was alive between two of a person's keystrokes, and a Function URL
-   cannot accept an inbound WebSocket at all — so there was no held-open stream
-   for a pty to live on, and the paragraph here said a real terminal needed a
-   different piece of infrastructure. It did, and it now has it: the gateway runs
-   as a pod behind an ALB, and the Terminal panel (drawTerminal, above) holds a
-   WebSocket open to /v1/jobs/{id}/terminal. vim, top and Ctrl+C work there.
-
-   SO WHY KEEP THIS ONE. Two reasons, and neither is history. A line at a time is
-   what you want for a scripted check — one request, one answer, an exit code —
-   and it is the only shape RunPod has, because that vendor rents a container
-   with no apiserver to exec through. The CLI lines below are printed for anyone
-   who would rather be in their own terminal. */
-
-/* Everything the panel has to remember between two typed lines. It is here and
-   not in the DOM because drawShell runs again on every 30-second poll, and the
-   sequence number is the one value that must survive that. */
-const shellUI = { jobKey: null, seq: 0, busy: false, history: [], hpos: 0, cwd: "" };
-
-/* DDPSRUN-SHELL-CWD. The prompt said `job-xxx$` and never moved, so after `cd /workspace` the
-   screen still claimed to be wherever it had started. A real prompt's job is to say where the
-   next command will run.
-
-   HOW THE DIRECTORY IS FOUND, in the SAME round trip rather than a second one. The typed line is
-   sent with `; printf` of `$PWD` behind a marker on the end. The shell session lives in the
-   driver pod and `cd` survives between lines, so `$PWD` after the line is exactly where the next
-   one will start. A separate `pwd` call would double a round trip that already takes about a
-   second.
-
-   ★ `; ` AND NOT A NEWLINE, WHICH WAS MEASURED AND NOT ASSUMED. Against the live session on
-   2026-09-12 (`job-b7b3c38939c2`, shadeform): `echo two` + newline + printf printed `two` and
-   nothing else -- the driver runs the FIRST line and drops the rest. The same pair joined with
-   `; ` printed both.
-
-   TWO SHAPES BREAK `; ` AND BOTH ARE HANDLED, also measured on that session:
-     `sleep 0 &`   ->  `sh: Syntax error: ";" unexpected`   (a trailing `&` terminates already)
-     `echo a;`     ->  `sh: Syntax error: ";;" unexpected`
-   A trailing `;` is dropped, and a line ending in a lone `&` is sent alone -- the prompt then
-   keeps the directory it had, which is right, because backgrounding something does not move it.
-   A line ending in a `#` comment swallows the probe harmlessly: no marker comes back and the
-   prompt stays put.
-
-   `exit_code` is not disturbed because nothing here reads it -- see shellRun. */
-const CWD_MARK = "__DDPSRUN_CWD__";
-
-function withCwdProbe(line) {
-  const bare = line.trim().replace(/;+$/, "");
-  // A lone `&` on the end, but not `&&`, which is an incomplete line the shell would wait on
-  // whatever we appended.
-  if (/(^|[^&])&$/.test(bare)) return line;
-  return `${bare}; printf "\\n${CWD_MARK}%s\\n" "$PWD"`;
-}
-
-/* Pull the marker line out of the output and return [cleanOutput, cwd].
-
-   The LAST marker wins: one response can carry output this caller had not read yet, so an
-   earlier line's marker may still be in the buffer. */
-function takeCwd(text) {
-  const at = text.lastIndexOf(CWD_MARK);
-  if (at < 0) return [text, ""];
-  const end = text.indexOf("\n", at);
-  const cwd = text.slice(at + CWD_MARK.length, end < 0 ? undefined : end).trim();
-  // Drop the marker line and the blank line the printf put in front of it.
-  let start = at;
-  if (start > 0 && text[start - 1] === "\n") start -= 1;
-  const rest = end < 0 ? "" : text.slice(end + 1);
-  return [text.slice(0, start) + (rest ? "\n" + rest : "\n"), cwd];
-}
-
-/* What the prompt reads: the job, and where the next line will run once that is known. */
-const shellPrompt = () =>
-  shellUI.cwd ? `${shellUI.jobKey}:${shellUI.cwd}$` : `${shellUI.jobKey}$`;
-
-function shellAppend(text) {
-  const out = $("d-shell-out");
-  if (!out) return;
-  out.textContent += text;
-  // Follow the tail the way a terminal does. scrollHeight is read after the
-  // append on purpose: before it, the new line is not part of the height yet.
-  out.scrollTop = out.scrollHeight;
-}
-
-/* One line, one round trip. Returns nothing — everything it has to say it says
-   in the output pane, because that is where the person is looking. */
-async function shellRun(line, quiet) {
-  const key = shellUI.jobKey;
-  const input = $("d-shell-input");
-  if (!key || shellUI.busy) return;
-  shellUI.busy = true;
-  if (input) { input.disabled = true; }
-  // `quiet` is the probe drawShell sends on mount to learn the starting directory. It echoes
-  // nothing, because a `:` the person did not type has no business in their transcript.
-  if (!quiet) shellAppend(`\n${shellPrompt()} ${line}\n`);
-
-  const send = (seq) => call(`/v1/jobs/${encodeURIComponent(key)}/exec`, {
-    method: "POST",
-    body: JSON.stringify({ command: withCwdProbe(line), session: true, seq }),
-  });
-
-  try {
-    let answer;
-    try {
-      answer = await send(shellUI.seq);
-    } catch (err) {
-      // 409 FROM THE DRIVER, AND THE ONLY ERROR WORTH ACTING ON. The session is
-      // reaped after ten minutes nobody reads from it, and the workload can
-      // restart under it. Reopening is right here and only here: the shell that
-      // held the person's `cd` is provably gone, so a new one loses nothing
-      // they still have. The sequence resets with it — the new shell's output
-      // starts from nothing.
-      if (!/no session/i.test(err.message)) throw err;
-      shellUI.seq = 0;
-      shellUI.cwd = "";   // a new shell starts wherever the image starts, not where we were
-      shellAppend("(the session had closed; reopening — cd and variables from before are gone)\n");
-      answer = await send(0);
-    }
-    if (typeof answer.seq === "number") shellUI.seq = answer.seq;
-    // The driver pod's buffer is a ring with a byte cap, so a workload that
-    // printed a flood between two of our reads really can lose some of it. Say
-    // so rather than letting the gap look like the command printing nothing.
-    if (answer.lost) {
-      shellAppend("(some output was dropped: the driver pod's buffer is a ring with a byte cap)\n");
-    }
-    // The marker the probe printed is ours, not the workload's, so it comes out of the text
-    // before anything is shown and updates the prompt instead (DDPSRUN-SHELL-CWD).
-    const [text, cwd] = takeCwd(answer.output || "");
-    if (cwd) {
-      shellUI.cwd = cwd;
-      const label = $("d-shell-prompt");
-      if (label) label.textContent = shellPrompt();
-    }
-    if (!quiet || text.trim()) shellAppend(text);
-    if (answer.note) shellAppend(`(${answer.note})\n`);
-  } catch (err) {
-    // Shown, not thrown. The server writes these for a person to read — "exec
-    // is for the k3s vendors and PACSRUN_VENDOR is 'runpod'" is the whole
-    // explanation — so it goes in the pane verbatim.
-    shellAppend(`(${err.message})\n`);
-  } finally {
-    shellUI.busy = false;
-    if (input) { input.disabled = false; input.focus(); }
-  }
-}
+   `POST /v1/jobs/{id}/exec` IS STILL THERE AND IS STILL THE RIGHT SHAPE FOR A
+   SCRIPT: one request, one answer, one exit code. `hyperun shell <job> -- cmd`
+   is that route, and nothing about it changed. What went is the box on the
+   screen that made a person type into it one line at a time. */
 
 /* The Terminal panel. HYPERUN-TERMINAL.
 
@@ -1032,98 +888,6 @@ function drawTerminal(jobId, job) {
   };
 }
 
-function drawShell(jobId, job) {
-  const key = job.job_id || jobId;
-
-  if (TERMINAL.includes(job.phase)) {
-    shellUI.jobKey = null;
-    $("d-shell").innerHTML =
-      `<p class="dim">This job has finished — its containers are gone, so there is nothing to shell into.</p>`;
-    return;
-  }
-
-  // ★ RUNPOD USED TO BE REFUSED HERE AND IS NOT ANY MORE (2026-09-11). The old
-  // reasoning was half right: RunPod rents a container, so there is no cluster
-  // to exec through, and its API has no exec either — 36 paths in the v2
-  // OpenAPI, six about pods, none that runs a command. What it missed is that
-  // PACSrun already runs an authenticated server of its own INSIDE that
-  // container for the artifact fetch, and that server now answers POST /shell
-  // (PACSRUN-RUNPOD-SHELL). The driver relays this panel's line to it, so every
-  // vendor reaches the same socket and this panel does not need to know which
-  // one it is talking to.
-  //
-  // WHAT CAN STILL SAY NO, and it says so in the pane rather than here: a job
-  // submitted with PACSRUN_SHELL=off, or one whose image has no python3 for the
-  // container's server to run in. Both are the container's own sentence, which
-  // is more use than a guess made before the request.
-
-  // ALREADY MOUNTED FOR THIS JOB: leave it alone. drawShell runs again on every
-  // 30-second poll, and re-rendering would throw away what the person has typed
-  // and everything the pane has printed.
-  if (shellUI.jobKey === key && $("d-shell-input")) return;
-
-  shellUI.jobKey = key;
-  shellUI.seq = 0;
-  shellUI.busy = false;
-  shellUI.history = [];
-  shellUI.hpos = 0;
-
-  // The layout is the one that was already here: transcript, a prompt, an input, a Run button.
-  // Only the PROMPT changed -- it carries the working directory now (DDPSRUN-SHELL-CWD), so it
-  // has an id for shellRun to rewrite.
-  $("d-shell").innerHTML =
-    `<pre class="log" id="d-shell-out">one line per round trip, about a second each. ` +
-    `cd and exported variables survive between lines. Not a TTY — the Terminal ` +
-    `panel above is.\n</pre>` +
-    `<div class="shell-row">` +
-    `<span class="shell-prompt mono" id="d-shell-prompt">${esc(key)}$</span>` +
-    `<input id="d-shell-input" class="shell-input mono" type="text" autocomplete="off" ` +
-    `autocapitalize="off" spellcheck="false" placeholder="nvidia-smi">` +
-    `<button id="d-shell-send" class="go">Run</button>` +
-    `</div>` +
-    `<p class="dim tiny">The same shell from any terminal, which is where you want to be for ` +
-    `anything long: <span class="mono">pip install hyperun</span> · ` +
-    `<span class="mono">hyperun login --server ${esc(store.server)}</span> · ` +
-    `<span class="mono">hyperun shell ${esc(key)}</span>. ` +
-    `parallelism &gt; 1: put --slot N BEFORE the job id.</p>`;
-
-  const input = $("d-shell-input");
-  const submit = () => {
-    const line = input.value.trim();
-    if (!line) return;
-    input.value = "";
-    shellUI.history.push(line);
-    shellUI.hpos = shellUI.history.length;
-    shellRun(line);
-  };
-  $("d-shell-send").addEventListener("click", submit);
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); submit(); return; }
-    // Up and down walk what has been typed. Cheap, and its absence is the first
-    // thing anyone notices in a box that calls itself a shell.
-    if (e.key === "ArrowUp" && shellUI.hpos > 0) {
-      e.preventDefault();
-      shellUI.hpos -= 1;
-      input.value = shellUI.history[shellUI.hpos] || "";
-    } else if (e.key === "ArrowDown" && shellUI.hpos < shellUI.history.length) {
-      e.preventDefault();
-      shellUI.hpos += 1;
-      input.value = shellUI.history[shellUI.hpos] || "";
-    }
-  });
-  input.focus();
-
-  // One round trip on mount to learn where this shell starts, so the prompt is right before the
-  // first command rather than after it. `:` is the shell's own no-op and prints nothing; what
-  // comes back is the probe's $PWD (DDPSRUN-SHELL-CWD).
-  shellRun(":", true);
-}
-
-/* The Result files panel: GET /v1/jobs/{id}/artifacts, drawn as a table with
-   one Download link per file. The link is a presigned S3 URL — the browser
-   follows it to S3 directly, so the bytes never pass through Lambda (whose
-   response is capped around 6 MB; one adapter file measured 528,550,256
-   bytes). Links expire after 10 minutes; Refresh mints fresh ones. */
 async function drawArtifacts(jobId) {
   $("d-files-note").textContent = "";
   $("d-files").innerHTML = `<p class="dim">Loading...</p>`;
@@ -1187,12 +951,39 @@ function humanSize(n) {
    spend money. Measured the same day: asked to judge that series, the model
    answered "the run is learning and improving". It had found a mid-run peak and
    called it the end. So it is never asked to judge, only to explain. */
-function trendLabel(t) {
+/* Which way a field is supposed to go, by its NAME. The same rule the server uses
+   in monitor._direction, on the same substrings: a field is `train_loss` or
+   `eval_acc` rather than a bare word, so it matches on substring.
+
+   ★ WHY THE SCREEN NEEDS IT AT ALL. The change column used to read `-24.9%` and
+   stop there, and a reader had to know that down is good for `loss` and bad for
+   `score` before the number meant anything. The panel exists to be glanced at. */
+const BETTER_UP = ["acc", "score", "reward", "f1", "auc", "bleu", "rouge", "precision",
+                   "recall", "win"];
+const BETTER_DOWN = ["loss", "err", "perplexity", "ppl", "nll", "mae", "mse", "rmse"];
+
+function betterDirection(field) {
+  const low = String(field || "").toLowerCase();
+  if (BETTER_UP.some((w) => low.includes(w))) return 1;
+  if (BETTER_DOWN.some((w) => low.includes(w))) return -1;
+  return 0;               // the name does not say, so the screen must not either
+}
+
+function trendLabel(t, field) {
   if (!t) return "";
   if (t.has_nan) return `<span class="wrong">NaN</span>`;
   if (t.change_ratio == null) return "-";
   const pct = (t.change_ratio * 100).toFixed(1);
-  return `${t.change_ratio >= 0 ? "+" : ""}${pct}%`;
+  const text = `${t.change_ratio >= 0 ? "+" : ""}${pct}%`;
+  const dir = betterDirection(field);
+  if (dir === 0 || t.change_ratio === 0) return text;
+  // `wrong` is the red the findings list already uses, so one colour means one
+  // thing on this screen. A field whose name says nothing gets no colour at all
+  // rather than a guess.
+  const good = (t.change_ratio > 0) === (dir > 0);
+  return good
+    ? `${text} <span class="dim tiny">better</span>`
+    : `<span class="wrong">${text}</span> <span class="dim tiny">worse</span>`;
 }
 
 async function drawLearning(jobId, m, query) {
@@ -1213,7 +1004,7 @@ async function drawLearning(jobId, m, query) {
       if (!t) return `<td>${esc(f)}</td><td class="dim">-</td><td class="dim">-</td>`;
       return `<td>${esc(f)}</td>` +
              `<td class="mono">${t.head.toPrecision(4)} → ${t.tail.toPrecision(4)}</td>` +
-             `<td>${trendLabel(t)}</td>`;
+             `<td>${trendLabel(t, f)}</td>`;
     }).join("</tr><tr><td></td>");
     return `<tr><td class="mono">${esc(s.name || "(unnamed)")}</td>` +
            `<td class="dim">step ${s.first_step}–${s.last_step}</td>` + cells + `</tr>`;
@@ -1551,7 +1342,7 @@ function parseCompare(message) {
 function drawCompare(job) {
   const isCompare = job.phase === "Compared";
   $("d-compare-panel").hidden = !isCompare;
-  ["d-files-panel", "d-shell-panel", "d-log-panel"].forEach((id) => {
+  ["d-files-panel", "d-terminal-panel", "d-log-panel"].forEach((id) => {
     $(id).hidden = isCompare;
   });
   if (!isCompare) return;

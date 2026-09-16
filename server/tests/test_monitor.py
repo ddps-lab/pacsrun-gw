@@ -159,6 +159,34 @@ def test_nine_trainings_are_judged_one_by_one():
 # ---------------------------------------------------------------- the message
 
 
+def test_a_finished_job_is_not_reported_as_silent():
+    """★ THE SCREEN CALLED A SUCCESSFUL JOB BROKEN, THIRTY MINUTES AFTER IT SUCCEEDED.
+
+    "nothing has been printed for N minutes" is measured from the newest log line. A job that
+    FINISHED stopped printing because it finished, so the rule fired on every job that ever
+    ended -- seen on job-a72cfb29b593 and job-9207bd84665f, which both succeeded (2026-09-16).
+
+    Slack never showed it: `run_once` skips anything outside RUNNING_PHASES. The FE's Learning
+    panel asks `GET /v1/jobs/{id}/analysis`, which had no phase to skip on.
+    """
+    quiet = monitor.metrics.Metrics(window_seconds=3600)
+    hours_ago = 1000.0
+    running = monitor.findings_for(quiet, [], hours_ago + 4000, hours_ago, running=True)
+    assert [f["rule"] for f in running] == ["silent"], running
+
+    finished = monitor.findings_for(quiet, [], hours_ago + 4000, hours_ago, running=False)
+    assert finished == [], f"a finished job was reported as silent: {finished}"
+
+
+def test_a_finished_job_is_still_checked_for_a_crash():
+    # Silence is the ONLY rule that depends on the job still running. A stack trace in a
+    # finished job's log is exactly what somebody opens the panel to find.
+    quiet = monitor.metrics.Metrics(window_seconds=3600)
+    lines = ["2026-09-16T05:00:00Z Traceback (most recent call last):"]
+    found = monitor.findings_for(quiet, lines, 1000.0, 900.0, running=False)
+    assert [f["rule"] for f in found] == ["crash"], found
+
+
 def test_the_stop_line_is_one_of_two_words():
     # ★ TWO WORDS AND NOT THREE, BY DECISION (2026-09-16). The reader wants one thing from
     # this line -- IS THE MACHINE STILL RUNNING -- and "it cannot be stopped" and "nobody

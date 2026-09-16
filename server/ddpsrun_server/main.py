@@ -2518,7 +2518,7 @@ def get_analysis(
     name = resolve_object_name(job_id)
     where = namespace_for(principal, namespace)
     try:
-        require_owner(cluster.get_job(where, name), principal)
+        obj = require_owner(cluster.get_job(where, name), principal)
         lines = cluster.recent_log_lines(where, name, window_seconds)
     except NotFound as exc:
         raise HTTPException(
@@ -2529,14 +2529,23 @@ def get_analysis(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     reading = metrics_reader.scan(lines, window_seconds)
+    # ★ THE PHASE GOES IN, AND WITHOUT IT THE SILENCE RULE IS WRONG ABOUT EVERY
+    # JOB THAT ENDS. "Nothing has been printed for N minutes" is measured from
+    # the newest log line, and a finished job stopped printing because it
+    # finished -- so thirty minutes after any `Succeeded` this route reported a
+    # fault that was the job working correctly. The Slack path never had it
+    # because `monitor.run_once` skips anything outside RUNNING_PHASES; this
+    # route is the one the FE's Learning panel calls, on jobs of any phase.
+    phase = ((obj.get("status") or {}).get("phase")) or ""
     found = monitor.findings_for(
-        reading, lines, time.time(), monitor._last_line_time(lines))
+        reading, lines, time.time(), monitor._last_line_time(lines),
+        running=phase not in FINISHED_PHASES)
 
     # WHICH CHECKS COULD RUN, said out loud. An empty `findings` on a job that
     # printed no metric lines looks exactly like a clean bill of health and is
     # not one, and the difference matters most on the job somebody is worried
     # about.
-    checked = ["silence", "crash"]
+    checked = ["crash"] if phase in FINISHED_PHASES else ["silence", "crash"]
     note = ""
     if reading.metric_series:
         checked += ["regression", "nan"]
