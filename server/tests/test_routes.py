@@ -2305,11 +2305,11 @@ def test_usage_is_refused_to_anyone_who_is_not_an_operator(client, cluster):
 
 def test_usage_rolls_up_by_team_person_and_vendor(client, cluster):
     import datetime as _dt
-    today = _dt.datetime.now(_dt.timezone.utc)
-    yday = (today - _dt.timedelta(days=1)).strftime("%Y-%m-%dT02:00:00Z")
-    yday_end = (today - _dt.timedelta(days=1)).strftime("%Y-%m-%dT04:00:00Z")
-    cluster.objects[("default", "u1")] = _finished_job("u1", yday, yday_end, "alice", usd=6.0)
-    cluster.objects[("default", "u2")] = _finished_job("u2", yday, yday_end, "bob",
+    now = _dt.datetime.now(_dt.timezone.utc)
+    start = now.strftime("%Y-%m-%dT00:00:00Z")
+    end = now.strftime("%Y-%m-%dT02:00:00Z")
+    cluster.objects[("default", "u1")] = _finished_job("u1", start, end, "alice", usd=6.0)
+    cluster.objects[("default", "u2")] = _finished_job("u2", start, end, "bob",
                                                        vendor="aws", usd=4.0)
 
     body = as_root(client, "GET", "/v1/usage?days=7").json()
@@ -2317,7 +2317,7 @@ def test_usage_rolls_up_by_team_person_and_vendor(client, cluster):
     assert {v["name"] for v in body["vendors"]} >= {"runpod", "aws"}
     # 6.0 x 2 h + 4.0 x 2 h
     assert sum(u["estimate_usd"] for u in body["users"]) == pytest.approx(20.0, abs=0.01)
-    # And yesterday's column is filled, because that is what a daily report prints.
+    # And TODAY's column is filled, because that is what the report prints.
     alice = [u for u in body["users"] if u["name"] == "alice"][0]
     assert alice["day_estimate_usd"] == pytest.approx(12.0, abs=0.01)
 
@@ -2348,10 +2348,10 @@ def test_a_namespace_that_cannot_be_read_does_not_empty_the_whole_report(client,
     # that refused to answer because of one is a report nobody sees on the day it
     # matters.
     import datetime as _dt
-    today = _dt.datetime.now(_dt.timezone.utc)
-    yday = (today - _dt.timedelta(days=1)).strftime("%Y-%m-%dT02:00:00Z")
-    yday_end = (today - _dt.timedelta(days=1)).strftime("%Y-%m-%dT04:00:00Z")
-    cluster.objects[("default", "ok")] = _finished_job("ok", yday, yday_end, "alice")
+    now = _dt.datetime.now(_dt.timezone.utc)
+    start = now.strftime("%Y-%m-%dT00:00:00Z")
+    end = now.strftime("%Y-%m-%dT02:00:00Z")
+    cluster.objects[("default", "ok")] = _finished_job("ok", start, end, "alice")
 
     real = cluster.list_jobs
 
