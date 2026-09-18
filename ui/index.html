@@ -8,27 +8,46 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script>
+  /* HYPERUN-THEME-BOOT. Inline, in <head>, before anything paints. The theme is
+     a class of decision the page cannot afford to make late: read it in app.js
+     at the bottom of the body and a reader who chose Dark gets one white frame
+     first. Four lines here, and the rest of the toggle lives in app.js. */
+  try {
+    var t = localStorage.getItem("hyperun.theme");
+    if (t === "dark" || t === "light") document.documentElement.dataset.theme = t;
+  } catch (e) { /* private mode, blocked storage: fall through to the OS setting. */ }
+</script>
 </head>
 <body>
 
 <!--
-  DDPSRUN-UI-HTML
+  HYPERUN-UI-HTML
 
-  The skeleton of the five screens. It holds no values at all; app.js fetches
-  them from the server and fills the empty elements in by id.
+  The skeleton of the screens. It holds no values at all; app.js fetches them
+  from the server and fills the empty elements in by id.
 
   END-TO-END FLOW:
     1. #login opens saying "Checking sign-in…" (or "Signing you in…" on the way
        back from Cognito) until app.js knows how this deployment signs in; only
        then does it show exactly one way in. main stays hidden throughout.
-    2. With a token, the nav in <header> shows exactly one of the five sections.
+    2. With a token, the nav in <header> shows exactly one of the sections.
     3. app.js fills every element that carries an id.
 
   The screen list and what each one shows is docs/15-screens.md 15.5. The rule
-  that each screen has exactly one primary action is 15.10.
+  that each screen has exactly one primary action is 15.10. How it is dressed --
+  colour, type, spacing, and which panels are accordions -- is docs/20-fe-design.md.
 
-  Status words are never translated: a badge says Running, Compared, Failed —
-  the same strings `kubectl get pacsjobs` prints — so a user can match what is
+  TWO RULES THIS FILE NOW KEEPS THAT IT DID NOT BEFORE (20.4, 20.8):
+    * NO INLINE `style=`. There were 25 of them, including negative margins,
+      and between them they made the spacing of the screen unreadable from any
+      one place. Every one has a class now.
+    * EVERY COPYABLE COMMAND IS A `.code` BLOCK, which carries its own copy
+      button. app.js wires them all in one pass; none of them has a handler of
+      its own.
+
+  Status words are never translated: a badge says Running, Compared, Failed --
+  the same strings `kubectl get pacsjobs` prints -- so a user can match what is
   on screen against what the cluster says.
 -->
 
@@ -59,8 +78,26 @@
   </nav>
   <div class="spacer"></div>
   <div class="who">
-    <span id="who-team"></span>
-    <button class="flat tiny" id="logout" style="padding:4px 10px">Sign out</button>
+    <!-- HYPERUN-WHO. WHO YOU ARE AND WHICH TEAM'S JOBS THESE ARE.
+         This corner used to print the API hostname -- `api.hyperun.ddps.cloud`,
+         sliced to 32 characters -- which is not a fact anybody on this screen
+         can act on, and it sat in the one place 15.5 reserved for the team
+         selection that every screen inherits. app.js fills both lines from
+         /v1/stats and the token's own email. -->
+    <div class="whoami">
+      <b id="who-team"></b>
+      <span id="who-user" class="dim"></span>
+    </div>
+    <!-- HYPERUN-THEME-TOGGLE. Three buttons, not two: "follow the OS" is a real
+         third state, and a two-way switch silently leaves it the moment anybody
+         touches the control. app.js writes localStorage `hyperun.theme` and the
+         <script> in <head> reads it back before the first paint. -->
+    <div class="theme-toggle" id="theme" role="group" aria-label="Colour theme">
+      <button data-theme-set="light" title="Light">Light</button>
+      <button data-theme-set="dark" title="Dark">Dark</button>
+      <button data-theme-set="system" title="Follow the system setting">Auto</button>
+    </div>
+    <button class="flat tiny" id="logout">Sign out</button>
   </div>
 </header>
 
@@ -68,7 +105,7 @@
 
 <div id="login">
   <div>
-    <h1 class="brand" style="font-size:24px">hype<span>run</span></h1>
+    <h1 class="brand">hype<span>run</span></h1>
     <p class="dim small">Sign in to submit jobs and watch them run.</p>
   </div>
 
@@ -150,7 +187,9 @@
       <h1>Overview</h1>
       <p class="dim small">Refreshes every 30 seconds.</p>
     </div>
-    <button class="go" data-goto="submit">New job</button>
+    <div class="actions">
+      <button class="go" data-goto="submit">New job</button>
+    </div>
   </div>
 
   <div class="cards" id="home-cards"></div>
@@ -171,18 +210,32 @@
 
        `/plugin marketplace add ...` registers the marketplace and installs nothing. `/plugin
        install hyperun` is the step that puts the skill in Claude Code, and README.md:100-101
-       has always printed both. -->
-  <div class="panel">
-    <header><h2>Getting started</h2></header>
-    <div class="facts">
-      <div class="fact"><span class="k">Install the CLI</span>
-        <span class="v">pip install hyperun</span></div>
-      <div class="fact"><span class="k">Sign in from a terminal</span>
-        <span class="v" id="home-login">hyperun login --server &lt;this server&gt;</span></div>
-      <div class="fact"><span class="k">Use it from Claude Code</span>
-        <span class="v">/plugin marketplace add ddps-lab/pacsrun-gw<br>/plugin install hyperun</span></div>
+       has always printed both.
+
+       HYPERUN-SERVER-ADDRESS. This section is an accordion and it is CLOSED by default, which
+       is the whole of how the API address stops being on the front page. The address cannot
+       come out of the command -- `--server` is required and a login line without it exits 2,
+       which is exactly the half-command this block already got wrong once. So the command stays
+       whole and the block stays folded: nobody reading the overview sees the hostname, and
+       anybody who needs it opens one accordion and copies a line that works. -->
+  <details class="acc" id="home-start">
+    <summary>
+      <span class="acc-title">Getting started</span>
+      <span class="acc-note">install the CLI, sign in from a terminal, add the Claude Code plugin</span>
+      <span class="spacer"></span>
+    </summary>
+    <div class="acc-body">
+      <label><span><b>Install the CLI</b></span>
+        <div class="code line" data-copy><pre><code>pip install hyperun</code></pre></div></label>
+
+      <label><span><b>Sign in from a terminal</b> <span class="dim">the address is this deployment's own</span></span>
+        <div class="code line" data-copy><pre><code id="home-login">hyperun login --server &lt;this server&gt;</code></pre></div></label>
+
+      <label><span><b>Use it from Claude Code</b> <span class="dim">both lines: the first registers the marketplace, the second installs the skill</span></span>
+        <div class="code" data-copy><pre><code>/plugin marketplace add ddps-lab/pacsrun-gw
+/plugin install hyperun</code></pre></div></label>
     </div>
-  </div>
+  </details>
 </section>
 
 <!-- ------------------------------------------------------------ 2. Jobs -->
@@ -190,7 +243,9 @@
 <section id="view-jobs" hidden>
   <div class="head">
     <div class="spacer"><h1>Jobs</h1><p class="dim small" id="jobs-count"></p></div>
-    <button class="go" data-goto="submit">New job</button>
+    <div class="actions">
+      <button class="go" data-goto="submit">New job</button>
+    </div>
   </div>
 
   <div class="tabs" id="jobs-tabs">
@@ -200,14 +255,34 @@
     <!-- Namespace picker. Hidden unless GET /v1/namespaces says this caller is
          an operator (selectable) with more than one namespace to look at.
          Everyone else keeps exactly the screen they had before it existed. -->
-    <select id="jobs-ns" hidden title="Namespace" style="margin-left:auto"></select>
+    <select id="jobs-ns" hidden title="Namespace"></select>
   </div>
 
-  <div id="jobs-body"></div>
+  <!-- HYPERUN-JOBS-PANEL. The table sits on a card, like the Team and Vendors
+       tables already did. It was the one table standing on the bare page, which
+       read as a different kind of object from the other two, and it is also what
+       the scroll-edge shadow needs (HYPERUN-SCROLL-EDGE): that shadow is
+       uncovered by two gradients painted in the SURFACE colour, so a table with
+       no surface under it painted white edges onto the grey page. -->
+  <div class="panel" id="jobs-panel">
+    <div id="jobs-body"></div>
+  </div>
 </section>
 
 <!-- ------------------------------------------------------------ 3. Job detail -->
 
+<!-- HYPERUN-DETAIL-ACCORDIONS. Nine panels used to stand open one under another, so finding the
+     one you came for meant scrolling past the eight you did not. They are accordions now, and
+     WHICH ONES OPEN DEPENDS ON THE PHASE (drawOpenState in app.js, table in 20.6): Progress and
+     GPU for a job that is running, Result files for one that has finished, Price comparison for
+     a Compared job, and Terminal never.
+
+     EVERY SUMMARY CARRIES ITS OWN ANSWER in `.acc-note` -- "43% · 86/200 step", "3 files ·
+     160 MB" -- because a row that says only "Progress" costs a click to learn nothing.
+
+     BUTTONS LIVE IN THE SUMMARY, and a <button> inside a <summary> would otherwise toggle the
+     panel as well as do its own job. app.js stops that once, for all of them, rather than in
+     each handler. -->
 <section id="view-detail" hidden>
   <div class="head">
     <div class="spacer">
@@ -217,18 +292,20 @@
       </div>
       <p class="dim small mono" id="d-id"></p>
     </div>
-    <button class="flat" data-goto="jobs">Back to jobs</button>
-    <!-- Not the primary action, and deliberately not red: the primary action on
-         this screen is running the job again. Cancel is a way out, not the
-         point of the screen. -->
-    <!-- HYPERUN-JOB-STOP. Pause KEEPS the machine; Delete hands it back and the row
-         goes with it. They sit beside each other because the choice between them is the
-         choice a person is actually making, and the labels have to make the difference
-         obvious: one says the job is coming back, the other says it is not. drawStopButton
-         hides this on the vendors and phases where a pause cannot happen. -->
-    <button class="flat" id="d-pause" hidden>Pause</button>
-    <button class="flat" id="d-cancel">Delete job</button>
-    <button class="go" id="d-again">Run again</button>
+    <div class="actions">
+      <button class="flat" data-goto="jobs">Back to jobs</button>
+      <!-- Not the primary action, and deliberately not red: the primary action on
+           this screen is running the job again. Cancel is a way out, not the
+           point of the screen. -->
+      <!-- HYPERUN-JOB-STOP. Pause KEEPS the machine; Delete hands it back and the row
+           goes with it. They sit beside each other because the choice between them is the
+           choice a person is actually making, and the labels have to make the difference
+           obvious: one says the job is coming back, the other says it is not. drawStopButton
+           hides this on the vendors and phases where a pause cannot happen. -->
+      <button class="flat" id="d-pause" hidden>Pause</button>
+      <button class="flat" id="d-cancel">Delete job</button>
+      <button class="go" id="d-again">Run again</button>
+    </div>
   </div>
 
   <div class="panel">
@@ -244,19 +321,28 @@
        New job screen, lands in the same Jobs list with a Compared badge, and clicking it opens
        this. Placed above every other panel because for this phase it is the answer, and the
        panels that would be empty are hidden by drawCompare. -->
-  <div class="panel" id="d-compare-panel" hidden>
-    <header>
-      <h2>Price comparison</h2>
-      <span class="dim small">nothing was bought</span>
-    </header>
-    <div class="facts" id="d-compare-facts"></div>
-    <div id="d-compare-raw"></div>
-  </div>
+  <details class="acc" id="d-compare-panel" hidden open>
+    <summary>
+      <span class="acc-title">Price comparison</span>
+      <span class="acc-note" id="d-compare-note">nothing was bought</span>
+      <span class="spacer"></span>
+    </summary>
+    <div class="acc-body">
+      <div class="facts" id="d-compare-facts"></div>
+      <div id="d-compare-raw"></div>
+    </div>
+  </details>
 
-  <div class="panel" id="d-progress-panel" hidden>
-    <header><h2>Progress</h2><span class="dim small" id="d-progress-note"></span></header>
-    <div id="d-progress"></div>
-  </div>
+  <details class="acc" id="d-progress-panel" hidden open>
+    <summary>
+      <span class="acc-title">Progress</span>
+      <span class="acc-note" id="d-progress-note"></span>
+      <span class="spacer"></span>
+    </summary>
+    <div class="acc-body">
+      <div id="d-progress"></div>
+    </div>
+  </details>
 
   <!-- HYPERUN-MONITOR. Is this run still worth paying for. `Progress` above says
        how far it has got and `GPU` says the cards are busy; neither says whether
@@ -266,38 +352,51 @@
 
        The verdict is arithmetic and arrives with the panel. The SENTENCE costs a
        model call, so it is behind a button: opening a job must not spend money. -->
-  <div class="panel" id="d-learning-panel" hidden>
-    <header>
-      <h2>Learning</h2>
-      <span class="dim small" id="d-learning-note"></span>
-    </header>
-    <div id="d-learning"></div>
-    <div id="d-learning-findings"></div>
-    <div class="row" style="margin-top:10px">
-      <button id="d-explain" class="ghost">Explain these numbers</button>
-      <span class="dim small" id="d-explain-note"></span>
+  <details class="acc" id="d-learning-panel" hidden open>
+    <summary>
+      <span class="acc-title">Learning</span>
+      <span class="acc-note" id="d-learning-note"></span>
+      <span class="spacer"></span>
+    </summary>
+    <div class="acc-body">
+      <div id="d-learning"></div>
+      <div id="d-learning-findings"></div>
+      <div class="panel-actions">
+        <button id="d-explain" class="flat small">Explain these numbers</button>
+        <span class="dim small" id="d-explain-note"></span>
+      </div>
+      <div id="d-explanation" class="small"></div>
     </div>
-    <div id="d-explanation" class="small" style="margin-top:8px"></div>
-  </div>
+  </details>
 
-  <div class="panel" id="d-gpu-panel" hidden>
-    <header><h2>GPU</h2><span class="dim small" id="d-gpu-note"></span></header>
-    <div id="d-gpu"></div>
-  </div>
+  <details class="acc" id="d-gpu-panel" hidden open>
+    <summary>
+      <span class="acc-title">GPU</span>
+      <span class="acc-note" id="d-gpu-note"></span>
+      <span class="spacer"></span>
+    </summary>
+    <div class="acc-body">
+      <div id="d-gpu"></div>
+    </div>
+  </details>
 
   <!-- Result files: what the job wrote to S3, listed with a download link per
        file. Filled by drawArtifacts once per open (plus the Refresh button),
        not by the 5-second poll — every answer lists S3 and signs one URL per
        file, and links stop working after 10 minutes anyway. -->
-  <div class="panel" id="d-files-panel">
-    <header>
-      <h2>Result files</h2>
-      <span class="dim small" id="d-files-note"></span>
-      <div class="spacer"></div>
-      <button class="flat tiny" id="d-files-refresh" style="padding:4px 10px">Refresh</button>
-    </header>
-    <div id="d-files">-</div>
-  </div>
+  <details class="acc" id="d-files-panel">
+    <summary>
+      <span class="acc-title">Result files</span>
+      <span class="acc-note" id="d-files-note"></span>
+      <span class="spacer"></span>
+      <span class="acc-summary-actions">
+        <button class="flat tiny" id="d-files-refresh">Refresh</button>
+      </span>
+    </summary>
+    <div class="acc-body">
+      <div id="d-files">-</div>
+    </div>
+  </details>
 
   <!-- Terminal: a REAL one, with a PTY on the rented machine. HYPERUN-TERMINAL.
 
@@ -311,41 +410,69 @@
        that is billing by the hour and holds one of the gateway's eight terminal
        slots, so it is a button and not something the detail screen does on
        arrival. xterm.js is fetched on that click too — 300 KB nobody pays for
-       unless they want a terminal. Filled by drawTerminal. -->
-  <div class="panel" id="d-terminal-panel">
-    <header>
-      <h2>Terminal</h2>
-      <span class="dim small" id="d-terminal-note"></span>
-      <div class="spacer"></div>
-      <button class="flat tiny" id="d-terminal-toggle" style="padding:4px 10px">Open</button>
-    </header>
-    <div id="d-terminal-host" hidden></div>
-    <p class="dim tiny" id="d-terminal-help"></p>
-  </div>
+       unless they want a terminal. Filled by drawTerminal.
 
-  <div class="panel" id="d-log-panel">
-    <header>
-      <h2>Logs</h2>
-      <span class="dim small" id="d-log-note"></span>
-      <div class="spacer"></div>
-      <button class="flat tiny" id="d-log-save" style="padding:4px 10px">Open in a tab</button>
-    </header>
-    <pre class="log" id="d-log">Waiting for output.</pre>
-  </div>
+       THE ACCORDION IS NOT THAT BUTTON. Unfolding this reveals the Open button;
+       it does not press it. Two steps looks like one too many until you notice
+       that the first is free and the second starts billing, which is exactly the
+       line the old panel drew and this keeps. -->
+  <details class="acc" id="d-terminal-panel">
+    <summary>
+      <span class="acc-title">Terminal</span>
+      <span class="acc-note" id="d-terminal-note"></span>
+      <span class="spacer"></span>
+    </summary>
+    <div class="acc-body">
+      <div class="panel-actions">
+        <button class="flat small" id="d-terminal-toggle">Open</button>
+        <span class="dim small" id="d-terminal-help"></span>
+      </div>
+      <div id="d-terminal-host" hidden></div>
+    </div>
+  </details>
 
-  <div class="panel">
-    <header>
-      <h2>Submitted spec</h2>
-      <div class="spacer"></div>
-      <button class="flat tiny" id="d-spec-copy" style="padding:4px 10px">Copy</button>
-    </header>
-    <div id="d-spec-note"></div>
-    <pre class="spec" id="d-spec">-</pre>
-  </div>
+  <details class="acc" id="d-log-panel" open>
+    <summary>
+      <span class="acc-title">Logs</span>
+      <span class="acc-note" id="d-log-note"></span>
+      <span class="spacer"></span>
+      <span class="acc-summary-actions">
+        <button class="flat tiny" id="d-log-copy">Copy</button>
+        <button class="flat tiny" id="d-log-save">Open in a tab</button>
+      </span>
+    </summary>
+    <div class="acc-body">
+      <pre class="log" id="d-log">Waiting for output.</pre>
+    </div>
+  </details>
+
+  <details class="acc" id="d-spec-panel">
+    <summary>
+      <span class="acc-title">Submitted spec</span>
+      <span class="acc-note" id="d-spec-note-line"></span>
+      <span class="spacer"></span>
+      <span class="acc-summary-actions">
+        <button class="flat tiny" id="d-spec-copy">Copy</button>
+      </span>
+    </summary>
+    <div class="acc-body">
+      <div id="d-spec-note"></div>
+      <pre class="spec" id="d-spec">-</pre>
+    </div>
+  </details>
 </section>
 
 <!-- ------------------------------------------------------------ 4. Submit -->
 
+<!-- HYPERUN-SUBMIT-ACCORDIONS. Step 1 asks for more than twenty things and only one of them,
+     the image, is required. Open, that is a wall the commonest submission -- rerun this script
+     with one thing changed -- has to scroll the whole of.
+
+     THREE DIFFERENT FOLDING DEVICES USED TO LIVE ON THIS SCREEN: `f-size-toggle`,
+     `f-image-toggle` and `f-script-reuse-toggle` were each a little button that unhid a div,
+     each with its own note element and its own label wording. They are one accordion now. The
+     inner two (images, reused scripts) keep their buttons because they FETCH on first open and
+     the button is what says so; the grouping around them is what changed. -->
 <section id="view-submit" hidden>
   <div class="head">
     <div class="spacer">
@@ -358,247 +485,294 @@
   </div>
 
   <!-- Step 1 -->
-  <div class="panel" id="s1">
-    <header><h2>Describe</h2><span class="dim small">Only the starred field is required.</span></header>
-    <div class="grid2">
-      <label><span><b>Name</b></span>
-        <input id="f-name" placeholder="bank-exp3"></label>
-      <!-- DDPSRUN-IMAGES. A free-text box plus a VISIBLE picker, and deliberately no datalist.
-           The box is not a select because a public image (nvidia/cuda:..., runpod/pytorch:...)
-           is not in our registry at all and must stay typeable.
+  <div id="s1" class="stack">
+    <details class="acc" open>
+      <summary>
+        <span class="acc-title">Job</span>
+        <span class="acc-note">a name, and the image it runs in</span>
+        <span class="spacer"></span>
+      </summary>
+      <div class="acc-body">
+        <div class="grid2">
+          <label><span><b>Name</b></span>
+            <input id="f-name" placeholder="bank-exp3"></label>
+          <!-- DDPSRUN-IMAGES. A free-text box plus a VISIBLE picker, and deliberately no datalist.
+               The box is not a select because a public image (nvidia/cuda:..., runpod/pytorch:...)
+               is not in our registry at all and must stay typeable.
 
-           WHY THE DATALIST WENT (2026-09-14, asked for). Clicking the box opened a native
-           dropdown of full ECR addresses, and an ECR address begins with the twelve digits of
-           the AWS account id: `<ACCOUNT_ID>.dkr.ecr.<region>.amazonaws.com/<repository>:<tag>`.
-           Nineteen repositories' worth of that is a wall of one repeated number, it is
-           the account number on a screen anyone in the lab can open, and it is the part of the
-           string a reader cannot use to tell one image from another. The picker below already
-           shows what distinguishes them -- the repository name and the tag -- so the dropdown
-           was removed and the button is the way in.
+               WHY THE DATALIST WENT (2026-09-14, asked for). Clicking the box opened a native
+               dropdown of full ECR addresses, and an ECR address begins with the twelve digits of
+               the AWS account id: `<ACCOUNT_ID>.dkr.ecr.<region>.amazonaws.com/<repository>:<tag>`.
+               Nineteen repositories' worth of that is a wall of one repeated number, it is
+               the account number on a screen anyone in the lab can open, and it is the part of the
+               string a reader cannot use to tell one image from another. The picker below already
+               shows what distinguishes them -- the repository name and the tag -- so the dropdown
+               was removed and the button is the way in.
 
-           THE ADDRESS ITSELF IS NOT HIDDEN. Picking one still fills this box with the whole
-           pullable address, because that is the string the job is submitted with and a field
-           that shows something other than what it sends is worse than a long field. -->
-      <label><span><b>Image *</b> <span class="dim" id="f-image-note"></span></span>
-        <input id="f-image" autocomplete="off"
-               placeholder="type, or use the button below">
-        <div class="row" style="margin-top:2px">
-          <button class="flat tiny" id="f-image-toggle" type="button" style="padding:4px 10px">Browse this lab's images</button>
+               THE ADDRESS ITSELF IS NOT HIDDEN. Picking one still fills this box with the whole
+               pullable address, because that is the string the job is submitted with and a field
+               that shows something other than what it sends is worse than a long field. -->
+          <label><span><b>Image *</b> <span class="dim" id="f-image-note"></span></span>
+            <input id="f-image" autocomplete="off"
+                   placeholder="type, or use the button below">
+            <div class="field-aside">
+              <button class="flat tiny" id="f-image-toggle" type="button">Browse this lab's images</button>
+            </div>
+            <!-- DDPSRUN-IMAGES-TRIM. The list drew EVERY tag of EVERY repository: 55 buttons across
+                 19 repositories on this account, and most of them 12-character or 40-character
+                 commit shas that tell a reader nothing. Twelve of the nineteen repositories belong
+                 to other projects entirely (criu-kubevirt-test, theseus), so the thing being looked
+                 for was never near the top. Two changes, both about reading rather than about what
+                 is reachable: a filter over the repository name, and only the three newest tags per
+                 repository with the rest one click away. The registry already returns tags newest
+                 first (registry.py: "the newest tags, newest first"), so the three are the three
+                 newest and not an arbitrary slice. -->
+            <div id="f-image-search-row" class="field-aside" hidden>
+              <input id="f-image-search" type="search" autocomplete="off" placeholder="filter by repository">
+              <span class="dim tiny" id="f-image-search-note"></span>
+            </div>
+            <div id="f-image-picker" hidden></div></label>
         </div>
-        <!-- DDPSRUN-IMAGES-TRIM. The list drew EVERY tag of EVERY repository: 55 buttons across
-             19 repositories on this account, and most of them 12-character or 40-character
-             commit shas that tell a reader nothing. Twelve of the nineteen repositories belong
-             to other projects entirely (criu-kubevirt-test, theseus), so the thing being looked
-             for was never near the top. Two changes, both about reading rather than about what
-             is reachable: a filter over the repository name, and only the three newest tags per
-             repository with the rest one click away. The registry already returns tags newest
-             first (registry.py: "the newest tags, newest first"), so the three are the three
-             newest and not an arbitrary slice. -->
-        <div id="f-image-search-row" class="row" style="margin-top:6px" hidden>
-          <input id="f-image-search" type="search" autocomplete="off" placeholder="filter by repository"
-                 style="max-width:260px">
-          <span class="dim tiny" id="f-image-search-note"></span>
-        </div>
-        <div id="f-image-picker" hidden></div></label>
-    </div>
-    <!-- DDPSRUN-UI-COMMAND. One shell line, sent as args ["bash","-lc","<line>"], which is
-         the idiom /v1/explain's own example uses. It used to be sent as a bare STRING into a
-         field the server types as list[str], so ANY text here made Validate answer 422
-         "Input should be a valid list" - the placeholder itself was a failing input, and an
-         empty box was the only submittable state. Sending a shell line rather than splitting
-         on spaces is what makes quoting work: `python -c "import x"` is one argument to the
-         shell, and four wrong tokens to a splitter. -->
-    <!-- DDPSRUN-UI-SCRIPT. The box was labelled "one shell line" and it is a textarea, so a whole
-         run.sh always pasted fine -- but the request only carried it as `args`, never as
-         `script`, and FOUR of validate's checks read `script` and nothing else. So on this
-         screen check_adapter_paths, check_partial_results, check_caps and the TRL-patch check
-         could never run, whatever anybody pasted. readForm now sends the same text as both. -->
-    <label><span><b>Script</b> <span class="dim">your whole run.sh, or one line. Runs as <code>bash -lc</code>, so quotes, pipes and newlines work</span></span>
-      <textarea id="f-command" rows="10" placeholder="set -euo pipefail&#10;&#10;python src/train.py --config configs/train.yaml&#10;python src/evaluate.py --config configs/train.yaml"></textarea>
-      <div id="f-command-note"></div></label>
-
-    <!-- DDPSRUN-SCRIPT-FILE. Load a run.sh from the machine instead of pasting
-         it, and save the box back out to a file.
-         WHY NO UPLOAD TO THE SERVER. The script is not stored anywhere: it
-         travels on the job itself, inside `args`, which is what makes the
-         Scripts screen able to hand it back later. So "upload" here means READ
-         THE FILE IN THE BROWSER and put its text in the box -- the same text a
-         paste would have produced, and one round trip fewer. A server-side
-         upload would need a bucket, a lifecycle, and a second copy of the script
-         that can disagree with the one on the job. -->
-    <div class="row" style="gap:8px;align-items:center;margin:-6px 0 10px">
-      <input type="file" id="f-script-file" accept=".sh,.bash,.txt,text/*"
-             style="max-width:270px">
-      <button type="button" class="flat small" id="f-script-save">Save as a file</button>
-      <span class="dim tiny" id="f-script-file-note"></span>
-    </div>
-    <!-- DDPSRUN-SCRIPT-REUSE. The scripts this namespace has already submitted, ON THIS SCREEN.
-         They were reachable before -- the Scripts screen has had a "Use this" button since it
-         existed -- but only by leaving the half-filled form, finding that screen, clicking, and
-         being sent back. Rerunning a script with one thing changed is the commonest submission
-         there is, so the list belongs where the box is (asked for 2026-09-11).
-         Same shape as the image picker above: a button that opens a list, a click that fills the
-         box. Only the SCRIPT is filled -- the name, the image, the GPU and the capacity type are
-         this job's own decisions, and a copied name would collide with the job it came from. -->
-    <div class="row" style="margin:-4px 0 10px">
-      <button class="flat tiny" id="f-script-reuse-toggle" type="button"
-              style="padding:4px 10px">Reuse a script you have submitted</button>
-      <span class="dim tiny" id="f-script-reuse-note"></span>
-    </div>
-    <div id="f-script-reuse" hidden></div>
-    <div class="grid2">
-      <label><span><b>GPU</b></span>
-        <select id="f-gpu">
-          <option value="">Let the server recommend one</option>
-          <option value="T4">T4 (16 GB)</option>
-          <option value="T4g">T4g (16 GB)</option>
-          <option value="L4">L4 (24 GB)</option>
-          <option value="A10G">A10G (24 GB)</option>
-          <option value="RTX PRO 4500">RTX PRO 4500 (32 GB)</option>
-          <option value="V100-32GB">V100-32GB (32 GB) - sold only as an 8-GPU machine</option>
-          <option value="L40S">L40S (48 GB)</option>
-          <option value="RTXPRO6000">RTXPRO6000 (96 GB)</option>
-          <option value="A100">A100 (40 GB) - sold only as an 8-GPU machine</option>
-          <option value="A100-80GB">A100-80GB (80 GB) - sold only as an 8-GPU machine</option>
-          <option value="H100">H100 (80 GB)</option>
-          <option value="H200">H200 (141 GB) - sold only as an 8-GPU machine</option>
-          <option value="B200">B200 (180 GB) - sold only as an 8-GPU machine</option>
-          <option value="B300">B300 (288 GB) - sold only as an 8-GPU machine</option>
-        </select></label>
-      <!-- DDPSRUN-UI-GPU-COUNT. Six of the fourteen cards in the list above are sold only as a
-           whole 8-GPU machine, and validate refuses them with `gpu-not-sold-singly` when the
-           count is 1 (validate.py's `if gpu_count == 1 and not choice.sold_singly`). Without a
-           box for the count, those six could be selected and never submitted -- the check was
-           already written to allow 8, there was just no way to ask for it. -->
-      <label><span><b>GPUs per pod</b> <span class="dim">V100/A100/H200/B200/B300 are sold only as a whole 8-card machine</span></span>
-        <input id="f-gpucount" type="number" min="1" max="8" value="1"></label>
-      <label><span><b>Parallelism</b> <span class="dim">how many independent pods</span></span>
-        <input id="f-parallelism" type="number" min="1" max="256" value="1"></label>
-      <label><span><b>Capacity type</b></span>
-        <!-- DDPSRUN-CAPACITY-DEFAULT. on-demand, changed from spot 2026-09-12. Neither the
-             server nor the CLI has a default at all -- SubmitRequest.capacity_type defaults to
-             None and the CLI makes you pass --capacity-type -- so this box's default is this
-             screen's own choice and nothing else disagrees with it. A reclaimed machine costs a
-             run that was already hours in, and the person most likely to accept the default is
-             the one least able to judge that trade; spot stays one click away for whoever has
-             judged it. -->
-        <select id="f-capacity">
-          <option value="on-demand" selected>on-demand (dearer, never reclaimed)</option>
-          <option value="spot">spot (cheaper, can be reclaimed)</option>
-        </select></label>
-      <!-- DDPSRUN-UI-NO-RESULT-PATH. There was a "Result path" input here and the server has
-           no field for it: /v1/explain says "Where the output goes, which identity the job runs
-           as, and which slice of storage it may write to are all decided from your token. There
-           is no field for any of them." The box sent `result_path`, pydantic ignores unknown
-           fields, and the value vanished with no error - so a user typed a bucket and their
-           results went somewhere else. Removed rather than made read-only: the destination is
-           on the job's detail screen once it exists, which is where a fact nobody can change
-           belongs. -->
-    </div>
-    <label><span><b>Environment</b> <span class="dim">one KEY=VALUE per line</span></span>
-      <textarea id="f-env" placeholder="EPOCHS=4&#10;PAIRS=train.jsonl"></textarea></label>
-    <!-- DDPSRUN-VENDOR-CHOICE. PACSrun's CRD has had spec.placement.vendors and
-         spec.placement.mode all along and this gateway wrote neither: it sent
-         `placement: {capacityType}` and nothing else, so "run this on RunPod" and "price every
-         vendor and buy nothing" could not be said through the screen at all.
-         The two groups are separated because they are not the same kind of thing: aws, runpod
-         and shadeform have an execution path, while the other four are answered from catalogue
-         CSVs and no actuator here understands their machine names. The split is
-         models.RUNNABLE_VENDORS / PRICE_ONLY_VENDORS, and shadeform was missing from this row
-         until 2026-09-12 although it joined the runnable list on 2026-09-10 and has completed
-         live runs since -- so a job could be sold by a vendor this form would not let you ask
-         for. -->
-    <label><span><b>Vendors</b> <span class="dim">none checked = no restriction, which is what every job did before</span></span>
-      <div class="row" id="f-vendors">
-        <label class="chk"><input type="checkbox" data-vendor="aws"> aws</label>
-        <label class="chk"><input type="checkbox" data-vendor="runpod"> runpod</label>
-        <label class="chk"><input type="checkbox" data-vendor="shadeform"> shadeform</label>
       </div>
-      <div class="row" id="f-vendors-priced">
-        <span class="dim small">price only, needs Compare:</span>
-        <label class="chk"><input type="checkbox" data-vendor="gcp" data-priced> gcp</label>
-        <label class="chk"><input type="checkbox" data-vendor="azure" data-priced> azure</label>
-        <label class="chk"><input type="checkbox" data-vendor="lambda" data-priced> lambda</label>
-        <label class="chk"><input type="checkbox" data-vendor="nebius" data-priced> nebius</label>
-      </div></label>
-    <!-- DDPSRUN-PLACEMENT-DEFAULT. cheapest, changed from ordered 2026-09-14.
+    </details>
 
-         WHAT THE OLD DEFAULT DID. `ordered` asks the candidates in the order written and STOPS
-         at the first that answers, so the job takes whatever the first vendor quotes and no
-         other price is ever looked at. That is the CRD's own default (config/crd,
-         placement.mode `default: ordered`) because it is what every job did before the field
-         existed, not because it is the better answer for a person filling in this form.
+    <details class="acc" open>
+      <summary>
+        <span class="acc-title">Script</span>
+        <span class="acc-note">what actually runs on the machine</span>
+        <span class="spacer"></span>
+      </summary>
+      <div class="acc-body">
+        <!-- DDPSRUN-UI-COMMAND. One shell line, sent as args ["bash","-lc","<line>"], which is
+             the idiom /v1/explain's own example uses. It used to be sent as a bare STRING into a
+             field the server types as list[str], so ANY text here made Validate answer 422
+             "Input should be a valid list" - the placeholder itself was a failing input, and an
+             empty box was the only submittable state. Sending a shell line rather than splitting
+             on spaces is what makes quoting work: `python -c "import x"` is one argument to the
+             shell, and four wrong tokens to a splitter. -->
+        <!-- DDPSRUN-UI-SCRIPT. The box was labelled "one shell line" and it is a textarea, so a whole
+             run.sh always pasted fine -- but the request only carried it as `args`, never as
+             `script`, and FOUR of validate's checks read `script` and nothing else. So on this
+             screen check_adapter_paths, check_partial_results, check_caps and the TRL-patch check
+             could never run, whatever anybody pasted. readForm now sends the same text as both. -->
+        <label><span><b>Script</b> <span class="dim">your whole run.sh, or one line. Runs as <code>bash -lc</code>, so quotes, pipes and newlines work</span></span>
+          <textarea id="f-command" rows="10" placeholder="set -euo pipefail&#10;&#10;python src/train.py --config configs/train.yaml&#10;python src/evaluate.py --config configs/train.yaml"></textarea>
+          <div id="f-command-note"></div></label>
 
-         WHY THE SCREEN MAY DIFFER FROM THE CRD. Same reasoning as DDPSRUN-CAPACITY-DEFAULT
-         above: a default is a decision made on behalf of whoever does not change it, and the
-         person least able to judge the walk order is the one most likely to accept it. Asking
-         every candidate and buying the cheapest costs one solve and can only lower the bill.
+        <!-- DDPSRUN-SCRIPT-FILE. Load a run.sh from the machine instead of pasting
+             it, and save the box back out to a file.
+             WHY NO UPLOAD TO THE SERVER. The script is not stored anywhere: it
+             travels on the job itself, inside `args`, which is what makes the
+             Scripts screen able to hand it back later. So "upload" here means READ
+             THE FILE IN THE BROWSER and put its text in the box -- the same text a
+             paste would have produced, and one round trip fewer. A server-side
+             upload would need a bucket, a lifecycle, and a second copy of the script
+             that can disagree with the one on the job. -->
+        <div class="field-aside">
+          <input type="file" id="f-script-file" accept=".sh,.bash,.txt,text/*">
+          <button type="button" class="flat small" id="f-script-save">Save as a file</button>
+          <span class="dim tiny" id="f-script-file-note"></span>
+        </div>
 
-         WHAT IT IS NOT. It is not a promise about which vendor wins: `cheapest` ranks the
-         candidates the deciders produce, and a vendor nobody can rent from is still filtered by
-         the Vendors row below (DDPSRUN-VENDOR-CHOICE). Every `cheapest` job submitted so far
-         landed on RunPod and finished (15 of them, 2026-08-24 to 2026-09-07; the sixteenth is
-         Pending for a reason that has nothing to do with the mode).
+        <!-- DDPSRUN-SCRIPT-REUSE. The scripts this namespace has already submitted, ON THIS SCREEN.
+             They were reachable before -- the Scripts screen has had a "Use this" button since it
+             existed -- but only by leaving the half-filled form, finding that screen, clicking, and
+             being sent back. Rerunning a script with one thing changed is the commonest submission
+             there is, so the list belongs where the box is (asked for 2026-09-11).
+             Same shape as the image picker above: a button that opens a list, a click that fills the
+             box. Only the SCRIPT is filled -- the name, the image, the GPU and the capacity type are
+             this job's own decisions, and a copied name would collide with the job it came from. -->
+        <div class="field-aside">
+          <button class="flat tiny" id="f-script-reuse-toggle" type="button">Reuse a script you have submitted</button>
+          <span class="dim tiny" id="f-script-reuse-note"></span>
+        </div>
+        <div id="f-script-reuse" hidden></div>
+      </div>
+    </details>
 
-         `ordered` keeps its place in the list for anyone who wants the old walk, and it is the
-         only option whose value is empty -- readForm sends no `placement_mode` for it, which is
-         byte-for-byte what jobs sent before this box existed. -->
-    <label><span><b>Placement</b> <span class="dim">what to do with the candidates</span></span>
-      <select id="f-mode">
-        <option value="cheapest" selected>cheapest - ask every candidate, buy the cheapest (default)</option>
-        <option value="">ordered - stop at the first that answers</option>
-        <option value="compare">compare - ask every candidate, buy NOTHING</option>
-      </select></label>
-    <div id="f-mode-note"></div>
+    <details class="acc" open>
+      <summary>
+        <span class="acc-title">Resources</span>
+        <span class="acc-note">which card, how many, and how it is bought</span>
+        <span class="spacer"></span>
+      </summary>
+      <div class="acc-body">
+        <div class="grid2">
+          <label><span><b>GPU</b></span>
+            <select id="f-gpu">
+              <option value="">Let the server recommend one</option>
+              <option value="T4">T4 (16 GB)</option>
+              <option value="T4g">T4g (16 GB)</option>
+              <option value="L4">L4 (24 GB)</option>
+              <option value="A10G">A10G (24 GB)</option>
+              <option value="RTX PRO 4500">RTX PRO 4500 (32 GB)</option>
+              <option value="V100-32GB">V100-32GB (32 GB) - sold only as an 8-GPU machine</option>
+              <option value="L40S">L40S (48 GB)</option>
+              <option value="RTXPRO6000">RTXPRO6000 (96 GB)</option>
+              <option value="A100">A100 (40 GB) - sold only as an 8-GPU machine</option>
+              <option value="A100-80GB">A100-80GB (80 GB) - sold only as an 8-GPU machine</option>
+              <option value="H100">H100 (80 GB)</option>
+              <option value="H200">H200 (141 GB) - sold only as an 8-GPU machine</option>
+              <option value="B200">B200 (180 GB) - sold only as an 8-GPU machine</option>
+              <option value="B300">B300 (288 GB) - sold only as an 8-GPU machine</option>
+            </select></label>
+          <!-- DDPSRUN-UI-GPU-COUNT. Six of the fourteen cards in the list above are sold only as a
+               whole 8-GPU machine, and validate refuses them with `gpu-not-sold-singly` when the
+               count is 1 (validate.py's `if gpu_count == 1 and not choice.sold_singly`). Without a
+               box for the count, those six could be selected and never submitted -- the check was
+               already written to allow 8, there was just no way to ask for it. -->
+          <label><span><b>GPUs per pod</b> <span class="dim">V100/A100/H200/B200/B300 are sold only as a whole 8-card machine</span></span>
+            <input id="f-gpucount" type="number" min="1" max="8" value="1"></label>
+          <label><span><b>Parallelism</b> <span class="dim">how many independent pods</span></span>
+            <input id="f-parallelism" type="number" min="1" max="256" value="1"></label>
+          <label><span><b>Capacity type</b></span>
+            <!-- DDPSRUN-CAPACITY-DEFAULT. on-demand, changed from spot 2026-09-12. Neither the
+                 server nor the CLI has a default at all -- SubmitRequest.capacity_type defaults to
+                 None and the CLI makes you pass --capacity-type -- so this box's default is this
+                 screen's own choice and nothing else disagrees with it. A reclaimed machine costs a
+                 run that was already hours in, and the person most likely to accept the default is
+                 the one least able to judge that trade; spot stays one click away for whoever has
+                 judged it. -->
+            <select id="f-capacity">
+              <option value="on-demand" selected>on-demand (dearer, never reclaimed)</option>
+              <option value="spot">spot (cheaper, can be reclaimed)</option>
+            </select></label>
+          <!-- DDPSRUN-UI-NO-RESULT-PATH. There was a "Result path" input here and the server has
+               no field for it: /v1/explain says "Where the output goes, which identity the job runs
+               as, and which slice of storage it may write to are all decided from your token. There
+               is no field for any of them." The box sent `result_path`, pydantic ignores unknown
+               fields, and the value vanished with no error - so a user typed a bucket and their
+               results went somewhere else. Removed rather than made read-only: the destination is
+               on the job's detail screen once it exists, which is where a fact nobody can change
+               belongs. -->
+        </div>
+      </div>
+    </details>
 
-    <!-- DDPSRUN-REGIONS. EMPTY IS NOT "ANYWHERE", and that is the whole reason
-         this box exists. PACSrun gives an AWS ask that names no region exactly
-         ONE region -- the operator's own default, us-west-2 here
-         (placement.go:376, grep PACSRUN-AWS-ONE-REGION). So every job submitted
-         from this screen before 2026-09-08 was in us-west-2 and there was no way
-         to say otherwise: the CRD had placement.regions all along and the
-         gateway sent nothing.
-         It matters in money: the H100 is $6.88/hour in us-west-2 and $8.60 in
-         ap-northeast-1. The Prices screen lists every region on offer. -->
-    <label><span>Regions <span class="dim tiny">optional - blank means us-west-2 only, not "anywhere"</span></span>
-      <input id="f-regions" list="f-region-list" autocomplete="off"
-             placeholder="aws/us-east-1, aws/ap-northeast-2">
-      <datalist id="f-region-list"></datalist>
-      <div id="f-regions-note"></div></label>
-    <!-- DDPSRUN-TRAINING-FACTS. Four boxes, and until 2026-09-08 there were four DIFFERENT ones:
-         `row_tokens` was missing and it is the single field that turns the estimate from
-         "unknown" into a number. estimate.estimate uses them as
-             pairs + epochs   -> the step count
-             row_tokens       -> seconds per step -> the time -> the cost
-             cap              -> peak memory -> which GPU is recommended
-         so a form collecting the other three answered STEPS 556 and ESTIMATED TIME unknown, and
-         the user had filled three boxes to be told nothing. Measured on this screen 2026-09-08.
-         grad_accum is not asked for: it defaults to 8, which is what our scripts use, and the
-         CLI has --grad-accum for anyone who differs. -->
-    <!-- DDPSRUN-TRAINING-SIZE. Folded away by default (2026-09-11). Five numeric boxes sat open
-         in the middle of the form and every one of them is optional, so the commonest
-         submission -- rerun this script, change one thing -- had to scroll past five questions
-         it was never going to answer. They are the ONLY input the runtime estimate has, so they
-         are not removed: without them step 3 answers "unknown" hours, while the hourly rate
-         still comes back, which is why the button says what opening it buys. -->
-    <div class="row" style="margin:2px 0 10px">
-      <button class="flat tiny" id="f-size-toggle" type="button" style="padding:4px 10px">
-        Add training size, so the cost step can answer how long it will take</button>
-      <span class="dim tiny" id="f-size-note"></span>
+    <details class="acc">
+      <summary>
+        <span class="acc-title">Placement</span>
+        <span class="acc-note">which vendors and regions may be asked. Blank is not "anywhere"</span>
+        <span class="spacer"></span>
+      </summary>
+      <div class="acc-body">
+        <!-- DDPSRUN-PLACEMENT-DEFAULT. cheapest, changed from ordered 2026-09-14.
+
+             WHAT THE OLD DEFAULT DID. `ordered` asks the candidates in the order written and STOPS
+             at the first that answers, so the job takes whatever the first vendor quotes and no
+             other price is ever looked at. That is the CRD's own default (config/crd,
+             placement.mode `default: ordered`) because it is what every job did before the field
+             existed, not because it is the better answer for a person filling in this form.
+
+             WHY THE SCREEN MAY DIFFER FROM THE CRD. Same reasoning as DDPSRUN-CAPACITY-DEFAULT
+             above: a default is a decision made on behalf of whoever does not change it, and the
+             person least able to judge the walk order is the one most likely to accept it. Asking
+             every candidate and buying the cheapest costs one solve and can only lower the bill.
+
+             WHAT IT IS NOT. It is not a promise about which vendor wins: `cheapest` ranks the
+             candidates the deciders produce, and a vendor nobody can rent from is still filtered by
+             the Vendors row below (DDPSRUN-VENDOR-CHOICE). Every `cheapest` job submitted so far
+             landed on RunPod and finished (15 of them, 2026-08-24 to 2026-09-07; the sixteenth is
+             Pending for a reason that has nothing to do with the mode).
+
+             `ordered` keeps its place in the list for anyone who wants the old walk, and it is the
+             only option whose value is empty -- readForm sends no `placement_mode` for it, which is
+             byte-for-byte what jobs sent before this box existed. -->
+        <label><span><b>Placement</b> <span class="dim">what to do with the candidates</span></span>
+          <select id="f-mode">
+            <option value="cheapest" selected>cheapest - ask every candidate, buy the cheapest (default)</option>
+            <option value="">ordered - stop at the first that answers</option>
+            <option value="compare">compare - ask every candidate, buy NOTHING</option>
+          </select></label>
+        <div id="f-mode-note"></div>
+
+        <!-- DDPSRUN-VENDOR-CHOICE. PACSrun's CRD has had spec.placement.vendors and
+             spec.placement.mode all along and this gateway wrote neither: it sent
+             `placement: {capacityType}` and nothing else, so "run this on RunPod" and "price every
+             vendor and buy nothing" could not be said through the screen at all.
+             The two groups are separated because they are not the same kind of thing: aws, runpod
+             and shadeform have an execution path, while the other four are answered from catalogue
+             CSVs and no actuator here understands their machine names. The split is
+             models.RUNNABLE_VENDORS / PRICE_ONLY_VENDORS, and shadeform was missing from this row
+             until 2026-09-12 although it joined the runnable list on 2026-09-10 and has completed
+             live runs since -- so a job could be sold by a vendor this form would not let you ask
+             for. -->
+        <label><span><b>Vendors</b> <span class="dim">none checked = no restriction, which is what every job did before</span></span>
+          <div class="row" id="f-vendors">
+            <label class="chk"><input type="checkbox" data-vendor="aws"> aws</label>
+            <label class="chk"><input type="checkbox" data-vendor="runpod"> runpod</label>
+            <label class="chk"><input type="checkbox" data-vendor="shadeform"> shadeform</label>
+          </div>
+          <div class="row" id="f-vendors-priced">
+            <span class="dim small">price only, needs Compare:</span>
+            <label class="chk"><input type="checkbox" data-vendor="gcp" data-priced> gcp</label>
+            <label class="chk"><input type="checkbox" data-vendor="azure" data-priced> azure</label>
+            <label class="chk"><input type="checkbox" data-vendor="lambda" data-priced> lambda</label>
+            <label class="chk"><input type="checkbox" data-vendor="nebius" data-priced> nebius</label>
+          </div></label>
+
+        <!-- DDPSRUN-REGIONS. EMPTY IS NOT "ANYWHERE", and that is the whole reason
+             this box exists. PACSrun gives an AWS ask that names no region exactly
+             ONE region -- the operator's own default, us-west-2 here
+             (placement.go:376, grep PACSRUN-AWS-ONE-REGION). So every job submitted
+             from this screen before 2026-09-08 was in us-west-2 and there was no way
+             to say otherwise: the CRD had placement.regions all along and the
+             gateway sent nothing.
+             It matters in money: the H100 is $6.88/hour in us-west-2 and $8.60 in
+             ap-northeast-1. The Prices screen lists every region on offer. -->
+        <label><span>Regions <span class="dim tiny">optional - blank means us-west-2 only, not "anywhere"</span></span>
+          <input id="f-regions" list="f-region-list" autocomplete="off"
+                 placeholder="aws/us-east-1, aws/ap-northeast-2">
+          <datalist id="f-region-list"></datalist>
+          <div id="f-regions-note"></div></label>
+      </div>
+    </details>
+
+    <details class="acc" id="f-advanced">
+      <summary>
+        <span class="acc-title">Advanced</span>
+        <span class="acc-note">environment, and the sizes the cost estimate needs</span>
+        <span class="spacer"></span>
+      </summary>
+      <div class="acc-body">
+        <label><span><b>Environment</b> <span class="dim">one KEY=VALUE per line</span></span>
+          <textarea id="f-env" placeholder="EPOCHS=4&#10;PAIRS=train.jsonl"></textarea></label>
+
+        <!-- DDPSRUN-TRAINING-FACTS. Four boxes, and until 2026-09-08 there were four DIFFERENT ones:
+             `row_tokens` was missing and it is the single field that turns the estimate from
+             "unknown" into a number. estimate.estimate uses them as
+                 pairs + epochs   -> the step count
+                 row_tokens       -> seconds per step -> the time -> the cost
+                 cap              -> peak memory -> which GPU is recommended
+             so a form collecting the other three answered STEPS 556 and ESTIMATED TIME unknown, and
+             the user had filled three boxes to be told nothing. Measured on this screen 2026-09-08.
+             grad_accum is not asked for: it defaults to 8, which is what our scripts use, and the
+             CLI has --grad-accum for anyone who differs. -->
+        <!-- DDPSRUN-TRAINING-SIZE. Folded away by default (2026-09-11). Five numeric boxes sat open
+             in the middle of the form and every one of them is optional, so the commonest
+             submission -- rerun this script, change one thing -- had to scroll past five questions
+             it was never going to answer. They are the ONLY input the runtime estimate has, so they
+             are not removed: without them step 3 answers "unknown" hours, while the hourly rate
+             still comes back. The folding is this accordion now rather than a button of its own. -->
+        <label id="f-size-box"><span><b>Training size</b> <span class="dim">what the cost estimate needs. Safe to leave empty, but then it answers "unknown".</span></span>
+          <div class="grid2">
+            <input id="f-pairs" type="number" min="1" placeholder="rows in the dataset">
+            <input id="f-epochs" type="number" min="1" placeholder="epochs">
+            <input id="f-rowtokens" type="number" min="1" placeholder="average answer length (tokens)">
+            <input id="f-cap" type="number" min="1" placeholder="max length (tokens)">
+            <input id="f-batch" type="number" min="1" placeholder="batch size">
+          </div>
+          <span class="dim tiny" id="f-size-note"></span></label>
+      </div>
+    </details>
+
+    <div class="panel">
+      <div class="row">
+        <button class="go" id="s1-next">Validate</button>
+        <button class="flat" id="s1-reset">Clear</button>
+      </div>
+      <div id="s1-err"></div>
     </div>
-    <label id="f-size-box" hidden><span><b>Training size</b> <span class="dim">what the cost estimate needs. Safe to leave empty, but then it answers "unknown".</span></span>
-      <div class="grid2">
-        <input id="f-pairs" type="number" min="1" placeholder="rows in the dataset">
-        <input id="f-epochs" type="number" min="1" placeholder="epochs">
-        <input id="f-rowtokens" type="number" min="1" placeholder="average answer length (tokens)">
-        <input id="f-cap" type="number" min="1" placeholder="max length (tokens)">
-        <input id="f-batch" type="number" min="1" placeholder="batch size">
-      </div></label>
-    <div class="row">
-      <button class="go" id="s1-next">Validate</button>
-      <button class="flat" id="s1-reset">Clear</button>
-    </div>
-    <div id="s1-err"></div>
   </div>
 
   <!-- Step 2 -->
@@ -640,8 +814,6 @@
   </div>
 </section>
 
-<!-- ------------------------------------------------------------ 5. Vendors -->
-
 <!-- ------------------------------------------------------------ 4b. Scripts -->
 <!-- DDPSRUN-SCRIPTS. Every run.sh in one namespace, GROUPED BY OWNER, read back out of the
      jobs themselves. It said "this caller's own" and "already scoped to this caller" until
@@ -657,13 +829,17 @@
       <h1>Scripts</h1>
       <p class="dim small" id="scripts-note"></p>
     </div>
-    <!-- DDPSRUN-SCRIPTS-NAMESPACE. One listing is one namespace's. Drawn only
-         for an operator, whose token file entry says admin. -->
-    <select id="scripts-ns" hidden title="Namespace"></select>
-    <button class="go" data-goto="submit">New job</button>
+    <div class="actions">
+      <!-- DDPSRUN-SCRIPTS-NAMESPACE. One listing is one namespace's. Drawn only
+           for an operator, whose token file entry says admin. -->
+      <select id="scripts-ns" hidden title="Namespace"></select>
+      <button class="go" data-goto="submit">New job</button>
+    </div>
   </div>
   <div id="scripts-list"></div>
 </section>
+
+<!-- ------------------------------------------------------------ 6. Vendors -->
 
 <section id="view-vendors" hidden>
   <div class="head">

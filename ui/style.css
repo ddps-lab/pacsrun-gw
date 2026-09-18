@@ -1,68 +1,157 @@
 /*
- * DDPSRUN-UI-STYLE
+ * HYPERUN-UI-STYLE
  *
- * The values settled in `docs/15-screens.md` 15.9, transcribed. Colour, spacing
- * and type size are defined here and nowhere else; every rule below reads a
- * variable rather than naming a colour.
+ * The values settled in `docs/20-fe-design.md`, transcribed. Colour, type size,
+ * spacing and radius are defined here and nowhere else; every rule below reads a
+ * variable rather than naming a value.
  *
  * END-TO-END FLOW:
- *   1. :root defines the light palette. That is the default.
- *   2. prefers-color-scheme: dark redefines the same variable names.
+ *   1. :root defines the light palette and the scales. That is the default.
+ *   2. The dark palette is redefined THREE times over, for the three ways a
+ *      reader can end up in it (see HYPERUN-THEME below).
  *   3. Every rule after that reads the variables and never writes a colour.
  *
  * Step 3 is the rule that matters: a colour written inside only one of those
  * blocks disappears into the background in the other theme. Going through the
  * variables is what lets both themes share one structure.
+ *
+ * THE TOKEN NAMES ARE shadcn/ui's, deliberately. `background`/`foreground`
+ * pairs, `--border` vs `--input`, `--ring`, `--radius`. Not because the names
+ * are better than the ones they replace, but because the measurements in this
+ * file (20.4) were read off shadcn's own rendered components, and a reader
+ * holding their docs next to this file should find the same words.
  */
 
 /* ------------------------------------------------------------------ tokens */
 
 :root {
-  --bg: #f6f7f8;
-  --panel: #ffffff;
-  --ink: #1a1d21;
-  --ink-dim: #6b7280;
-  --line: #e3e6e8;
-  --accent: #116466;
-  --accent-ink: #ffffff;
-  --accent-soft: #e6f0f0;
+  /* HYPERUN-BRAND-COLOUR. Hanyang Blue, PANTONE 541C, from the university's own
+     colour sheet (hanyang.ac.kr/colors-fonts, "2021 컬러조합"). hyperun's
+     `hyper` is Hanyang's, so the primary is Hanyang's too.
 
-  --ok: #15803d;
-  --run: #b45309;
-  --bad: #b91c1c;
-  --wait: #6b7280;
-  --ok-soft: #e7f4ec;
-  --run-soft: #fbf0e0;
-  --bad-soft: #fbeaea;
-  --wait-soft: #eef0f2;
+     ONLY THE PRIMARY IS TAKEN. The sheet's secondary colours -- Yellow Green
+     #7DB928, Orange #F08100, Retro Coral #FF8672 -- sit exactly where the
+     success, running and failed states already sit (20.2), and a screen where
+     the brand colour and "this job failed" are the same colour cannot say
+     either thing. */
+  --primary: #0e4a84;
+  --primary-fg: #ffffff;
+  --primary-soft: #e8f0f8;
+  --ring: #0e4a84;
+
+  --bg: #f4f6f8;
+  --card: #ffffff;
+  --fg: #101418;
+  --fg-muted: #5b6570;
+
+  /* TWO BORDER TOKENS, NOT ONE. `--border` draws dividers, which are decoration
+     and carry no contrast requirement. `--input` draws the boundary of a
+     control, which WCAG 1.4.11 needs at 3:1 -- and the single `--line` this
+     replaces was 1.29:1 against a white card, so every input on the screen had
+     an edge the guideline does not consider visible. */
+  --border: #dfe3e8;
+  --input: #83909f;
+
+  --ok: #136c35;
+  --run: #9a5000;
+  --bad: #a81f1f;
+  --wait: #5b6570;
+  --ok-soft: #e4f4ea;
+  --run-soft: #fbf0df;
+  --bad-soft: #fceaea;
+  --wait-soft: #eceff2;
+
+  /* Type. Six steps and no others (20.4). 15px and 12.5px are gone; 14px is the
+     body size, which is the single most visible change in this file. */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 28px;
+
+  /* Space. Multiples of four, and nothing between them. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-12: 48px;
+
+  /* Radius, derived from one base the way shadcn derives it. */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
 
   --sans: "IBM Plex Sans KR", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
           "Malgun Gothic", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  --r: 6px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14171a;
-    --panel: #1c2024;
-    --ink: #e8eaed;
-    --ink-dim: #9aa0a6;
-    --line: #2c3136;
-    --accent: #3fa6a8;
-    --accent-ink: #0d1f20;
-    --accent-soft: #16302f;
+/* HYPERUN-THEME. Hanyang Blue is #0E4A84 -- lightness 28.6% -- so on a dark
+   ground it is about 2:1 against the page and reads as a smudge rather than as
+   a button or a link. The dark theme keeps the HUE (209.5 degrees, so it is
+   still the same blue) and lifts the lightness to 61%: #4F9FE8, which is 6.7:1
+   against the page. The brand survives the theme; the contrast is the thing
+   that changes.
 
-    --ok: #4ade80;
-    --run: #fbbf24;
-    --bad: #f87171;
-    --wait: #9aa0a6;
-    --ok-soft: #14281c;
-    --run-soft: #2e2413;
-    --bad-soft: #2e1717;
-    --wait-soft: #23272b;
+   THE SAME BLOCK IS WRITTEN THREE TIMES because a reader reaches dark by three
+   different routes and all three have to land on the same values:
+     1. the OS says dark and the reader has expressed no preference;
+     2. the reader picked Dark from the header toggle;
+     3. -- and this is the one a single media query gets wrong -- the OS says
+        dark and the reader picked LIGHT, which must win.
+   The `:not([data-theme="light"])` in the media query is what makes 3 work. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --primary: #4f9fe8;
+    --primary-fg: #07121e;
+    --primary-soft: #122438;
+    --ring: #4f9fe8;
+
+    --bg: #0d1117;
+    --card: #151b23;
+    --fg: #e6edf3;
+    --fg-muted: #98a4b3;
+    --border: #242c38;
+    --input: #5f6c7a;
+
+    --ok: #4ec97f;
+    --run: #e0a33a;
+    --bad: #f2756f;
+    --wait: #98a4b3;
+    --ok-soft: #0f2a1b;
+    --run-soft: #2d2110;
+    --bad-soft: #2e1616;
+    --wait-soft: #1d242e;
   }
+}
+
+:root[data-theme="dark"] {
+  --primary: #4f9fe8;
+  --primary-fg: #07121e;
+  --primary-soft: #122438;
+  --ring: #4f9fe8;
+
+  --bg: #0d1117;
+  --card: #151b23;
+  --fg: #e6edf3;
+  --fg-muted: #98a4b3;
+  --border: #242c38;
+  --input: #5f6c7a;
+
+  --ok: #4ec97f;
+  --run: #e0a33a;
+  --bad: #f2756f;
+  --wait: #98a4b3;
+  --ok-soft: #0f2a1b;
+  --run-soft: #2d2110;
+  --bad-soft: #2e1616;
+  --wait-soft: #1d242e;
 }
 
 /* ------------------------------------------------------------------ ground */
@@ -77,43 +166,64 @@
 [hidden] { display: none !important; }
 
 /* Use this instead of an inline display on anything that also toggles. */
-.stack { display: flex; flex-direction: column; gap: 12px; }
+.stack { display: flex; flex-direction: column; gap: var(--sp-3); }
 
 body {
   margin: 0;
   /* Through the variable. A literal white here would paint a white ground in
      the dark theme, with the dark theme's light text on top of it. */
   background: var(--bg);
-  color: var(--ink);
+  color: var(--fg);
   font-family: var(--sans);
-  font-size: 15px;
+  font-size: var(--text-base);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
 
 h1, h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
-h1 { font-size: 28px; letter-spacing: -0.01em; }
-h2 { font-size: 20px; }
-h3 { font-size: 15px; }
+h1 { font-size: var(--text-2xl); letter-spacing: -0.02em; line-height: 1.2; }
+h2 { font-size: var(--text-lg); line-height: 1.4; }
+h3 { font-size: var(--text-base); }
 p { margin: 0; }
-a { color: var(--accent); }
+a { color: var(--primary); text-underline-offset: 2px; }
 
 /* Anywhere digits line up in a column gets the fixed-width face. */
 .num, td.num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.dim { color: var(--ink-dim); }
-.small { font-size: 13px; }
-.tiny { font-size: 12px; }
+.dim { color: var(--fg-muted); }
+.small { font-size: var(--text-sm); }
+.tiny { font-size: var(--text-xs); }
+
+/* `<code>` had NO rule at all, so an inline snippet fell back to the browser's
+   generic monospace next to text set in IBM Plex -- two typefaces on one line
+   (20.1). Only inline code: a `code` inside `pre` inherits the block's face. */
+code {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+/* One focus treatment for everything focusable, shadcn's: the border goes to
+   the ring colour and a 3px translucent ring sits outside it. */
+:where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 45%, transparent);
+}
 
 /* ------------------------------------------------------------------ header */
 
 header {
   height: 56px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 24px;
-  padding: 0 24px;
+  gap: var(--sp-6);
+  padding: 0 var(--sp-6);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -122,145 +232,285 @@ header {
 .brand {
   font-family: var(--mono);
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--text-base);
   letter-spacing: -0.02em;
 }
-.brand span { color: var(--accent); }
+.brand span { color: var(--primary); }
 
-nav { display: flex; gap: 4px; }
+nav { display: flex; gap: var(--sp-1); }
 
 nav button {
-  border: 0;
+  border: 1px solid transparent;
   background: none;
   font: inherit;
-  font-size: 14px;
-  color: var(--ink-dim);
-  padding: 6px 12px;
-  border-radius: var(--r);
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--fg-muted);
+  padding: 6px var(--sp-3);
+  border-radius: var(--radius-md);
   cursor: pointer;
+  white-space: nowrap;
 }
-nav button:hover { background: var(--bg); color: var(--ink); }
-nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+nav button:hover { background: var(--bg); color: var(--fg); }
+nav button.on { background: var(--primary-soft); color: var(--primary); }
 
 .spacer { flex: 1; }
 
+/* The right-hand end of the bar: who you are, the theme, the way out. It used
+   to open with the API hostname (`api.hyperun.ddps.cloud`), which is neither
+   something a reader can act on nor the thing 15.5 put in this corner -- that
+   is the team. */
 .who {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--ink-dim);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  min-width: 0;
 }
+.who .whoami {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+  text-align: right;
+  min-width: 0;
+}
+.who .whoami b { color: var(--fg); font-weight: 600; font-size: var(--text-xs); }
+.who .whoami span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* HYPERUN-THEME-TOGGLE. Three states and not two: a reader who has expressed no
+   preference is NOT the same as one who chose light, and collapsing them means
+   the page stops following the OS the first time anybody touches the control. */
+.theme-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.theme-toggle button {
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1;
+  color: var(--fg-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 4px 7px;
+  cursor: pointer;
+}
+.theme-toggle button:hover { color: var(--fg); }
+.theme-toggle button.on { background: var(--card); color: var(--primary); font-weight: 600; }
 
 /* ------------------------------------------------------------------ body */
 
-main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 64px; }
+main { max-width: 1180px; margin: 0 auto; padding: var(--sp-8) var(--sp-6) 64px; }
 
-section { display: flex; flex-direction: column; gap: 24px; }
+section { display: flex; flex-direction: column; gap: var(--sp-5); }
 section[hidden] { display: none; }
 
-.head { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.head { display: flex; align-items: flex-start; gap: var(--sp-4); flex-wrap: wrap; }
 .head .spacer { flex: 1; min-width: 0; }
+/* The head's own buttons. This class exists so no screen has to write an inline
+   margin to keep its actions off the title (20.4). */
+.head .actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; align-items: center; }
 
 .panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  padding: 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: var(--sp-5);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--sp-4);
 }
 .panel > header {
   all: unset;
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
 }
+
+/* Rows of controls that used to carry `margin-top: 8px` inline. */
+.panel-actions { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
 
 /* ------------------------------------------------------------------ buttons */
 
-button.go, button.flat {
+/* shadcn's default size, measured: 36px tall, 16px of side padding, 8px radius,
+   14px/500. `.small` is their sm (32px) and `.tiny` their xs (24px). */
+button.go, button.flat, button.ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 500;
-  padding: 8px 16px;
-  border-radius: var(--r);
+  line-height: 1;
+  height: 36px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--radius-md);
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color 0.12s, color 0.12s, border-color 0.12s;
 }
+
 /* The primary action. Exactly one per screen (15.10). */
-button.go { background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); }
-button.go:hover { filter: brightness(1.1); }
+button.go {
+  background: var(--primary);
+  color: var(--primary-fg);
+  border: 1px solid var(--primary);
+}
+button.go:hover { background: color-mix(in srgb, var(--primary) 88%, var(--fg)); }
+
 /* Secondary actions. Outline only. */
-button.flat { background: var(--panel); color: var(--ink); border: 1px solid var(--line); }
+button.flat {
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
 button.flat:hover { background: var(--bg); }
 
-button.go:disabled, button.flat:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  filter: none;
+/* `.ghost` was used in index.html and defined NOWHERE, so the one button
+   carrying it rendered as the browser's default control: Arial at 13.33px in
+   the middle of a screen set in IBM Plex at 14px (20.1). It is shadcn's ghost
+   variant -- no fill and no border until it is hovered. */
+button.ghost {
+  background: none;
+  color: var(--fg);
+  border: 1px solid transparent;
 }
-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.ghost:hover { background: var(--bg); }
 
-.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-/* A checkbox and its word sit side by side. `label` above is column-flex for the form's
-   stacked fields, so a checkbox label has to say otherwise or the box lands above the word. */
-.chk { flex-direction: row; align-items: center; gap: 6px; margin-right: 10px; }
+/* SIZE MODIFIERS CARRY THE ELEMENT IN THE SELECTOR ON PURPOSE. `.tiny` alone is
+   specificity (0,1,0) and `button.flat` is (0,1,1), so every `class="flat tiny"`
+   button on the screen was drawn at the full 14px and the class did nothing --
+   which is why eight of them carried an inline `padding:4px 10px` to look small
+   anyway (20.1). Matching the specificity and declaring these after is what
+   makes the word mean its size. */
+button.small { height: 32px; padding: 0 var(--sp-3); font-size: var(--text-sm); }
+button.tiny  { height: 24px; padding: 0 var(--sp-2); font-size: var(--text-xs); border-radius: var(--radius-sm); }
+
+button.go:disabled, button.flat:disabled, button.ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--card);
+  color: var(--fg-muted);
+}
+button.go:disabled { background: var(--border); border-color: var(--border); }
+
+.row { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+/* A checkbox and its word sit side by side. `label` below is column-flex for the
+   form's stacked fields, so a checkbox label has to say otherwise or the box
+   lands above the word. */
+.chk { flex-direction: row; align-items: center; gap: 6px; margin: 0; }
+.chk input { width: auto; }
 
 /* ------------------------------------------------------------------ tabs */
 
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+/* shadcn's segmented control: a muted tray with the selected trigger raised out
+   of it, rather than the underline this used to draw. The underline needed a
+   -1px margin to sit on the container's border, which is exactly the kind of
+   off-scale correction 20.4 removes. */
+.tabs {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding: 3px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
 .tabs button {
-  border: 0;
+  border: 1px solid transparent;
   background: none;
   font: inherit;
-  font-size: 14px;
-  color: var(--ink-dim);
-  padding: 8px 14px;
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--fg-muted);
+  padding: 5px var(--sp-3);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  white-space: nowrap;
 }
-.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs button:hover { color: var(--fg); }
+.tabs button.on { background: var(--card); color: var(--primary); border-color: var(--border); }
+/* The namespace picker rides along in the tab strip on the Jobs screen. It used
+   `margin-left:auto` inline. */
+.tabs select { margin-left: auto; width: auto; height: 28px; }
 
 /* ------------------------------------------------------------------ cards */
 
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--sp-4); }
 
 .card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  padding: 16px 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: var(--sp-4) var(--sp-5);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-1);
 }
-.card .label { font-size: 12px; color: var(--ink-dim); letter-spacing: 0.03em; text-transform: uppercase; }
-.card .value { font-family: var(--mono); font-size: 28px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.card .label {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.card .value {
+  font-family: var(--mono);
+  font-size: var(--text-xl);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
 .card .value.ok { color: var(--ok); }
 .card .value.bad { color: var(--bad); }
 .card .value.run { color: var(--run); }
 
 /* ------------------------------------------------------------------ tables */
 
-.scroll { overflow-x: auto; }
+/* HYPERUN-SCROLL-EDGE. A table wider than its panel scrolls inside the panel
+   rather than scrolling the page (15.9), which is right -- but on the Jobs
+   screen that hid two whole columns with nothing on screen to say so: 11
+   columns needing 1171px inside 976px, so Restarts and Result were simply not
+   there as far as a reader could tell (measured 2026-09-19). macOS hides the
+   scrollbar until something scrolls, so the scrollbar is not the answer.
 
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+   The classic four-layer gradient: two `local` layers painted in the panel
+   colour that scroll away with the content, and two `scroll` shadows fixed to
+   the edges that they uncover. The effect is that a shadow appears on whichever
+   side has more table, and neither side shows one when it all fits. No
+   JavaScript and no resize listener. */
+.scroll {
+  overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--card) 40%, transparent) left center / 36px 100% no-repeat local,
+    linear-gradient(to left, var(--card) 40%, transparent) right center / 36px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.16), transparent) left center / 12px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.16), transparent) right center / 12px 100% no-repeat scroll;
+}
+
+table { width: 100%; border-collapse: collapse; font-size: var(--text-base); }
 th {
   text-align: left;
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 600;
-  color: var(--ink-dim);
+  color: var(--fg-muted);
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  padding: 0 12px 8px;
+  height: 34px;
+  padding: 0 var(--sp-3) var(--sp-2);
   white-space: nowrap;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border);
 }
-td { padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: var(--sp-3); border-bottom: 1px solid var(--border); white-space: nowrap; }
 tr:last-child td { border-bottom: 0; }
 
 tbody tr.click { cursor: pointer; }
@@ -277,10 +527,12 @@ td .name { font-weight: 500; }
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 3px 9px 3px 7px;
+  justify-content: center;
+  gap: var(--sp-1);
+  height: 20px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  padding: 0 var(--sp-2) 0 7px;
   border-radius: 999px;
   white-space: nowrap;
 }
@@ -292,26 +544,165 @@ td .name { font-weight: 500; }
 
 /* ------------------------------------------------------------------ progress */
 
-.bar { height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; min-width: 80px; }
+.bar { height: 6px; background: var(--border); border-radius: 999px; overflow: hidden; min-width: 80px; }
 .bar > i { display: block; height: 100%; background: var(--run); border-radius: 999px; transition: width 0.4s; }
 .bar.done > i { background: var(--ok); }
 
-.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px 24px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-4) var(--sp-6); }
 .fact { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.fact .k { font-size: 12px; color: var(--ink-dim); }
-.fact .v { font-family: var(--mono); font-size: 15px; overflow-wrap: anywhere; }
+.fact .k { font-size: var(--text-xs); color: var(--fg-muted); }
+.fact .v { font-family: var(--mono); font-size: var(--text-base); overflow-wrap: anywhere; }
 
-/* ------------------------------------------------------------------ logs */
+/* --------------------------------------------------------------- accordion */
 
+/* HYPERUN-ACCORDION. shadcn's Accordion, drawn on `<details>`/`<summary>`.
+   Radix is not here, and what Radix would be rebuilding in JavaScript is what
+   the elements already do: Tab and Enter/Space reach and work the trigger,
+   `aria-expanded` is reported without being written, the state survives with
+   JavaScript switched off -- and, the one that decides it for this app, the
+   BROWSER'S OWN Ctrl+F SEARCHES A CLOSED PANEL AND OPENS IT. The logs and the
+   submitted spec are inside these, and a reader looking for a line in a log
+   should not have to know which panel it is in. */
+.acc {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+}
+.acc + .acc { margin-top: var(--sp-3); }
+
+.acc > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-5);
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--radius-xl);
+  border: 1px solid transparent;
+  user-select: none;
+}
+/* Both spellings of "do not draw the disclosure triangle": WebKit wants the
+   pseudo-element, everything else wants `list-style`. The chevron below is ours
+   and has to be the only marker, or the row shows two. */
+.acc > summary::-webkit-details-marker { display: none; }
+.acc > summary::marker { content: ""; }
+.acc > summary:hover { background: var(--bg); }
+
+.acc-title { font-size: var(--text-lg); font-weight: 600; flex: none; }
+/* THE SUMMARY LINE ANSWERS WHILE CLOSED. A panel folded down to nothing but its
+   own name is worse than one left open: the reader has to open all of them to
+   find out which one they wanted. So the note carries the number -- 43%, 3
+   files, 2 findings -- and opening is for the detail behind it (20.6). */
+.acc-note { font-size: var(--text-sm); color: var(--fg-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-summary-actions { display: flex; gap: var(--sp-2); align-items: center; }
+
+/* THE CHEVRON IS DRAWN, NOT MARKED UP. Two borders on a rotated square, as a
+   pseudo-element of the summary. An <svg> would be the same picture and would
+   have to be pasted into every one of the twenty summaries in index.html, where
+   the twenty copies then drift apart. It is `::after` so it is always last on
+   the row whatever the summary contains. */
+.acc > summary::after {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: -3px var(--sp-1) 0 var(--sp-2);
+  border-right: 2px solid var(--fg-muted);
+  border-bottom: 2px solid var(--fg-muted);
+  border-radius: 1px;
+  transform: rotate(45deg);
+  transition: transform 0.15s;
+}
+.acc[open] > summary::after { transform: rotate(-135deg); margin-top: 3px; }
+
+.acc-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-5) var(--sp-5);
+}
+/* A hairline between the trigger and the body, inset to the padding so it reads
+   as a division of one card rather than as two stacked cards. */
+.acc[open] > summary { border-bottom: 1px solid var(--border); border-radius: var(--radius-xl) var(--radius-xl) 0 0; }
+.acc[open] > .acc-body { padding-top: var(--sp-5); }
+
+/* A group of accordions that share one outline, shadcn's Accordion proper:
+   one border around the set, a hairline between items, no gap. Used for the
+   per-person lists on the Scripts screen and for grouped findings. */
+.acc-group { border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--card); overflow: hidden; }
+.acc-group > .acc { border: 0; border-radius: 0; margin: 0; background: none; }
+.acc-group > .acc:not(:last-child) { border-bottom: 1px solid var(--border); }
+.acc-group > .acc > summary { border-radius: 0; }
+.acc-group > .acc[open] > summary { border-radius: 0; }
+
+/* ------------------------------------------------------------- code blocks */
+
+/* HYPERUN-CODE-BLOCK. One component for every string a reader is meant to copy
+   and run, and it always carries its own button. Before this there was exactly
+   ONE copy button in the whole app -- on the submitted spec -- while `pip
+   install hyperun`, the login command, the plugin commands, the logs and every
+   saved run.sh were text you had to select by hand (20.1). */
+.code {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.code pre {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  padding: 10px var(--sp-3);
+  /* Room for the button, which floats over the top-right corner. */
+  padding-right: 76px;
+  overflow: auto;
+  white-space: pre;
+  max-height: 420px;
+}
+.code.wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A one-line command needs no scrollbar and reads better centred on its row. */
+.code.line pre { white-space: nowrap; }
+
+.code > .copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1;
+  height: 24px;
+  padding: 0 var(--sp-2);
+  color: var(--fg-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.code > .copy:hover { color: var(--fg); background: var(--bg); }
+/* Set by app.js for a moment after a successful copy. Without it the button
+   looks like it did nothing and gets pressed again. */
+.code > .copy.done { color: var(--ok); border-color: var(--ok); }
+
+/* The copy button on an accordion's summary line, for a block that is folded
+   away. Copying should not require opening. */
+.acc-summary-actions .copy { height: 24px; font-size: var(--text-xs); }
+
+/* Kept for `pre` written by code that has not been moved into `.code` yet, and
+   for the terminal transcript. Same face and size as `.code pre`, so nothing
+   on screen is a fourth size. */
 pre.log, pre.spec {
   margin: 0;
   font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-size: var(--text-sm);
+  line-height: 1.6;
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3);
   overflow: auto;
   max-height: 420px;
   white-space: pre;
@@ -319,94 +710,196 @@ pre.log, pre.spec {
 
 /* ------------------------------------------------------------------ charts */
 
-.chart { width: 100%; height: 140px; display: block; }
-.legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-dim); }
+/* HYPERUN-CHART-BOX. The SVG holds only lines now (HYPERUN-CHART-TEXT in
+   app.js), so it may be any shape: `preserveAspectRatio="none"` stretches it to
+   fill, `non-scaling-stroke` keeps the strokes 1.6px through that stretch, and
+   the height is a plain number again.
+
+   --chart-gutter is the width of the tick column beside it, and the x-axis row
+   below is inset by exactly the same amount. One value, so the two rows and the
+   plot cannot drift apart. */
+:root { --chart-gutter: 52px; }
+
+.chart-wrap { display: flex; align-items: stretch; gap: var(--sp-2); }
+.chart { flex: 1; min-width: 0; height: 150px; display: block; }
+/* Bottom to top: the labels arrive top-first and `space-between` puts the first
+   at the top, which is where the highest value belongs. */
+.chart-y {
+  flex: none;
+  width: calc(var(--chart-gutter) - var(--sp-2));
+  height: 150px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  /* NO PADDING, and that is the whole alignment. `space-between` over three
+     12px labels in a 150px column puts their centres at 6 / 75 / 144px; the
+     three grid lines, 4 viewBox units inside a 120-unit box scaled to 150px,
+     land at 5 / 75 / 145. Within a pixel, and it stays within a pixel at any
+     height because both sides are the same proportion of the same box. */
+  padding: 0;
+  line-height: 1;
+}
+/* The axis labels are SVG `<text>`, which app.js used to size at 11px -- a
+   seventh type size that exists nowhere else (20.1). The rule lives here so the
+   scale is enforced in one file. */
+.chart text { font-family: var(--mono); font-size: var(--text-xs); fill: var(--fg-muted); }
+.legend { display: flex; gap: var(--sp-4); font-size: var(--text-xs); color: var(--fg-muted); }
 .legend i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 5px; }
+
+/* ------------------------------------------------- classes app.js renders */
+
+/* app.js used to write these as inline `style=` on generated markup -- a colour
+   or a margin per call site, so the rule was in twenty places and in none of
+   them could you see the other nineteen (20.1). The colours are the same
+   colours; only the place they are written changed. */
+.ok-ink { color: var(--ok); }
+.bad-ink { color: var(--bad); }
+.warn-ink { color: var(--run); }
+
+/* The per-card dot in the GPU table. Its BACKGROUND is still written inline,
+   because which colour it is says which line of the chart the row is -- that is
+   data. The size is not. */
+.swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
+
+.chart-block { display: flex; flex-direction: column; gap: var(--sp-1); }
+/* The chart's x-axis row, inset to the plot area so the first and last stamps
+   sit under the first and last points.
+
+   THE INSETS ARE PERCENTAGES, NOT PIXELS, because the numbers they come from
+   are viewBox units that get scaled: the plot starts at x=44 and ends at x=596
+   of 600. A literal `padding-left: 44px` was only correct at the one width
+   where the scale happened to be 1, and the chart is never that width. */
+.x-axis { justify-content: space-between; padding-left: var(--chart-gutter); }
+.scope-note { margin: 0; }
+.owner-heading { font-size: var(--text-lg); }
+.pick-row { display: flex; flex-direction: column; gap: var(--sp-1); }
 
 /* ------------------------------------------------------------------ forms */
 
-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-dim); }
-label > span b { color: var(--ink); font-weight: 600; }
+label { display: flex; flex-direction: column; gap: 6px; font-size: var(--text-sm); color: var(--fg-muted); }
+label > span b { color: var(--fg); font-weight: 600; }
 
 input, select, textarea {
   font: inherit;
-  font-size: 14px;
-  color: var(--ink);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  padding: 8px 10px;
+  font-size: var(--text-base);
+  color: var(--fg);
+  background: var(--card);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  padding: 0 10px;
+  height: 36px;
   width: 100%;
 }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
-textarea { font-family: var(--mono); font-size: 13px; resize: vertical; min-height: 76px; }
+textarea {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  resize: vertical;
+  min-height: 96px;
+  height: auto;
+  padding: var(--sp-2) 10px;
+  line-height: 1.6;
+}
+input[type="file"] { height: auto; padding: 6px 10px; }
+input[type="checkbox"] { height: auto; }
+input::placeholder, textarea::placeholder { color: var(--fg-muted); }
 
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-4); }
 
-.steps { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink-dim); }
-.steps b { color: var(--accent); font-weight: 600; }
+/* THE CONTROLS IN A ROW LINE UP, whatever their labels do. Each field is a
+   column-flex label, so a two-line hint pushed its input two lines lower than
+   its neighbour's and the Resources row showed four controls at three different
+   heights. Grid items already stretch to the row; `margin-top: auto` on the
+   control spends that extra height above it rather than below. Scoped to a
+   control that ENDS its field, because a field with a picker or a note after it
+   (the Image box) is not the shape this is describing. */
+.grid2 > label > input:last-child,
+.grid2 > label > select:last-child,
+.grid2 > label > textarea:last-child { margin-top: auto; }
+
+/* A row of controls that belongs to the field above it -- the image picker's
+   button, the script file row. Replaces the inline negative margins that used
+   to pull these back towards their field (20.1). */
+.field-aside { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+.field-aside input[type="file"] { max-width: 270px; }
+.field-aside input[type="search"] { max-width: 260px; }
+
+.steps { display: flex; gap: var(--sp-2); align-items: center; font-size: var(--text-sm); color: var(--fg-muted); }
+.steps b { color: var(--primary); font-weight: 600; }
 
 /* ------------------------------------------------------------------ notices */
 
 .note {
-  border-radius: var(--r);
-  padding: 10px 14px;
-  font-size: 13px;
+  border-radius: var(--radius-md);
+  padding: 10px var(--sp-3);
+  font-size: var(--text-sm);
   display: flex;
-  gap: 10px;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--sp-1);
+  border: 1px solid transparent;
 }
-.note.err  { background: var(--bad-soft); color: var(--bad); }
-.note.warn { background: var(--run-soft); color: var(--run); }
-.note.info { background: var(--wait-soft); color: var(--ink-dim); }
-.note .fix { color: var(--ink-dim); }
+.note + .note { margin-top: var(--sp-2); }
+.note.err  { background: var(--bad-soft);  color: var(--bad);  border-color: color-mix(in srgb, var(--bad) 30%, transparent); }
+.note.warn { background: var(--run-soft);  color: var(--run);  border-color: color-mix(in srgb, var(--run) 30%, transparent); }
+.note.info { background: var(--wait-soft); color: var(--fg-muted); border-color: var(--border); }
+.note .fix { color: var(--fg-muted); }
 
 /* The empty state. Rather than an empty table, it carries the next action
-   (15.10) — this is the first screen a new user sees. */
+   (15.10) -- this is the first screen a new user sees. */
 .empty {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 48px 24px;
-  color: var(--ink-dim);
+  gap: var(--sp-3);
+  padding: var(--sp-12) var(--sp-6);
+  color: var(--fg-muted);
   text-align: center;
 }
+
+.findings { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: var(--sp-1); }
+.findings li { color: var(--bad); }
+.wrong { color: var(--bad); font-weight: 600; }
 
 /* ------------------------------------------------------------------ sign in */
 
 #login {
-  max-width: 380px;
+  max-width: 400px;
   margin: 96px auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--sp-4);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: var(--sp-8) var(--sp-6);
 }
+#login h1.brand { font-size: 24px; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
+  .acc-chevron { transition: none !important; }
 }
+
+/* ------------------------------------------------------------------- shell */
 
 /* The Shell panel's input row. PACSRUN-SHELL-SESSION.
    The prompt, the line and the button sit on one row so the pane above reads as
    the transcript and this reads as the place you type -- the same arrangement a
    terminal has, without pretending to be one. */
-.shell-row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
-/* Carries the working directory since 2026-09-12 (DDPSRUN-SHELL-CWD), so it can get long:
-   `min-width: 0` on the input next to it is what stops a deep path pushing the button off the
-   panel, and the prompt itself still refuses to wrap mid-path. */
-.shell-prompt { color: var(--ink-dim); white-space: nowrap; }
+.shell-row { display: flex; gap: var(--sp-2); align-items: center; }
+/* Carries the working directory since 2026-09-12 (DDPSRUN-SHELL-CWD), so it can
+   get long: `min-width: 0` on the input next to it is what stops a deep path
+   pushing the button off the panel, and the prompt itself still refuses to wrap
+   mid-path. */
+.shell-prompt { color: var(--fg-muted); white-space: nowrap; font-family: var(--mono); font-size: var(--text-sm); }
 .shell-input {
   flex: 1;
   min-width: 0;                 /* without this a long line pushes the button off the panel */
-  padding: 8px 10px;
-  background: var(--panel);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  font-size: 14px;
+  font-family: var(--mono);
+  font-size: var(--text-sm);
 }
-.shell-input:focus { outline: none; border-color: var(--accent); }
 /* Disabled while a line is in flight: one round trip at a time, so a second
    Enter cannot interleave two lines into one shell. */
 .shell-input:disabled { opacity: 0.6; }
@@ -414,39 +907,36 @@ textarea { font-family: var(--mono); font-size: 13px; resize: vertical; min-heig
 
 /* ----------------------------------------------------------------- stale tab */
 
-/* DDPSRUN-UI-STALE-TAB. Above the bar and across the width, because the thing it says is that
-   NOTHING else on the page can be trusted to be current. Not a toast: a toast that fades leaves
-   the reader with stale code and no record of being told. */
+/* DDPSRUN-UI-STALE-TAB. Above the bar and across the width, because the thing it
+   says is that NOTHING else on the page can be trusted to be current. Not a
+   toast: a toast that fades leaves the reader with stale code and no record of
+   being told. */
 #stale {
   position: sticky;
   top: 0;
   z-index: 50;
   display: flex;
-  gap: 12px;
+  gap: var(--sp-3);
   align-items: center;
   flex-wrap: wrap;
-  padding: 10px 20px;
+  padding: 10px var(--sp-5);
   background: var(--run);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 #stale button {
   border: 1px solid rgba(255, 255, 255, 0.7);
   background: transparent;
   color: #fff;
-  border-radius: 6px;
-  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  padding: 4px var(--sp-3);
   font: inherit;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 #stale button:hover { background: rgba(255, 255, 255, 0.15); }
 
-/* HYPERUN-MONITOR. The findings the rules produced, and a number that is broken.
-   Red because every one of these is a reason to consider stopping a job that is
-   still being billed; the panel says nothing when there is nothing to say. */
-.findings { margin: 8px 0 0; padding-left: 18px; }
-.findings li { color: var(--bad); margin: 3px 0; }
-.wrong { color: var(--bad); font-weight: 600; }
+/* ---------------------------------------------------------------- terminal */
 
 /* HYPERUN-TERMINAL. The box xterm.js draws into.
 
@@ -459,10 +949,56 @@ textarea { font-family: var(--mono); font-size: 13px; resize: vertical; min-heig
    hard against the top-left pixel otherwise. */
 #d-terminal-host {
   height: 420px;
-  padding: 8px;
-  border-radius: 8px;
+  padding: var(--sp-2);
+  border-radius: var(--radius-md);
   background: #0f1115;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   overflow: hidden;
 }
 #d-terminal-host .xterm { height: 100%; }
+
+/* ------------------------------------------------------------------ narrow */
+
+/* HYPERUN-NARROW-HEADER. TWO ROWS, and not one row that scrolls.
+
+   MEASURED 2026-09-19 at 430px wide: the one-row bar was 739px of content in a
+   430px box, so `overflow-x: auto` on it put Sign out and the theme toggle 100px
+   and 240px PAST the right edge -- not merely cramped, but unreachable without
+   knowing to drag the bar sideways, which nothing on screen suggests. A person
+   on a phone could not sign out.
+
+   So the bar wraps: brand and identity on the first row, navigation on the
+   second. Only the NAV scrolls, which is the one part where scrolling is
+   discoverable, because a cut-off tab is visibly cut off. */
+@media (max-width: 720px) {
+  header {
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+    gap: var(--sp-2) var(--sp-3);
+    padding: var(--sp-2) var(--sp-4);
+    overflow: visible;
+  }
+  header .spacer { display: none; }
+  .brand { order: 1; }
+  .who { order: 2; margin-left: auto; gap: var(--sp-2); }
+  /* The email goes, the TEAM stays: the team is which namespace's jobs are on
+     screen, and every screen inherits it (15.5). The email is only ever a
+     reminder of which Google account signed in. */
+  .who .whoami span { display: none; }
+  nav {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  nav::-webkit-scrollbar { display: none; }
+  nav button { flex: none; }
+
+  main { padding: var(--sp-5) var(--sp-4) var(--sp-12); }
+  .panel, .acc > summary, .acc-body { padding-left: var(--sp-4); padding-right: var(--sp-4); }
+  /* A screen title and its primary action stop fighting for one line. */
+  .head .actions { width: 100%; }
+}

@@ -439,7 +439,7 @@ check(perOpen.includes('$("d-gpu-panel").hidden = true'),
 // 2026-09-11: four A100s that each reached 77,631 MiB, whose memory-peak samples read 0, 3, 1
 // and 95 per cent while every card's true peak was 99 or 100.
 // ---------------------------------------------------------------------------------------------
-const CARD_COLORS = ["var(--accent)", "var(--run)", "var(--ok)", "var(--bad)"];
+const CARD_COLORS = ["var(--primary)", "var(--run)", "var(--ok)", "var(--bad)"];
 const cardTable = eval(`(${extract("cardTable")})`);
 
 const REAL_CARDS = [
@@ -556,11 +556,32 @@ check(picker.includes("The box above still takes any address"),
       "a filter that matches nothing says the box is still free text, so a public image stays "
       + "reachable");
 
-check(HTML.includes('id="f-size-box" hidden'),
-      "the five optional Training size boxes start folded");
+/* The five boxes are still folded away and the mechanism changed: it was a `hidden`
+   attribute on the box plus a button of its own, and it is the `Advanced` accordion
+   now -- one folding device on this screen instead of the three it grew (20.6).
+   The invariant is the same one and it is the reason the check exists: the commonest
+   submission, rerun this script with one thing changed, must not have to scroll past
+   five questions it is never going to answer. So the check asserts the box is inside
+   a `<details>` that is NOT `open`, rather than the attribute that used to do it. */
+{
+  const tag = (HTML.match(/<details[^>]*id="f-advanced"[^>]*>/) || [""])[0];
+  const body = HTML.slice(HTML.indexOf(tag), HTML.indexOf("</details>", HTML.indexOf(tag)));
+
+  check(tag !== "" && !/\bopen\b/.test(tag),
+        "the five optional Training size boxes start folded, inside an Advanced accordion "
+        + "that is not open");
+
+  check(body.includes('id="f-size-box"') && body.includes('id="f-env"'),
+        "and it is those boxes and the Environment box that are inside it, so the folding is "
+        + "over the optional half of the form and not over something required");
+}
 
 check(SRC.includes("value${filled === 1 ? \"\" : \"s\"} set and still sent"),
       "and a value typed then folded away is still announced, because the form still sends it");
+
+check(SRC.includes('$("f-advanced")?.querySelector(".acc-note")'),
+      "and that announcement reaches the CLOSED summary line, which is the only place a "
+      + "reader who has folded the section can still see it");
 
 // ---------------------------------------------------------------------------------------------
 // DDPSRUN-UI-STALE-TAB. A behaviour check on the real function: a tab that never reloads runs

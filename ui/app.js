@@ -217,6 +217,22 @@ function note(kind, text, fix) {
     (fix ? `<div class="fix">${esc(fix)}</div>` : "") + `</div></div>`;
 }
 
+/* The same box, for a sentence THIS FILE wrote and that contains markup of its
+   own -- at the time of writing, one link.
+
+   IT IS SEPARATE FROM note() ON PURPOSE. note()'s job is to print a string that
+   came from the server, and escaping it is the whole of that job; there is no
+   flag on note() to turn that off, because a flag is a thing a later call site
+   can pass by mistake with a server string in its hand. Anything reaching this
+   one has to be a literal in this file.
+
+   Found 2026-09-19 by reading the Regions note on screen: it had been passing
+   an <a> through note(), so the reader got `<a href="https://gpus.skypilot.co/"
+   target="_blank" rel="noopener">GPU Compass</a>` as visible text. */
+function noteHtml(kind, html) {
+  return `<div class="note ${kind}"><div>${html}</div></div>`;
+}
+
 function empty(text, buttonLabel, gotoView) {
   return `<div class="empty"><p>${esc(text)}</p>` +
     (buttonLabel ? `<button class="go" data-goto="${gotoView}">${esc(buttonLabel)}</button>` : "") +
@@ -320,6 +336,7 @@ function drawHome() {
       ]);
       jobs = list.jobs || [];
       stats = s;
+      if (stats && stats.team) { knownTeam = stats.team; drawWho(); }
     } catch (err) {
       $("home-cards").innerHTML = note("err", err.message);
       return;
@@ -461,7 +478,7 @@ function jobsTable(jobs, columns) {
     gpu: (j) => `<span class="num">${esc(j.gpu || "-")}</span>`,
     vendor: (j) => esc(j.vendor || "-"),
     recovery: (j) => j.recovery_count
-      ? `<span class="num" style="color:var(--run)">${j.recovery_count}</span>`
+      ? `<span class="num warn-ink">${j.recovery_count}</span>`
       : `<span class="dim">-</span>`,
     // Dollars from the server (JobView.cost_usd), never computed here: it is
     // the same number /v1/stats adds into the team total. null means "no
@@ -561,6 +578,13 @@ async function drawDetail(jobId, ns = "") {
   $("d-learning-panel").hidden = true;
   $("d-progress-panel").hidden = true;
 
+  // The spec panel's summary says which image this job ran, so a folded panel
+  // still answers the question it is most often opened for.
+  $("d-spec-note-line").textContent = "";
+  // Forget the previous open, so arriving at this screen always reapplies the
+  // defaults for the phase the job is in NOW.
+  openedJob = null;
+
   // Once per open, not per poll — see the panel's comment in index.html.
   drawArtifacts(jobId);
   $("d-files-refresh").onclick = () => drawArtifacts(jobId);
@@ -569,6 +593,12 @@ async function drawDetail(jobId, ns = "") {
   call(`/v1/jobs/${jobId}/spec` + nsQuery()).then((spec) => {
     lastSpec = spec;
     $("d-spec").textContent = JSON.stringify(spec.spec, null, 2);
+    // The folded panel still answers the question it is most often opened for.
+    // The tag and not the whole address: an ECR address opens with the twelve
+    // digits of the AWS account id, which is the part that does NOT tell one
+    // image from another (DDPSRUN-IMAGES in index.html).
+    const image = String(spec.spec?.image || "");
+    $("d-spec-note-line").textContent = image ? image.split("/").pop() : "";
     $("d-spec-note").innerHTML = spec.redacted.length
       ? note("info", `${spec.redacted.join(", ")} came from a Kubernetes Secret. ` +
              `Neither the value nor the Secret's name ever reaches this page.`)
@@ -618,6 +648,10 @@ async function drawDetail(jobId, ns = "") {
     drawCompare(job);
     drawStopButton(jobId, job);
     drawTerminal(jobId, job);
+    // After the panels know whether they have anything, and before the reader
+    // has had time to fold one themselves. Guarded so the poll does not keep
+    // reapplying it (HYPERUN-DETAIL-OPEN-STATE).
+    drawOpenState(jobId, job);
     await Promise.all([drawMetrics(jobId, job), drawLog(jobId)]);
     // A finished job has nothing left to ask about. Stopping the timers here is
     // also where the billing for this screen stops.
@@ -876,7 +910,10 @@ function drawTerminal(jobId, job) {
 
   if (termUI.open) closeTerminal("");
   termUI.jobKey = key;
-  $("d-terminal-note").textContent = "";
+  // A closed Terminal panel says what opening it costs, because that is the
+  // whole reason it is the one panel that never opens by itself.
+  $("d-terminal-note").textContent =
+    "a real shell on the rented machine. It bills while it is open";
   help.textContent =
     "A real PTY on the rented machine: vim, top, Ctrl+C and the arrow keys all " +
     "work. RunPod jobs rent a container with no apiserver to exec through, so " +
@@ -914,7 +951,7 @@ async function drawArtifacts(jobId) {
       `<tr><td><span class="name">${esc(f.name)}</span></td>` +
       `<td class="num">${esc(humanSize(f.size_bytes))}</td>` +
       `<td class="num dim">${esc(when(f.last_modified))}</td>` +
-      `<td><a class="flat tiny" style="padding:4px 10px" href="${esc(f.url)}" ` +
+      `<td><a class="flat tiny" href="${esc(f.url)}" ` +
       `target="_blank" rel="noopener">Download</a></td></tr>`
     ).join("") +
     `</tbody></table></div>`;
@@ -1080,12 +1117,16 @@ async function drawMetrics(jobId, job) {
   const p = m.progress;
   $("d-progress-panel").hidden = !p;
   if (p) {
-    $("d-progress-note").textContent = p.steady
-      ? `${p.seconds_per_step.toFixed(2)}s per step`
-      : "the rate has not settled yet, so the remaining time will move around";
+    // THE NUMBER FIRST, because this line is what a CLOSED Progress panel shows
+    // and "31.40s per step" does not answer "how far has it got" (20.6). The
+    // rate is still here, after the thing the reader came for.
+    $("d-progress-note").textContent =
+      `${p.percent.toFixed(0)}% · ${p.step}/${p.total_steps} steps · ` + (p.steady
+        ? `${p.seconds_per_step.toFixed(1)}s per step, ${p.remaining} left`
+        : "the rate has not settled yet, so the remaining time will move around");
     $("d-progress").innerHTML =
       `<div class="bar${p.percent >= 100 ? " done" : ""}"><i style="width:${Math.min(100, p.percent)}%"></i></div>` +
-      `<div class="facts" style="margin-top:16px">` +
+      `<div class="facts">` +
       fact("Progress", `${p.percent.toFixed(1)}% (${p.step}/${p.total_steps} steps)`) +
       fact("Elapsed", p.elapsed) +
       fact("Remaining", p.remaining) +
@@ -1156,20 +1197,19 @@ async function drawMetrics(jobId, job) {
 /* One colour per card. Four is what a p4d.24xlarge-shaped job needs and the
    list wraps beyond that; they are the palette's own accents rather than new
    values, so the chart stays readable in both themes. */
-const CARD_COLORS = ["var(--accent)", "var(--run)", "var(--ok)", "var(--bad)"];
+const CARD_COLORS = ["var(--primary)", "var(--run)", "var(--ok)", "var(--bad)"];
 
 /* Per-card summary, drawn only when there is more than one card: with four
    cards the four "Peak memory" numbers are the first thing a post-mortem
    compares, and a chart cannot be read to the megabyte. */
 function cardTable(cards) {
-  return `<div class="scroll" style="margin-top:12px"><table><thead><tr>` +
+  return `<div class="scroll"><table><thead><tr>` +
     ["GPU", "Peak memory", "Peak utilisation", "Average utilisation", "Samples"]
       .map((h) => `<th>${h}</th>`).join("") +
     `</tr></thead><tbody>` +
     cards.map((c, i) => {
       const p = c.peak || c.latest || {};
-      const swatch = `<i style="display:inline-block;width:9px;height:9px;border-radius:2px;` +
-        `background:${CARD_COLORS[i % CARD_COLORS.length]};margin-right:6px"></i>`;
+      const swatch = `<i class="swatch" style="background:${CARD_COLORS[i % CARD_COLORS.length]}"></i>`;
       return `<tr><td>${swatch}GPU ${c.gpu_index}</td>` +
         `<td class="num">${p.memory_used_mib == null ? "-" :
           `${p.memory_used_mib} / ${p.memory_total_mib} MiB (${(p.memory_percent || 0).toFixed(0)}%)`}</td>` +
@@ -1206,7 +1246,7 @@ function cardTable(cards) {
    chart now names its unit in the title, labels three y ticks in that unit,
    and prints the wall-clock time of its first and last sample underneath. */
 function chartBlock(title, lines, pick, yMax, yLabels) {
-  const W = 600, H = 120, pad = 4, left = 44;   // left: room for y tick labels
+  const W = 600, H = 120, pad = 4;
   const yAt = (f) => H - pad - f * (H - pad * 2);
   // Every line is drawn on the SAME x scale — the longest series' length — so
   // four cards sampled together lie on top of each other instead of one being
@@ -1215,18 +1255,16 @@ function chartBlock(title, lines, pick, yMax, yLabels) {
   const polyline = ({ series, color }) => {
     if (!series.length) return "";
     const points = series.map((s, i) => {
-      const x = left + (span ? i / span : 0) * (W - left - pad);
+      const x = (span ? i / span : 0) * W;
       const v = Math.max(0, Math.min(yMax, pick(s)));
       return `${x.toFixed(1)},${yAt(v / yMax).toFixed(1)}`;
     }).join(" ");
     return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.6" ` +
-           `stroke-linejoin="round" stroke-linecap="round"/>`;
+           `stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
   };
-  const grid = [0, 0.5, 1].map((f, i) =>
-    `<line x1="${left}" y1="${yAt(f).toFixed(1)}" x2="${W}" y2="${yAt(f).toFixed(1)}" ` +
-    `stroke="var(--line)" stroke-width="1"/>` +
-    `<text x="${left - 6}" y="${(yAt(f) + 4).toFixed(1)}" text-anchor="end" ` +
-    `font-size="11" fill="var(--ink-dim)">${esc(yLabels[i])}</text>`).join("");
+  const grid = [0, 0.5, 1].map((f) =>
+    `<line x1="0" y1="${yAt(f).toFixed(1)}" x2="${W}" y2="${yAt(f).toFixed(1)}" ` +
+    `stroke="var(--border)" stroke-width="1" vector-effect="non-scaling-stroke"/>`).join("");
   const legend = lines.length > 1
     ? `<div class="legend">` + lines.map((l) =>
         `<span><i style="background:${l.color}"></i>${esc(l.label)}</span>`).join("") + `</div>`
@@ -1234,34 +1272,48 @@ function chartBlock(title, lines, pick, yMax, yLabels) {
   // The x axis is read off the LONGEST series: every card is sampled by the
   // same watcher loop, so their stamps are the same to within one interval.
   const longest = lines.reduce((a, b) => (b.series.length > a.series.length ? b : a), lines[0]);
-  return `<div style="margin-top:14px">` +
-    `<p class="dim small" style="margin:0 0 4px">${esc(title)}</p>` +
-    // Default preserveAspectRatio (uniform scale), NOT "none": the tick labels
-    // are text, and a non-uniform stretch would distort every glyph.
-    `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" ` +
-    `aria-label="${esc(title)} over time">` + grid +
-    lines.map(polyline).join("") +
-    `</svg>` +
+  // Top to bottom, which is the reverse of the fractions the grid is drawn from.
+  const ticks = [...yLabels].reverse()
+    .map((t) => `<span>${esc(t)}</span>`).join("");
+  return `<div class="chart-block">` +
+    `<p class="dim small">${esc(title)}</p>` +
+    /* HYPERUN-CHART-TEXT. NO TEXT INSIDE THE SVG, and that is what lets the box
+       be any shape.
+
+       The tick labels used to be `<text>` in the viewBox. That forced a uniform
+       scale (`preserveAspectRatio` left at its default), because a non-uniform
+       one distorts every glyph -- and a uniform scale into a box of a different
+       ratio letterboxes, which put the chart 700px wide inside a 934px panel
+       with the x-axis row lined up against nothing.
+
+       Matching the ratio fixed the letterboxing and immediately showed the
+       other half of the problem: text in a scaled viewBox scales too, so a
+       12px label rendered at 12 x 1.557 = 19px, larger than any heading on the
+       screen. Both measured 2026-09-19.
+
+       So the labels are HTML beside and below the SVG, at a real 12px, and the
+       SVG holds only lines. `preserveAspectRatio="none"` is then free -- a
+       stretched time series is exactly what is wanted -- and
+       `vector-effect="non-scaling-stroke"` keeps the strokes from stretching
+       with it. */
+    `<div class="chart-wrap">` +
+      `<div class="chart-y num">${ticks}</div>` +
+      `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" ` +
+      `aria-label="${esc(title)} over time">` + grid +
+      lines.map(polyline).join("") +
+      `</svg>` +
+    `</div>` +
     xAxis(longest ? longest.series : []) +
     legend +
     `</div>`;
 }
 
-/* The x axis: five clock times under the plot, read off the samples themselves.
-   It used to be the first and last stamp only, which is a caption rather than
-   an axis — a reader could see WHEN the run started and ended and could not put
-   a bump anywhere in between (user report, 2026-09-08). Five is what fits at
-   this width without the labels touching. The stamps come from the apiserver's
-   own timestamps on the log lines (GpuSample.time), so a gap in the readings
-   shows up as an uneven spacing of the labels, which is honest: the points are
-   evenly spaced on screen because they are evenly spaced in the SERIES, not in
-   time. */
 function xAxis(series) {
   const stamped = series.filter((s) => s.time);
   if (stamped.length < 2) return "";
   const at = (f) => stamped[Math.round(f * (stamped.length - 1))].time;
   const labels = [0, 0.25, 0.5, 0.75, 1].map(at);
-  return `<div class="row" style="justify-content:space-between;padding-left:44px">` +
+  return `<div class="row x-axis">` +
     labels.map((t) => `<span class="dim tiny num">${esc(when(t))}</span>`).join("") +
     `</div>`;
 }
@@ -1447,19 +1499,33 @@ async function drawScripts() {
   const ordered = [...groups.keys()].sort((a, b) =>
     (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
 
+  /* One accordion per script, FOLDED. This screen is a list of scripts and it
+     used to print every one of them in full, so a person with a dozen jobs got a
+     dozen open code panels and had to scroll past all of them to compare two
+     names. The summary carries what tells them apart -- name, length, how often
+     it has been run, when it last was -- and the text is one click away.
+
+     Use this / Download / Copy sit on the SUMMARY, so the two things somebody
+     comes here to do need no unfolding at all. A button inside a summary would
+     normally toggle the panel as well; HYPERUN-SUMMARY-BUTTONS stops that once,
+     for every summary in the app. */
   const card = (row, i) => {
     const last = row.created_at ? when(row.created_at) : "";
     const times = row.used > 1 ? `, run ${row.used} times` : "";
-    return `<div class="panel">
-      <header>
-        <h2>${esc(row.name || "(unnamed)")}</h2>
-        <span class="dim small">${row.lines} line(s)${esc(times)}${last ? "  last run " + esc(last) : ""}</span>
-        <div class="spacer"></div>
-        <button class="go tiny use-script" data-i="${i}" style="padding:4px 10px">Use this</button>
-        <button class="flat tiny get-script" data-i="${i}" style="padding:4px 10px">Download</button>
-      </header>
-      <pre class="spec">${esc(row.script)}</pre>
-    </div>`;
+    return `<details class="acc">
+      <summary>
+        <span class="acc-title">${esc(row.name || "(unnamed)")}</span>
+        <span class="acc-note">${row.lines} line(s)${esc(times)}${last ? " &middot; last run " + esc(last) : ""}</span>
+        <span class="spacer"></span>
+        <span class="acc-summary-actions">
+          <button class="go tiny use-script" data-i="${i}">Use this</button>
+          <button class="flat tiny get-script" data-i="${i}">Download</button>
+        </span>
+      </summary>
+      <div class="acc-body">
+        <div class="code" data-copy><pre><code>${esc(row.script)}</code></pre></div>
+      </div>
+    </details>`;
   };
 
   $("scripts-list").innerHTML = ordered.map((who) => {
@@ -1471,9 +1537,12 @@ async function drawScripts() {
     const why = who ? "" : note("info",
       "These jobs were not created through this service, so no submitter was "
       + "recorded on them and it cannot be recovered afterwards.");
-    return `<h2 style="margin:18px 0 6px">${heading}</h2>${why}`
+    return `<h2 class="owner-heading">${heading}</h2>${why}`
       + mine.map(({ row, i }) => card(row, i)).join("");
   }).join("");
+
+  // The blocks above were just created, so they have no buttons yet.
+  wireCopy($("scripts-list"));
 
   $("scripts-list").querySelectorAll("button.get-script").forEach((b) => {
     b.onclick = () => {
@@ -1706,9 +1775,12 @@ async function drawRegionChoices() {
     priceRows = answer;
     list.innerHTML = (answer.regions || [])
       .map((r) => `<option value="aws/${esc(r)}">`).join("");
-    $("f-regions-note").innerHTML = note("info",
-      `Blank means ${esc(answer.default_region)} and nothing else \u2014 an AWS ask `
-      + `that names no region gets the operator's one default, not a search. `
+    // noteHtml, not note: the link below is ours and has to stay a link. Every
+    // value from the answer is still passed through esc() by hand.
+    $("f-regions-note").innerHTML = noteHtml("info",
+      `Blank means ${esc(answer.default_region || "the operator's default region")} `
+      + `and nothing else \u2014 an AWS ask that names no region gets the `
+      + `operator's one default, not a search. `
       + `${(answer.regions || []).length} AWS regions are on offer. `
       + `Comparing prices across vendors: <a href="https://gpus.skypilot.co/" `
       + `target="_blank" rel="noopener">GPU Compass</a>, which reads the same `
@@ -1754,7 +1826,11 @@ async function drawImages(force) {
      three are the three newest rather than an arbitrary slice, and the search box above filters
      by repository name so the wall can be cut down to what is being looked for. */
   imageRows = rows;
-  $("f-image-search-row").hidden = rows.length < 2;
+  // AND the picker has to be open. This line said only `rows.length < 2`, so the
+  // view-entry fetch left a "filter by repository" box sitting under the Image
+  // field with no list under it to filter -- a control for something not on
+  // screen. Pre-existing; found by looking at the screen 2026-09-19.
+  $("f-image-search-row").hidden = $("f-image-picker").hidden || rows.length < 2;
   renderImagePicker("");
 }
 
@@ -1779,9 +1855,9 @@ function renderImagePicker(filter) {
         const when = r.pushed_at ? String(r.pushed_at).slice(0, 10) : "";
         const button = (a, i) =>
           `<button class="flat tiny pick" type="button" data-image="${esc(a)}"`
-          + ` style="padding:3px 8px">${esc(r.tags[i] || a)}</button>`;
+          + `>${esc(r.tags[i] || a)}</button>`;
         if (!addrs.length) {
-          return `<div style="margin:6px 0">`
+          return `<div class="pick-row">`
             + `<div class="dim tiny mono">${esc(r.repository)}${when ? "  " + esc(when) : ""}</div>`
             + `<div class="row"><span class="dim tiny">no tagged image</span></div></div>`;
         }
@@ -1790,10 +1866,10 @@ function renderImagePicker(filter) {
           .map((a, i) => button(a, i + TAGS_SHOWN)).join(" ");
         const more = rest
           ? ` <button class="flat tiny more-tags" type="button" data-r="${ri}"`
-            + ` style="padding:3px 8px">+${addrs.length - TAGS_SHOWN} more</button>`
+            + `>+${addrs.length - TAGS_SHOWN} more</button>`
             + `<span class="row rest-tags" data-r="${ri}" hidden>${rest}</span>`
           : "";
-        return `<div style="margin:6px 0">`
+        return `<div class="pick-row">`
           + `<div class="dim tiny mono">${esc(r.repository)}${when ? "  " + esc(when) : ""}</div>`
           + `<div class="row">${head}${more}</div></div>`;
       }).join("")
@@ -1861,7 +1937,7 @@ async function drawScriptReuse() {
       `<td class="num">${r.lines}</td>` +
       `<td class="num">${r.used}</td>` +
       `<td><button class="go tiny reuse" type="button" data-i="${i}" ` +
-      `style="padding:3px 10px">Load</button></td></tr>`).join("") +
+      `>Load</button></td></tr>`).join("") +
     `</tbody></table></div>`;
 
   box.querySelectorAll("button.reuse").forEach((b) => {
@@ -1887,23 +1963,26 @@ $("f-script-reuse-toggle").onclick = () => {
 
 $("f-image-search").oninput = () => renderImagePicker($("f-image-search").value);
 
-// DDPSRUN-TRAINING-SIZE. Five optional numeric boxes, folded away. They are the only input the
-// runtime estimate has, so the button says what opening them buys rather than hiding that.
+// DDPSRUN-TRAINING-SIZE. Five optional numeric boxes. They are the only input the runtime
+// estimate has, so the screen says what filling them buys rather than hiding that.
+//
+// THE FOLDING IS THE `Advanced` ACCORDION NOW, not a button of its own -- this screen had
+// three different home-made folding devices and they are one device (20.6). What survives
+// from the old handler is the part that matters: A FOLDED BOX STILL SENDS WHAT IS IN IT,
+// so a number typed and then folded away has to stay visible as a fact on the closed
+// summary, or the form carries a value nothing on screen mentions.
 const SIZE_FIELDS = ["f-pairs", "f-epochs", "f-rowtokens", "f-cap", "f-batch"];
 
-$("f-size-toggle").onclick = () => {
-  const box = $("f-size-box");
-  box.hidden = !box.hidden;
-  $("f-size-toggle").textContent = box.hidden
-    ? "Add training size, so the cost step can answer how long it will take"
-    : "Hide training size";
-  // A folded box still SENDS what is in it, so a number typed and then hidden has to stay
-  // visible as a fact. Without this the form would carry a value nothing on screen mentions.
+function drawSizeNote() {
   const filled = SIZE_FIELDS.filter((id) => $(id).value).length;
-  $("f-size-note").textContent = box.hidden && filled
-    ? `${filled} value${filled === 1 ? "" : "s"} set and still sent`
-    : "";
-};
+  const text = filled ? `${filled} value${filled === 1 ? "" : "s"} set and still sent` : "";
+  $("f-size-note").textContent = text;
+  const summary = $("f-advanced")?.querySelector(".acc-note");
+  if (summary) {
+    summary.textContent = text || "environment, and the sizes the cost estimate needs";
+  }
+}
+SIZE_FIELDS.forEach((id) => { $(id).oninput = drawSizeNote; });
 
 $("f-image-toggle").onclick = () => {
   const box = $("f-image-picker");
@@ -1941,10 +2020,33 @@ $("s1-next").onclick = async () => {
 
   const findings = v.findings || [];
   const errors = findings.filter((f) => f.level === "error");
+  /* GROUPED BY LEVEL, and only the errors stand open (20.6). A validate answer
+     is commonly a couple of errors under a dozen advisories, and printing all of
+     them flat puts the two things that BLOCK the submission in amongst the ten
+     that do not. The heading of each group carries its count, so folding one
+     away does not hide that it exists. */
+  const LEVELS = [
+    { level: "error", kind: "err", open: true,
+      title: (k) => `${k} error${k === 1 ? "" : "s"}`,
+      why: "these stop the job being submitted" },
+    { level: "warning", kind: "warn", open: false,
+      title: (k) => `${k} warning${k === 1 ? "" : "s"}`,
+      why: "the job can be submitted; these are likely to cost you a run" },
+    { level: "info", kind: "info", open: false,
+      title: (k) => `${k} note${k === 1 ? "" : "s"}`,
+      why: "nothing to do" },
+  ];
   $("s2-findings").innerHTML = findings.length
-    ? findings.map((f) =>
-        note(f.level === "error" ? "err" : f.level === "warning" ? "warn" : "info",
-             f.message, f.fix)).join("")
+    ? LEVELS.map(({ level, kind, open, title, why }) => {
+        const mine = findings.filter((f) => f.level === level);
+        if (!mine.length) return "";
+        return `<details class="acc"${open ? " open" : ""}>`
+          + `<summary><span class="acc-title">${esc(title(mine.length))}</span>`
+          + `<span class="acc-note">${esc(why)}</span><span class="spacer"></span></summary>`
+          + `<div class="acc-body">`
+          + mine.map((f) => note(kind, f.message, f.fix)).join("")
+          + `</div></details>`;
+      }).join("")
     : note("info", "Nothing to flag.");
 
   /* DDPSRUN-UI-NOT-CHECKED. What no check could look at, printed under the findings.
@@ -1959,8 +2061,13 @@ $("s1-next").onclick = async () => {
      not a verdict; open on every visit it would push the findings themselves off the screen. */
   const notChecked = v.not_checked || [];
   $("s2-not-checked").innerHTML = notChecked.length
-    ? `<details><summary class="dim small">${notChecked.length} thing(s) no check could look at</summary>`
-      + `<ul class="dim small">${notChecked.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>`
+    ? `<details class="acc"><summary>`
+      + `<span class="acc-title">${notChecked.length} thing(s) no check could look at</span>`
+      + `<span class="acc-note">a clean result is not the same as a complete one</span>`
+      + `<span class="spacer"></span></summary>`
+      + `<div class="acc-body"><ul class="dim small">`
+      + notChecked.map((x) => `<li>${esc(x)}</li>`).join("")
+      + `</ul></div></details>`
     : "";
 
   // With an error present the next button does not work (15.10), and it says
@@ -2117,6 +2224,7 @@ async function drawTeam() {
   try { s = await call("/v1/stats"); }
   catch (err) { $("team-body").innerHTML = note("err", err.message); return; }
 
+  if (s.team) { knownTeam = s.team; drawWho(); }
   $("team-note").textContent = s.team ? `team ${s.team}` : "";
   $("team-cards").innerHTML = [
     card("Jobs", s.jobs),
@@ -2137,8 +2245,8 @@ async function drawTeam() {
       rows.map((m) => `<tr>` +
         `<td>${esc(m.user)}</td>` +
         `<td class="num">${m.jobs}</td>` +
-        `<td class="num" style="color:var(--ok)">${m.succeeded}</td>` +
-        `<td class="num"${m.failed ? ' style="color:var(--bad)"' : ""}>${m.failed}</td>` +
+        `<td class="num ok-ink">${m.succeeded}</td>` +
+        `<td class="num${m.failed ? " bad-ink" : ""}">${m.failed}</td>` +
         `<td class="num">${m.running}</td>` +
         `<td class="num">${m.gpu_hours.toFixed(1)}</td>` +
         `<td class="num">$${m.cost_usd.toFixed(2)}</td>` +
@@ -2176,7 +2284,7 @@ async function drawTeam() {
    after 2026-09-08, when a bare "$62" was read as the whole bill: the vendor
    had charged about $103 for the same work, and every missing dollar had one
    of these four explanations. */
-const SCOPE_NOTE = `<p class="dim tiny" style="margin-top:12px">` +
+const SCOPE_NOTE = `<p class="dim tiny scope-note">` +
   `These figures are a tracked floor, not the bill: only jobs still in the ` +
   `cluster count (a job deleted, or resubmitted under the same name, takes its ` +
   `record with it), hours start at each job's own startedAt (jobs finished ` +
@@ -2223,7 +2331,7 @@ async function drawVendors() {
         `<td class="num">${v.jobs}</td>` +
         `<td class="num">${v.gpu_hours.toFixed(1)}</td>` +
         `<td class="num">$${v.cost_usd.toFixed(2)}</td>` +
-        `<td class="num"${v.unpriced_jobs ? ' style="color:var(--run)"' : ""}>${v.unpriced_jobs}</td>` +
+        `<td class="num${v.unpriced_jobs ? " warn-ink" : ""}">${v.unpriced_jobs}</td>` +
         `</tr>`).join("") +
       `</tbody></table></div>`
     : empty("No vendor is configured on this deployment.", "New job", "submit"))
@@ -2243,6 +2351,134 @@ document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-goto]");
   if (b) go(b.dataset.goto);
 });
+
+/* HYPERUN-SUMMARY-BUTTONS. A <button> inside a <summary> is still inside the
+   summary, so a click on Copy or Refresh ALSO folds the panel it was copying
+   from. One listener in the capture phase for all of them, rather than a
+   stopPropagation in each handler -- there are five and the sixth would be
+   the one somebody forgets. */
+document.addEventListener("click", (e) => {
+  const inSummary = e.target.closest("summary");
+  if (!inSummary) return;
+  const control = e.target.closest("button, a, input, select");
+  if (!control || control === inSummary) return;
+  // preventDefault ALONE, and deliberately not stopPropagation. Folding is the
+  // summary's DEFAULT ACTION, so cancelling it is enough -- while stopping the
+  // event in the capture phase would keep it from ever reaching the button,
+  // and the button would stop doing its own job.
+  e.preventDefault();
+}, true);
+
+/* HYPERUN-COPY. Every `.code` block gets the same button, wired once. There used
+   to be exactly ONE copy button in the app -- on the submitted spec -- while the
+   install line, the login line, the plugin lines, the logs and every saved
+   run.sh were text you had to select by hand (20.1).
+
+   WHY IT IS NOT JUST `navigator.clipboard`. That object is undefined outside a
+   secure context, and this page is opened over plain http on a laptop often
+   enough to matter (the harness in 20.9 is one). So: the async API, then the
+   old execCommand, and if both are gone, SELECT THE TEXT so the reader can
+   press the shortcut themselves. A button that silently does nothing is worse
+   than no button. */
+async function copyText(text, button, source) {
+  let ok = false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    }
+  } catch { /* not focused, no user activation, or refused: try the old way */ }
+  if (!ok) {
+    const scratch = document.createElement("textarea");
+    scratch.value = text;
+    scratch.setAttribute("readonly", "");
+    scratch.style.position = "fixed";
+    scratch.style.opacity = "0";
+    document.body.appendChild(scratch);
+    scratch.select();
+    try { ok = document.execCommand("copy"); } catch { ok = false; }
+    scratch.remove();
+  }
+  /* BOTH WAYS FAILED, so the last thing left is to hand the reader a selection
+     they can copy themselves. THE SELECTION IS THE WHOLE POINT: saying "Press
+     Ctrl+C" over an unselected block is worse than saying nothing, because the
+     shortcut then copies whatever the reader happened to have selected
+     elsewhere and they have no reason to check. */
+  if (!ok && source) {
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(source);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch { /* nothing further to offer. */ }
+  }
+  if (button) {
+    button.textContent = ok ? "Copied" : (source ? "Selected - press Ctrl+C" : "Could not copy");
+    button.classList.toggle("done", ok);
+    setTimeout(() => {
+      button.textContent = "Copy";
+      button.classList.remove("done");
+    }, 1800);
+  }
+  return ok;
+}
+
+/* Give every `[data-copy]` block a button, and wire the ones written by hand in
+   index.html. Runs on load and again after any render that can add blocks. */
+function wireCopy(root = document) {
+  root.querySelectorAll("[data-copy]").forEach((block) => {
+    if (block.dataset.copyWired) return;
+    block.dataset.copyWired = "1";
+    let button = block.querySelector(":scope > .copy");
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.className = "copy";
+      button.textContent = "Copy";
+      button.setAttribute("aria-label", "Copy to clipboard");
+      block.appendChild(button);
+    }
+    button.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // The `<pre>` and not the block: the button's own label is inside the
+      // block too, and copying "Copy" onto the end of a command is the kind of
+      // defect nobody reports because it looks like their own paste.
+      const source = block.querySelector("pre") || block;
+      copyText(source.textContent || "", button, source);
+    };
+  });
+}
+
+/* HYPERUN-THEME-TOGGLE. Three states. "system" is stored as the ABSENCE of a
+   key, so a browser that has never touched the control and one that has chosen
+   Auto are the same state -- there is no third value to keep in step with the
+   <head> boot script. */
+function currentTheme() {
+  try { return localStorage.getItem("hyperun.theme") || "system"; } catch { return "system"; }
+}
+function setTheme(next) {
+  try {
+    if (next === "system") localStorage.removeItem("hyperun.theme");
+    else localStorage.setItem("hyperun.theme", next);
+  } catch { /* private mode: the choice lasts for this page only. */ }
+  if (next === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = next;
+  drawTheme();
+}
+function drawTheme() {
+  const now = currentTheme();
+  document.querySelectorAll("#theme button[data-theme-set]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.themeSet === now);
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === now));
+  });
+}
+document.querySelectorAll("#theme button[data-theme-set]").forEach((b) => {
+  b.onclick = () => setTheme(b.dataset.themeSet);
+});
+drawTheme();
+wireCopy();
 
 document.querySelectorAll("nav button[data-view]").forEach((b) => {
   b.onclick = () => go(b.dataset.view);
@@ -2347,6 +2583,37 @@ $("d-again").onclick = () => {
    ★★ AND IT IS NOT THE SAME AS DELETE. Delete hands the machine back and the run is gone;
    pause keeps both. The confirm says which, because those are the two things a person is
    choosing between and the words alone do not carry it. */
+/* HYPERUN-DETAIL-OPEN-STATE. Which accordions stand open when a job is opened,
+   and it depends on the phase, because the panel that answers "what is going on"
+   is a different panel for a job that is running than for one that has finished
+   (the table is 20.6).
+
+   IT RUNS ONCE PER OPEN, NOT PER POLL. The 5-second poll calls the draw
+   functions again, and folding a panel the reader had just unfolded -- every
+   five seconds, forever -- would be worse than any default. `openedJob` is what
+   makes it once: it changes when the reader navigates to a different job, which
+   is the only moment the defaults should be reapplied. */
+let openedJob = null;
+function drawOpenState(jobId, job) {
+  if (openedJob === jobId) return;
+  openedJob = jobId;
+  const phase = job.phase;
+  const running = ["Running", "Starting", "Recovering"].includes(phase);
+  const finished = TERMINAL.includes(phase);
+  const open = (id, on) => { const el = $(id); if (el) el.open = on; };
+
+  open("d-compare-panel", phase === "Compared");
+  open("d-progress-panel", running);
+  open("d-gpu-panel", running);
+  open("d-learning-panel", running);
+  open("d-files-panel", finished);
+  open("d-log-panel", true);
+  // Never. Unfolding this one is free, but the button inside it starts a shell
+  // on a machine that is billing by the hour (HYPERUN-TERMINAL).
+  open("d-terminal-panel", false);
+  open("d-spec-panel", false);
+}
+
 function drawStopButton(jobId, job) {
   const button = $("d-pause");
   // A finished job has nothing to pause, and a Compared job never rented anything.
@@ -2420,11 +2687,13 @@ $("d-log-save").onclick = () => {
   if (w) { w.document.write("<pre>" + esc(logText) + "</pre>"); w.document.close(); }
 };
 
-$("d-spec-copy").onclick = () => {
-  navigator.clipboard?.writeText($("d-spec").textContent || "");
-  $("d-spec-copy").textContent = "Copied";
-  setTimeout(() => { $("d-spec-copy").textContent = "Copy"; }, 1500);
-};
+$("d-spec-copy").onclick = () =>
+  copyText($("d-spec").textContent || "", $("d-spec-copy"), $("d-spec"));
+
+// The logs were readable and not copyable: "Open in a tab" put them somewhere a
+// browser save would work, which is not the same thing as handing somebody the
+// text to paste into a message (20.1).
+$("d-log-copy").onclick = () => copyText(logText || "", $("d-log-copy"), $("d-log"));
 
 /* ------------------------------------------------------------------ sign in */
 
@@ -2537,7 +2806,13 @@ function emailInToken(token) {
 async function probeAccess() {
   if (!store.server || !store.token) return "out";
   try {
-    await call("/v1/namespaces");
+    const seen = await call("/v1/namespaces");
+    // The header's team name, from the one authenticated call that always runs
+    // before the app opens. Without this the corner stayed blank for anyone who
+    // landed on Jobs, Submit, Scripts or Vendors rather than Home or Team --
+    // those two are the only screens that read /v1/stats, and /v1/stats was the
+    // only thing setting it.
+    if (seen && seen.own) knownTeam = seen.own;
     return "in";
   } catch (err) {
     // `call` throws the server's `detail` string, so the status is gone by
@@ -2710,6 +2985,17 @@ function signOut() {
   showApp(false);
 }
 
+/* The two lines in the top-right corner: which team's jobs are on screen, and
+   who is looking at them. Called on open with whatever is already known, and
+   again by drawTeam/drawHome once /v1/stats has answered. */
+let knownTeam = "";
+function drawWho() {
+  const email = emailInToken(store.token);
+  $("who-team").textContent = knownTeam || "";
+  $("who-user").textContent = email || "";
+  $("who-user").title = email || "";
+}
+
 function showApp(on) {
   // The newcomer card is switched OFF here and turned on only by
   // showNewcomer(). It used to be left alone, and that is what made Sign out
@@ -2722,7 +3008,14 @@ function showApp(on) {
   $("bar").hidden = !on;
   document.querySelector("main").hidden = !on;
   if (on) {
-    $("who-team").textContent = store.server.replace(/^https?:\/\//, "").slice(0, 32);
+    // HYPERUN-WHO. This line used to read
+    //     store.server.replace(/^https?:\/\//, "").slice(0, 32)
+    // which printed `api.hyperun.ddps.cloud` in the corner 15.5 reserved for the
+    // team every screen inherits. The hostname is not something a reader on this
+    // screen can act on, and it was the only thing here. The email is known from
+    // the token without a request; the team arrives with the first /v1/stats and
+    // drawWho fills it in then.
+    drawWho();
     route();
   }
 }
