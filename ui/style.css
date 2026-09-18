@@ -865,7 +865,11 @@ input::placeholder, textarea::placeholder { color: var(--fg-muted); }
 /* ------------------------------------------------------------------ sign in */
 
 #login {
-  max-width: 400px;
+  /* `max-width` ALONE LEAVES NO GUTTER. At 375px the viewport is narrower than
+     the 400px cap, so the card took the full width and `margin: auto` had
+     nothing to centre -- border, corners and all ran into both edges of the
+     screen. This is the first thing anyone sees on a phone. */
+  width: min(400px, calc(100% - 2 * var(--sp-4)));
   margin: 96px auto;
   display: flex;
   flex-direction: column;
