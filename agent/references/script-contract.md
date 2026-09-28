@@ -1,21 +1,22 @@
-# run.sh 를 만들 때 지키는 것
+# What to keep to when you build a run.sh
 
-**전부 우리가 실험 8 건에서 손으로 메운 것들이다.** 규칙마다 그것이 어긋났을 때 실제로 무슨
-일이 일어났는지 적어 두었다. 근거 없는 규칙은 여기 없다.
+**Every one of these is something we filled in by hand across 8 experiments.** Each rule records
+what actually happened when it was broken. There is no rule here without evidence.
 
-이 파일은 사람이 쓴다. 자동 생성되지 않는다.
+This file is written by people. It is not generated.
 
 ---
 
-## 1. 저장소의 실제 구조를 문서와 대조한다
+## 1. Check the repository's real layout against its documentation
 
-연구자가 준 문서에 적힌 경로가 저장소 실제 구조와 다를 수 있다.
+The paths in the documentation a researcher hands over can differ from the repository's real
+layout.
 
-**실제로 있었던 일.** 문서는 `runs/gradedpairs_20260826/` 라고 했고 저장소는
-`dpo-training/runs/gradedpairs_20260826/` 였다. clone 직후에 죽었을 것이다.
+**What actually happened.** The documentation said `runs/gradedpairs_20260826/` and the repository
+had `dpo-training/runs/gradedpairs_20260826/`. It would have died right after the clone.
 
 ```bash
-# clone 직후에 확인한다. 25 시간 뒤에 아는 것보다 낫다
+# Check right after the clone. Better than finding out 25 hours later
 git clone --depth 1 "$REPO" src
 ls src/dpo-training/runs/*/pairs/ | head
 wc -l src/.../pairs/train_exp2_bank.jsonl
@@ -23,44 +24,46 @@ wc -l src/.../pairs/train_exp2_bank.jsonl
 
 ---
 
-## 2. 한 변수로 묶어야 하는 짝을 찾는다
+## 2. Find the pairs that must share one variable
 
-**어떤 명령이 경로를 쓰고 뒤의 명령이 그것을 읽으면, 그 둘을 이어 주는 것은 shell 에 없다.**
-어긋나도 앞의 명령은 성공하고, 뒤의 명령이 돌 때가 되어서야 드러난다. 짝은 여러 모양이다 —
-checkpoint 디렉터리와 `--resume-from`, tokenize 한 데이터셋과 `--data-dir`, 내보낸 ONNX 파일과
-그것을 읽는 server, 그리고 아래의 LoRA adapter. **한 변수를 만들어 양쪽에 쓴다.**
+**When one command writes a path and a later command reads it, nothing in the shell connects the
+two.** If they disagree, the first command still succeeds, and the mismatch shows only when the
+later one runs. The pairs come in many shapes — a checkpoint directory and `--resume-from`, a
+tokenized dataset and `--data-dir`, an exported ONNX file and the server that reads it, and the
+LoRA adapter below. **Make one variable and use it on both sides.**
 
-아래는 우리 job 의 예시다(TRL preference tuning + 추론).
+Below is an example from our job (TRL preference tuning + inference).
 
 ```bash
-# 이렇게 하지 않는다
+# Not this
 python train_dpo_m3.py --out adapter_bank_v2
-python gen_openrca_tasks_fast.py --lora /root/ab/adapter_bank      # 다르다
+python gen_openrca_tasks_fast.py --lora /root/ab/adapter_bank      # differs
 
-# 이렇게 한다
+# This
 ADAPTER="adapter_${JOB}"
 python train_dpo_m3.py --out "$ADAPTER"
 python gen_openrca_tasks_fast.py --lora "/root/ab/$ADAPTER"
 ```
 
-**어긋나면 앞이 먼저 끝나고 그 다음에 뒤가 실패한다.** AIOps 는 학습만 31 시간이다.
-`hyperun validate --script run.sh` 가 `--out`/`--lora` 라는 **그 두 flag 이름일 때만**
-`adapter-path-mismatch` 로 잡는다(recipe 층, DDPSRUN-CHECK-TIERS). 다른 이름을 쓰는 짝은
-검사가 못 본다 — 그래서 이 규칙이 검사보다 먼저 있다.
+**When they disagree, the first part finishes and only then does the second fail.** For AIOps,
+training alone is 31 hours. `hyperun validate --script run.sh` catches it as
+`adapter-path-mismatch` **only when the two flags are named `--out`/`--lora`** (recipe tier,
+DDPSRUN-CHECK-TIERS). A pair under other names is invisible to the check — which is why this rule
+comes before the check.
 
 ---
 
-## 3. 명령이 만들지 않는 산출물을 script 가 만든다
+## 3. Make the script produce the outputs no command produces
 
-연구자가 돌려받기로 한 파일 다섯 중 **셋을 학습 명령이 만들지 않았다.**
+Of the five files the researcher was to get back, **the training command did not produce three.**
 
-| 파일 | 누가 만드나 |
+| file | who makes it |
 |---|---|
-| `adapter_<작업명>/` | 학습 명령 |
-| `out_<작업명>.jsonl` | 추론 명령 |
-| `train_<작업명>.log` | **script 가 `tee` 로 만들어야 한다** |
-| `score_<작업명>.txt` | **script 가 `tee` 로 만들어야 한다** |
-| `pipfreeze_<작업명>.txt` | **script 가 `pip freeze` 로 만들어야 한다** |
+| `adapter_<job>/` | the training command |
+| `out_<job>.jsonl` | the inference command |
+| `train_<job>.log` | **the script has to make it with `tee`** |
+| `score_<job>.txt` | **the script has to make it with `tee`** |
+| `pipfreeze_<job>.txt` | **the script has to make it with `pip freeze`** |
 
 ```bash
 python train_dpo_m3.py ... 2>&1 | tee "train_${JOB}.log"
@@ -70,93 +73,97 @@ python score_openrca_corrected.py ... 2>&1 | tee "score_${JOB}.txt"
 
 ---
 
-## 4. 중간 확인점을 앞쪽에 둔다
+## 4. Put the intermediate checks early
 
 ```bash
-# clone 직후
-echo "학습 쌍 파일 줄 수: $(wc -l < "$PAIRS")"
-# 학습 시작 직후에 trainer 가 찍는 두 줄을 확인한다
-#   학습 쌍 N개
-#   [검증] 트레이너 최종 학습 표본 N / 투입 N     <- 둘이 같아야 탈락 0
+# right after the clone
+echo "pair file line count: $(wc -l < "$PAIRS")"
+# right after training starts, check the two lines the trainer prints (the trainer prints them
+# in Korean; the English is a gloss)
+#   학습 쌍 N개                                           N training pairs
+#   [검증] 트레이너 최종 학습 표본 N / 투입 N              [check] trainer's final samples N / fed N
+#                                                         <- the two must match for zero dropped
 ```
 
-**25 시간 돌고 나서 파일이 틀렸음을 아는 것보다 낫다.**
+**Better than finding out after 25 hours of running that the file was wrong.**
 
 ---
 
-## 5. 데이터셋과 모델에 닿는지를 학습 전에 확인한다
+## 5. Check that the dataset and the model are reachable before training
 
-**둘 다 컨테이너 밖에서 와야 하고, 둘 다 조용히 실패할 수 있습니다.** 그런데 실패가 드러나는
-시점이 다릅니다.
+**Both have to come from outside the container, and both can fail silently.** But they fail at
+different moments.
 
 ```
-학습 쌍       clone 직후에 없으면 바로 죽는다.  값이 싸다
-모델          다운로드가 몇 분 걸리고, 그 뒤에 죽는다
-              GPU 를 이미 빌린 뒤이므로 값이 비싸다
+training pairs   missing right after the clone, it dies at once.  Cheap
+model            the download takes minutes, and it dies after that
+                 the GPU is already rented by then, so it is expensive
 ```
 
-**그래서 학습 명령 앞에 확인 두 줄을 둡니다.**
+**So put two checking lines in front of the training command.**
 
 ```bash
-# 데이터
-test -s "$PAIRS" || { echo "학습 쌍 파일이 없거나 비어 있다: $PAIRS"; exit 1; }
-echo "학습 쌍 파일 줄 수: $(wc -l < "$PAIRS")"
+# data
+test -s "$PAIRS" || { echo "pair file is missing or empty: $PAIRS"; exit 1; }
+echo "pair file line count: $(wc -l < "$PAIRS")"
 
-# 모델.  받아 보기 전에는 닿는지 알 수 없다
+# model.  There is no knowing whether it is reachable until you ask
 python - <<'PY'
 import os
 from huggingface_hub import model_info
 name = os.environ["BASE_MODEL"]
-info = model_info(name)                       # 없거나 권한이 없으면 여기서 죽는다
-print(f"모델 확인: {name}, 파일 {len(info.siblings)}개")
+info = model_info(name)                       # dies here if it does not exist or you lack access
+print(f"model checked: {name}, {len(info.siblings)} files")
 PY
 ```
 
-- `model_info` 는 **가중치를 받지 않고 목록만 봅니다.** 몇 초에 끝납니다.
-- 이 두 줄이 통과하면 그 다음의 몇 시간짜리 학습이 데이터나 모델 때문에 죽지 않습니다.
+- `model_info` **lists the files without downloading the weights.** It takes seconds.
+- Once these two lines pass, the hours of training after them will not die for want of data or a
+  model.
 
-**닿지 않는 경우가 셋이고 원인이 다 다릅니다.**
+**There are three ways it can be unreachable, each with a different cause.**
 
-| 증상 | 원인 |
+| symptom | cause |
 |---|---|
-| `401` 또는 `403` | gated 모델이라 토큰이 필요하다. `secrets` 에 `HF_TOKEN` 을 넣는다 |
-| `404` | 이름이 틀렸다. 조직명까지 정확해야 한다 |
-| 연결 자체가 안 됨 | 원격이 인터넷으로 못 나가는 경우. vendor 설정 문제다 |
+| `401` or `403` | a gated model, so a token is needed. Put `HF_TOKEN` in `secrets` |
+| `404` | the name is wrong. The organisation part has to be exact too |
+| no connection at all | the remote cannot reach the internet. A vendor configuration problem |
 
-**저장소 안의 데이터가 Git LFS 로 관리되는 경우를 조심해야 합니다.** clone 은 되는데 파일
-내용이 포인터 한 줄뿐입니다. 줄 수를 찍으면 그것이 바로 보입니다.
+**Watch for data in the repository that is managed by Git LFS.** The clone succeeds, but the
+file's content is a single pointer. Printing the line count shows this at once.
 
 ```bash
-# LFS 포인터는 이렇게 생겼다.  줄 수가 3 이면 의심한다
+# An LFS pointer looks like this.  Suspect it when the line count is 3
 version https://git-lfs.github.com/spec/v1
 oid sha256:...
 size 12345678
 ```
 
-**결과를 올릴 자리도 같이 확인합니다.** 학습이 끝나고 나서 권한이 없다는 것을 알면 늦습니다.
+**Check the place results go to as well.** Finding out you have no permission after training ends
+is too late.
 
 ```bash
 echo probe | aws s3 cp - "$PACSRUN_RESULT_PATH.probe" \
   && aws s3 rm "$PACSRUN_RESULT_PATH.probe" \
-  || { echo "결과 경로에 쓸 수 없다: $PACSRUN_RESULT_PATH"; exit 1; }
+  || { echo "cannot write to the result path: $PACSRUN_RESULT_PATH"; exit 1; }
 ```
 
-`hyperun validate` 는 이것들을 대신 봐 주지 못합니다. **사용자의 저장소도, vendor 의 자격증명도
-서버에서는 보이지 않습니다.** 그래서 script 안에 두어야 합니다.
+`hyperun validate` cannot look at these for you. **Neither the user's repository nor the vendor's
+credentials are visible from the server.** So they have to be in the script.
 
 ---
 
-## 6. 어느 단계에서 죽어도 그때까지를 올린다
+## 6. Whatever stage it dies in, upload everything up to then
 
 ```bash
 upload_everything() {
-  # 파일을 만들고 -> announce 한다. announce 가 §13 의 규약이고, driver 가 회수한다.
+  # make the file -> announce it. Announcing is §13's contract, and the driver collects it.
   cp "train_${JOB}.log" /root/work/ && echo "PACSRUN_ARTIFACT=/root/work/train_${JOB}.log"
   if [ -d "$ADAPTER" ]; then
     tar czf /root/work/adapter.tar.gz "$ADAPTER" \
       && echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
   fi
-  # k3s fetch 가 배포되기 전까지 AWS/GCP 에서만 필요한 이중 안전장치 (§13 의 ★).
+  # A second safety net needed only on AWS/GCP until the k3s fetch is deployed (the ★ in §13).
   aws s3 cp "train_${JOB}.log" "$RESULT_PATH" || true
   [ -f /root/work/adapter.tar.gz ] \
     && aws s3 cp /root/work/adapter.tar.gz "$RESULT_PATH$ADAPTER.tar.gz" || true
@@ -164,91 +171,99 @@ upload_everything() {
 trap upload_everything EXIT
 ```
 
-`trap ... EXIT` 는 정상 종료에서도, 오류에서도, SIGTERM 에서도 실행된다. 없으면 20 시간째에
-죽었을 때 **돈은 다 쓰고 남는 것이 없다.** `hyperun validate` 가 `no-exit-trap` 으로 잡는다.
+`trap ... EXIT` runs on a normal exit, on an error, and on SIGTERM. Without it, a job that dies in
+its 20th hour has **spent all the money and left nothing.** `hyperun validate` catches this as
+`no-exit-trap`.
 
-**★ announce 를 trap 안에 두는 것이 왜 안전한가.** driver 는 workload 가 끝난 뒤에도 큐가
-빌 때까지 최대 600초 machine 을 잡고 기다린다(§13). 그래서 마지막 순간에 찍은 줄도 회수된다 —
-`aws s3 cp` 와 달리 announce 는 자격증명 만료와 무관하다.
+**★ Why announcing inside the trap is safe.** After the workload ends, the driver keeps the
+machine and waits up to 600 seconds for its queue to empty (§13). So even a line printed at the
+last moment is collected — unlike `aws s3 cp`, an announce does not depend on a credential that
+expires.
 
 ---
 
-## 7. 앞 단계의 산출물은 뒤 단계를 기다리지 말고 먼저 내보낸다
+## 7. Export an earlier stage's output first, instead of waiting for the later stage
 
 ```bash
 python train_dpo_m3.py ... | tee "train_${JOB}.log"
-tar czf /root/work/adapter.tar.gz "$ADAPTER"                       # 여기서 먼저 내보낸다
+tar czf /root/work/adapter.tar.gz "$ADAPTER"                       # export it here first
 echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
-python gen_openrca_tasks_fast.py ...                                 # 그 다음 추론
+python gen_openrca_tasks_fast.py ...                                 # then inference
 ```
 
-**긴 단계 뒤에 짧은 단계가 오는 job 은 모두 이 모양이다** — 학습 뒤 추론, pretraining 뒤
-평가, 학습 뒤 export. 25 시간 + 1 시간이면 **뒤의 1 시간에서 죽었을 때 앞의 25 시간을 잃으면
-안 된다.** announce 는 driver 에게 "이건 지금 가져가라" 는 뜻이고, 뒤 단계가 도는 동안 회수가
-병행된다.
+**Every job where a short stage follows a long one has this shape** — inference after training,
+evaluation after pretraining, export after training. At 25 hours + 1 hour, **dying in the last
+hour must not lose the first 25.** An announce tells the driver "take this now", and the fetch
+runs while the later stage does.
 
-### ★ 크기 때문에 뺀 폴더는, 그 안을 파일 단위로 한 번 더 본다
+### ★ A folder left out for its size: look inside it once more, file by file
 
-staging 에서 큰 산출물을 제외하는 것은 옳다. 학습이 회차마다 어댑터를 쓰고 그것이 수백 MB 면
-15분마다 내보낼 수 없다. **틀리는 자리는 그 다음이다: 폴더째 뺀 그 안에, 판정이나 재개에 필요한
-작은 파일이 같이 사는지 본 적이 있는가.**
+Excluding large outputs from staging is right. If training writes an adapter every round and it
+is hundreds of MB, it cannot be exported every 15 minutes. **The mistake comes next: has anyone
+looked at whether small files needed for a verdict or a resume live in the folder that was
+excluded whole?**
 
-2026-09-15 에 그렇게 잃을 뻔했다. 학습이 회차마다 두 가지를 같은 폴더에 쓴다.
+On 2026-09-15 we nearly lost one that way. Training writes two things to the same folder every
+round.
 
 ```
-runs/adapters/<에이전트>/iter_<k>/
-    adapter_model.safetensors     147 MB   ← 크기 때문에 staging 에서 뺐다
-    ppo_stats.jsonl                 2 KB   ← 따라 빠졌다
+runs/adapters/<agent>/iter_<k>/
+    adapter_model.safetensors     147 MB   ← excluded from staging for its size
+    ppo_stats.jsonl                 2 KB   ← went out with it
 ```
 
-`ppo_stats.jsonl` 은 스텝마다 kl 과 entropy 를 한 줄씩 붙이는 파일이고, **그 job 의 제출서가 정한
-유일한 계속/중단 판정 근거**였다. 폴더를 뺀 순간 그 파일은 데이터셋 하나가 3회차를 다 끝내고
-어댑터 묶음이 나갈 때까지 아무 데도 안 나갔다. 중간에 기계를 잃으면 판정할 수가 없다.
+`ppo_stats.jsonl` gets one line of kl and entropy per step, and it was **the only continue/stop
+criterion that job's submission sheet set**. From the moment the folder was excluded, that file
+went nowhere until one dataset had finished all three rounds and the adapter bundle went out.
+Losing the machine in between would have left nothing to decide on.
 
-**그래서 폴더가 아니라 파일로 가른다.**
+**So divide by file, not by folder.**
 
 ```bash
-# 이렇게 하지 않는다 — adapters 를 통째로 빼면 그 안의 작은 것도 같이 나간다
+# Not this — excluding adapters whole takes the small files in it out too
 ls -d runs/iter_* runs/C
 
-# 이렇게 한다 — 큰 것만 빼고, 판정에 쓰는 작은 것은 이름으로 집어 넣는다
+# This — leave out only the large ones, and name the small ones used for the verdict
 ls -d runs/iter_* runs/C runs/adapters/*/iter_*/ppo_stats.jsonl
 ```
 
-**어느 파일이 그것인지는 저장소가 말해주지 않는다.** 학습 script 가 어디에 쓰는지는 그 코드를
-읽어야 알고, 그것이 판정 근거라는 것은 제출서나 인수인계 문서를 읽어야 안다. 둘을 맞대 보는 것이
-이 규칙의 전부다: **제출서가 "이 값으로 판정한다" 고 말한 파일을 하나씩 짚어, staging 목록에 그
-경로가 실제로 들어 있는지 확인한다.**
+**The repository does not tell you which file that is.** Where the training script writes is
+learned by reading its code, and that a file is the basis of the verdict is learned by reading the
+submission sheet or the handover document. Setting the two side by side is the whole of this
+rule: **take each file the submission sheet says "decide by this value" about, and confirm that
+its path is actually in the staging list.**
 
 ---
 
-## 7b. 산출 경로가 고정이 아닌 script — 회수는 실제 폴더를 따라간다
+## 7b. A script whose output path is not fixed — collection follows the real folder
 
-감싸는 script 가 부르는 학습 script 에 산출 경로가 **박혀 있는** 경우가 있다. 인자도 환경변수도
-없이 `runs/` 가 파일 안 스물여섯 군데에 그대로 적혀 있는 식이다. 그런 코드를 고치지 않고 여러
-갈래로 돌리려면, 바깥에서 **그 이름이 가리키는 곳을 바꿔 끼우는** 방법을 쓴다.
+Sometimes the training script a wrapper calls has its output path **hard-coded**: `runs/` written
+literally in twenty-six places in the file, with no argument and no environment variable. To run
+such code in several branches without editing it, **swap what that name points to** from the
+outside.
 
 ```bash
 for ds in $DATASETS; do
-  mkdir -p out/$ds; rm -f runs; ln -sfn out/$ds runs     # 이름표를 옮겨 붙인다
-  bash their_train.sh                                     # 자기가 어디 쓰는지 모른다
-  rm -f runs                                              # 그리고 뗀다
+  mkdir -p out/$ds; rm -f runs; ln -sfn out/$ds runs     # move the label over
+  bash their_train.sh                                     # does not know where it writes
+  rm -f runs                                              # and take it off
 done
 ```
 
-**회수를 짤 때 그 이름표를 보면 안 된다.** `runs/` 는 한 갈래가 도는 동안에만 있고, 갈래 사이와
-job 이 끝난 뒤에는 없다. 그 이름으로 tar 하면 경계마다 빈 손이 되고, 마지막 묶음은 아무것도
-담지 못한다. **진짜 폴더(`out/`)를 직접 본다** — 이름표가 있든 없든 그쪽은 계속 자란다.
+**Do not look at that label when you write the collection.** `runs/` exists only while one branch
+runs; it is gone between branches and after the job ends. A tar by that name comes up empty at
+every boundary, and the final bundle holds nothing. **Look at the real folder (`out/`) directly**
+— it keeps growing whether the label is there or not.
 
-2026-09-15 에 감싸는 script 를 그렇게 고쳐서 냈다. 고치기 전 판이었다면 종료 시점의 tar 가
-비어 있었을 것이다.
+On 2026-09-15 we submitted a wrapper fixed this way. The version before the fix would have made an
+empty tar at the end.
 
 ---
 
-## 8. 긴 학습에는 checkpoint 감시를 붙인다
+## 8. Attach a checkpoint watcher to long training
 
-trainer 가 에폭마다 `checkpoint-NNN/` 을 로컬에 쓴다. 그것을 S3 로 옮기려면 **다 쓴 뒤에**
-압축해야 한다.
+The trainer writes `checkpoint-NNN/` locally every epoch. To move it to S3, compress it **after it
+has been fully written**.
 
 ```bash
 watch_checkpoints() {
@@ -257,10 +272,11 @@ watch_checkpoints() {
     for dir in "$ADAPTER"/checkpoint-*; do
       [ -d "$dir" ] || continue
       [ -f "$dir/.uploaded" ] && continue
-      # 120 초 동안 안 바뀐 것만 건드린다. 쓰는 중에 tar 를 뜨면 반쪽이 올라간다
+      # only touch what has not changed for 120 s. A tar taken mid-write uploads half
       [ -n "$(find "$dir" -newermt '-120 seconds' -print -quit)" ] && continue
-      # tar 를 먼저 닫고 그 다음에 announce 한다. 순서가 규칙이다 -- §13 의 크기 대조는
-      # 쓰는 중인 파일을 회수 실패로 만든다(잘린 파일이 올라가는 것이 아니라 안 올라간다).
+      # close the tar first, then announce. The order is the rule -- §13's size check turns a
+      # file still being written into a failed fetch (it is not uploaded truncated; it is not
+      # uploaded).
       tar czf "/root/work/$(basename "$dir").tar.gz" "$dir" \
         && echo "PACSRUN_ARTIFACT=/root/work/$(basename "$dir").tar.gz" \
         && touch "$dir/.uploaded"
@@ -270,14 +286,15 @@ watch_checkpoints() {
 watch_checkpoints & WATCH_PID=$!
 ```
 
-**감시 프로세스를 종료할 때 반드시 죽인다.** 살아 있으면 `tee` 가 EOF 를 못 받아서
-`PACSRUN_EXIT=` 이 영영 안 찍히고, driver 가 job 이 끝난 줄 모른다.
+**Always kill the watcher on exit.** If it stays alive, `tee` never gets EOF, so `PACSRUN_EXIT=`
+is never printed and the driver never learns the job has ended.
 
 ```bash
-# ★ 기본값을 0 으로 두지 않는다. `kill 0` 은 PID 0 이 아니라 **프로세스 그룹 전체**이고,
-# trap 이 watcher 시작 전에 불리면(위쪽 검사에서 die 하는 경우) 스크립트가 자기를 죽인다.
-# `set -u` 를 의식해 `${WATCH_PID:-0}` 를 붙이는 것은 자연스러운 반사인데, 그 순간
-# 조용한 자살로 바뀐다. 비었는지를 먼저 본다. 2026-09-09 에 한 세션이 스스로 만들고 잡았다.
+# ★ Do not default it to 0. `kill 0` is not PID 0 but **the whole process group**, and if the
+# trap fires before the watcher starts (dying in a check above), the script kills itself.
+# Adding `${WATCH_PID:-0}` with `set -u` in mind is a natural reflex, and at that moment it
+# turns into a silent suicide. Check for empty first. On 2026-09-09 one session made this
+# itself and caught it.
 on_exit() {
   [ -n "${WATCH_PID:-}" ] && kill "$WATCH_PID" 2>/dev/null || true
   upload_everything
@@ -287,121 +304,131 @@ trap on_exit EXIT
 
 ---
 
-## 9. GPU 상태는 이제 script 가 찍지 않아도 된다
+## 9. The script no longer has to print the GPU state
 
-**이 절은 더 이상 할 일이 아니다.** PACSrun 의 driver 가 `driver/common/gpu-watch.sh` 를
-workload 의 command 앞에 붙여서 직접 찍는다. vendor 를 가리지 않는다 — VM 을 주는 쪽(AWS, GCP)
-은 k3s pod 의 command 로, container 를 주는 쪽(RunPod)은 wrapper 로 같은 파일을 쓴다.
-grep anchor 는 `PACSRUN-GPU-WATCH` 다.
+**This section is no longer something to do.** PACSrun's driver puts `driver/common/gpu-watch.sh`
+in front of the workload's command and prints it itself. It does so on every vendor — the ones
+that give a VM (AWS, GCP) use the file as the k3s pod's command, and the one that gives a
+container (RunPod) as a wrapper. The grep anchor is `PACSRUN-GPU-WATCH`.
 
-원격 컨테이너에서 나오는 것이 stdout 한 줄기뿐이라는 사실은 그대로다. 달라진 것은 그 줄기에
-누가 써 넣느냐이고, **연구자가 잊어버려도 지표가 나온다**는 것이 이 변경의 전부다.
+That only one stream, stdout, comes out of the remote container is unchanged. What changed is who
+writes into that stream, and **the metrics appear even if the researcher forgets** — that is all
+this change is.
 
-찍히는 줄은 그대로다.
+The printed line is the same.
 
 ```
 PACSRUN_GPU=94,38200,45440,71,298
 ```
 
-- 형식은 `utilization,memory_used,memory_total,temperature,power` 다. 서버가 이 순서로 읽는다.
-- 30 초에 한 줄이면 25 시간짜리 job 에 3,000 줄이다. 학습 로그가 35 만 줄인 것에 비하면
-  무시할 수 있다.
-- **예전 script 에 `watch_gpu` 가 남아 있어도 깨지지 않는다.** 같은 줄이 30 초에 두 번 찍히고,
-  서버는 마지막 것을 쓴다. 지우고 싶으면 지워도 되고, 그대로 둬도 된다.
-- 지표가 안 보이면 로그에서 `PACSRUN_GPU_WATCH` 로 시작하는 줄을 찾아볼 것. watcher 가 떴는지,
-  아니면 image 에 `nvidia-smi` 가 없어서 건너뛰었는지를 그 줄이 말한다.
-- 이 다섯 값은 `nvidia-smi` 가 주는 전부이고, **"카드가 얼마나 일했나"는 아니다.**
-  `utilization.gpu` 의 정의가 "kernel 이 **하나라도** 돌던 시간의 비율"이라, H100 의 SM 132 개
-  중 하나만 써도 100% 로 나온다. 그 답을 주는 값은 DCGM 의 profiling field 인데
-  `CAP_SYS_ADMIN` 이 필요하고 RunPod 의 create 요청에는 capability field 자체가 없다.
+- The format is `utilization,memory_used,memory_total,temperature,power`. The server reads them in
+  this order.
+- One line every 30 seconds is 3,000 lines for a 25-hour job. Against a training log of 350,000
+  lines, that is negligible.
+- **An old script that still has `watch_gpu` does not break.** The same line is printed twice every
+  30 seconds, and the server uses the last one. Delete it if you like, or leave it.
+- If the metrics do not show, look in the log for lines starting with `PACSRUN_GPU_WATCH`. That line
+  says whether the watcher started, or whether it skipped because the image has no `nvidia-smi`.
+- These five values are everything `nvidia-smi` gives, and **they are not "how much the card
+  worked".** `utilization.gpu` is defined as "the fraction of time **at least one** kernel was
+  running", so using one of an H100's 132 SMs reads as 100%. The value that answers that question
+  is DCGM's profiling field, which needs `CAP_SYS_ADMIN`, and RunPod's create request has no
+  capability field at all.
 
 ---
 
-## 10. 구매 방식은 사용자에게 묻는다
+## 10. Ask the user how the machine is bought
 
-`--capacity-type` 은 **서버가 정하지 않습니다. 제출하는 사람이 정합니다.** 빠지면 제출이
-거절됩니다.
+**The server does not decide `--capacity-type`; the person submitting does.** Without it, the
+submit is refused.
 
 ```bash
-hyperun estimate ...          # 권고와 이유가 나온다
+hyperun estimate ...          # gives a recommendation and the reason
 hyperun submit ... --capacity-type on-demand
 ```
 
-- `on-demand` 는 비싸고 뺏기지 않습니다.
-- `spot` 은 싸고 도중에 회수될 수 있습니다. **checkpoint 가 없는 긴 학습에서는 전부 잃습니다.**
-- RunPod 은 spot 을 팔지 않아서, `spot` 으로 내면 RunPod 이 후보에서 빠집니다.
-- Shadeform 도 catalogue 에 spot 가격이 없습니다. 그래서 `spot` 으로 내면 가격을 매길 수 있는
-  vendor 는 AWS 하나뿐입니다. 실행할 수 있는 vendor 는 aws, runpod, shadeform 셋이고
-  `hyperun estimate` 가 셋 모두에 값을 매깁니다(2026-09-28 부터).
+- `on-demand` costs more and is not taken away.
+- `spot` is cheaper and can be reclaimed mid-run. **A long training run without checkpoints loses
+  everything.**
+- RunPod does not sell spot, so a `spot` submit drops RunPod from the candidates.
+- Shadeform has no spot prices in the catalogue either. So with `spot`, the only vendor that can be
+  priced is AWS. The vendors that can run a job are aws, runpod and shadeform, and
+  `hyperun estimate` prices all three (since 2026-09-28).
 
-**agent 가 대신 고르지 마십시오.** 권고와 이유를 보여 주고 사용자가 답하게 하십시오.
+**Do not choose on the user's behalf.** Show the recommendation and the reason, and let the user
+answer.
 
-## 11. 나머지 판단은 서버에 묻는다
+## 11. Ask the server for the other judgements
 
-GPU 크기, 구매 방식, 예상 시간을 **script 에도 skill 에도 적지 않는다.**
+Write GPU size, purchase type and expected time **neither in the script nor in the skill.**
 
 ```bash
 hyperun estimate --gpu-vram 48 --pairs 1110 --epochs 4 --row-tokens 4100 --cap 12288
 ```
 
-그래야 로직이 한 곳에 있고 UI 도 CLI 도 agent 도 같은 답을 받는다. 여기에 숫자를 적어 두면
-서버가 새 측정을 쌓아도 이 파일만 옛날 답을 계속 준다.
+That way the logic lives in one place, and the UI, the CLI and the agent all get the same answer.
+Write a number here, and while the server accumulates new measurements this file alone keeps
+giving the old answer.
 
 ---
 
-## 12b. ★ script 본문은 그 프로세스의 명령줄이 된다 — `pkill -f` 가 자기에게 걸린다
+## 12b. ★ The script body becomes that process's command line — `pkill -f` matches itself
 
-12절이 말한 그대로의 결과다. `spec.args = ["bash", "-lc", <본문>]` 이므로 원격에서 이 script 는
-**자기 전문을 명령줄로 달고** 뜬다. `pkill -f` / `pgrep -f` / `ps | grep` 은 **전체 명령줄**에
-대고 맞추므로, 죽이려는 대상의 이름이 본문 어딘가에 적혀 있으면 **자기 자신이 걸린다.** 주석도
-본문이다.
+This is exactly what section 12 says, followed through. Because `spec.args = ["bash", "-lc",
+<body>]`, the script starts on the remote **carrying its own full text as its command line**.
+`pkill -f` / `pgrep -f` / `ps | grep` match against **the full command line**, so if the name of
+what you mean to kill appears anywhere in the body, **the script matches itself.** Comments are
+part of the body.
 
-**2026-09-11.** NCCL 사전시험을 끝내고 `pkill -f nccl_test.py` 를 부른 script 가 14초 만에
-SIGTERM 으로 죽었다(exit 143 = 128+15). 바로 윗줄에 `torch.distributed.run ... nccl_test.py` 가
-있었기 때문이다.
+**2026-09-11.** A script that called `pkill -f nccl_test.py` after an NCCL pre-test died of
+SIGTERM 14 seconds in (exit 143 = 128+15), because the line just above it had
+`torch.distributed.run ... nccl_test.py`.
 
-**2026-09-14.** 학습 script 가 GPU 정리 loop 에서 `pkill -9 -f "[v]llm"` 을 부르는데, 그것을
-감싼 wrapper 의 **주석 세 줄에** 같은 소문자 낱말이 있었다. `-9` 라 trap 도 안 돈다. 걸리는
-자리는 로깅과 채점이 끝난 뒤, 학습 직전이었다 — A100 4장으로 약 2.6시간, 약 $17 이다. 제출
-전에 찾아 지웠다.
+**2026-09-14.** A training script calls `pkill -9 -f "[v]llm"` in its GPU cleanup loop, and **three
+comment lines** of the wrapper around it had the same lower-case word. With `-9` the trap does not
+run either. It would have hit after logging and scoring, just before training — about 2.6 hours on
+four A100s, about $17. It was found and removed before submission.
 
-**패턴을 정교하게 짜도 소용없다.** 대상의 이름이 본문에 있는 한 걸린다. 둘 중 하나로 한다.
+**A cleverer pattern does not help.** As long as the target's name is in the body, it matches. Do
+one of two things.
 
 ```bash
-# (가) 자기와 조상을 PID 로 뺀다 -- 감싸는 script 를 우리가 쓸 때
+# (a) exclude yourself and your ancestors by PID -- when we write the wrapper
 ANC=" $$ ${BASHPID:-$$} "
 for pid in $(pgrep -f "$PATTERN"); do
   case "$ANC" in *" $pid "*) continue;; esac
   kill "$pid"
 done
 
-# (나) 우리가 못 고치는 script 가 pkill 을 부르면, 그 낱말을 우리 본문에서 없앤다
-#      무엇을 없애야 하는지는 그 script 의 pkill 줄을 읽어야 안다
-grep -n "pkill\|pgrep" "$THEIR_SCRIPT"        # 제출 전에 반드시
+# (b) when a script we cannot change calls pkill, remove that word from our own body
+#     what to remove is known only by reading that script's pkill lines
+grep -n "pkill\|pgrep" "$THEIR_SCRIPT"        # always, before submitting
 ```
 
-**제출 전 점검.** 감싸는 script 가 부르는 남의 script 에 `pkill -f` 가 있으면, 그 패턴 하나하나로
-자기 본문을 grep 한다. 0건이 아니면 고친다.
+**Pre-submit check.** If a script the wrapper calls has `pkill -f`, grep your own body for each of
+its patterns. If the count is not 0, fix it.
 
 ---
 
-## 12. script 가 커지거나 파일이 여럿이면 — args 에 그대로 넣지 않는다
+## 12. When the script grows or is several files — do not put it into args as it is
 
-`--script run.sh` 로 보낸 본문은 **job 객체 안에 들어간다.** `to_pacsjob` 이
-`spec.args = ["bash", "-lc", <본문>]` 로 싣고, 그 객체가 etcd 에 저장된다. 그래서 상한이 있다:
-`script` 는 **256 KiB** 까지고(`models.SCRIPT_MAX_CHARS`), 넘으면 제출이 422 로 거절된다.
-GPU 를 빌리기 전이라 돈은 들지 않지만, 큰 것을 넣을 자리가 아니라는 뜻이다.
+The body sent with `--script run.sh` **goes inside the job object.** `to_pacsjob` loads it as
+`spec.args = ["bash", "-lc", <body>]`, and that object is stored in etcd. So there is a ceiling:
+`script` is up to **256 KiB** (`models.SCRIPT_MAX_CHARS`), and past it the submit is refused with
+422. It costs nothing, since no GPU has been rented yet, but it means this is not the place for
+something large.
 
-**실측 (2026-09-08, 클러스터의 `baseline-c`).** 학습 스크립트 자체는 작다 — 20 KiB 급이면
-그대로 넣어도 상한의 8% 다. 그런데 그 job 은 이미 다른 방법을 쓰고 있었다:
+**Measured (2026-09-08, the cluster's `baseline-c`).** The training script itself is small — at
+around 20 KiB it would be 8% of the ceiling put in as it is. But that job was already using
+another method:
 
 ```
-PacsJob 객체 전체     4,682 bytes
-spec.args               302 bytes      <- 아래 부트스트랩
-S3 의 run.sh         19,655 bytes      <- 실제 학습 스크립트
+whole PacsJob object   4,682 bytes
+spec.args                302 bytes      <- the bootstrap below
+run.sh in S3          19,655 bytes      <- the actual training script
 ```
 
-`spec.args` 에 든 302 바이트가 전부다.
+The 302 bytes in `spec.args` are all of it.
 
 ```bash
 set -euo pipefail
@@ -415,154 +442,168 @@ PY2
 bash /root/run.sh
 ```
 
-**두 방법과, 어느 것을 언제 쓰는가.**
+**The two methods, and when to use which.**
 
-| 방법 | 쓸 때 | 대가 |
+| method | when | cost |
 |---|---|---|
-| `--script run.sh` (본문을 args 에) | 한 파일, 256 KiB 미만. **기본값으로 이것을 쓴다** | 없음. job 이 자기가 실행한 것을 담고 있어서 `hyperun` 의 Scripts 화면, Submitted spec, 재제출이 다 된다 |
-| S3 부트스트랩 (위 302 바이트) | 스크립트가 상한을 넘거나, 파일이 여럿이거나, 사람이 job 을 다시 내지 않고 스크립트만 갈아 끼우고 싶을 때 | 실패 지점이 하나 늘어난다. **GPU 를 이미 빌린 뒤에** S3 를 못 읽어 죽을 수 있으므로, 규칙 5 의 도달성 검사에 그 객체도 넣는다. 그리고 job 객체만 봐서는 무엇이 돌았는지 알 수 없다 |
-| `git clone` (규칙 1) | 코드가 저장소에 있을 때 | 위와 같다. clone 이 학습 명령보다 앞에 있어야 한다 |
+| `--script run.sh` (the body in args) | one file, under 256 KiB. **Use this by default** | none. The job contains what it ran, so `hyperun`'s Scripts screen, the Submitted spec and resubmission all work |
+| S3 bootstrap (the 302 bytes above) | the script exceeds the ceiling, is several files, or someone wants to swap the script without resubmitting the job | one more point of failure. It can die unable to read S3 **after the GPU is already rented**, so add that object to rule 5's reachability check. And the job object alone does not show what ran |
+| `git clone` (rule 1) | the code is in a repository | as above. The clone has to come before the training command |
 
-**S3 를 쓰기로 했으면 사용자에게 업로드를 부탁한다.** agent 는 자기 손으로 그 객체를 올리지
-않는다 — `hyperun` 에 업로드 명령이 없고, 결과 prefix 는 서버가 job 마다 만들어 주는 것이라
-제출 전에는 그 주소가 존재하지도 않는다. 순서는: 사용자가 `aws s3 cp run.sh <경로>` 로 올리고,
-그 경로를 agent 에게 알려 주고, agent 는 위 부트스트랩을 `--script` 로 보낸다.
+**If you settle on S3, ask the user to upload.** The agent does not upload that object itself —
+`hyperun` has no upload command, and the result prefix is one the server creates per job, so its
+address does not even exist before the submit. The order is: the user uploads with
+`aws s3 cp run.sh <path>`, tells the agent that path, and the agent sends the bootstrap above with
+`--script`.
 
 ---
 
-## 13. 결과는 `PACSRUN_ARTIFACT` 로 내보낸다 — `aws s3 cp` 로 쓰면 21시간 뒤에 잃는다
+## 13. Export results with `PACSRUN_ARTIFACT` — write them with `aws s3 cp` and you lose them after 21 hours
 
-**이 절이 없어서 실제로 잃을 뻔했다.** 2026-09-08 에 저장소만 들고 작업 C 를 제출하려던 세션이
-이 규약을 **문서 어디에서도 찾지 못했고**, 09-04 job 의 결과 tar 에 딸려 저장소에 커밋돼 있던
-옛 wrapper 를 우연히 읽어서 알았다. 그 우연이 없었으면 `aws s3 cp` 로 썼을 것이고, 21시간 뒤
-`AccessDenied` 로 결과가 전부 사라진다. `troubleshooting.md` 의 "job 이 Succeeded 인데 S3 가
-비어 있다" 항목이 그 실패의 흔적이다.
+**We nearly lost results for lack of this section.** On 2026-09-08 a session about to submit task C
+with only the repository **could not find this contract anywhere in the documentation**, and
+learned it by chance from an old wrapper that had been committed to the repository along with the
+result tar of a 09-04 job. Without that chance it would have written with `aws s3 cp`, and 21 hours
+later every result would have vanished with `AccessDenied`. The `troubleshooting.md` entry "The job
+is `Succeeded` but S3 is empty" is the trace of that failure.
 
-### ★ 그 한 줄은 로그를 타고 간다 — 로그가 끊기면 하나도 안 올라간다
+### ★ That one line travels on the log — when the log stops, nothing is uploaded
 
-이 규약이 성립하는 조건이 하나 있다. **driver 는 그 줄을 원격의 로그에서 읽는다.** vendor 의
-로그 통로가 끊기면 announce 는 아무 일도 하지 않고, script 는 그것을 알 방법이 없다 — 계속
-잘 찍고 있으니까.
+The contract holds on one condition. **The driver reads that line from the remote's log.** If the
+vendor's log channel breaks, an announce does nothing, and the script has no way to know — it
+keeps printing fine.
 
-**2026-09-14.** 한 vendor 의 로그 조회가 pod 전체에 대해 거절을 답하기 시작했다(한 job 에서
-63분 동안 68번, 다른 job 에서 21번). 그 vendor 의 현재 API 명세에는 로그 경로가 **아예 없다** —
-경로 23개 중 로그가 없다. 그날 job 은 8시간을 정상으로 돌고도 **결과가 0개**였고, 종료를 알리는
-줄도 못 가서 기계가 반납되지 않았다.
+**2026-09-14.** One vendor's log query began answering with a refusal for whole pods (68 times over
+63 minutes on one job, 21 times on another). That vendor's current API specification has **no log
+path at all** — none of its 23 paths is for logs. That day a job ran normally for 8 hours and
+**ended with 0 results**, and even the line announcing its end did not get through, so the machine
+was not handed back.
 
-**그래서 첫 announce 뒤에 결과 경로를 한 번 본다.** 규칙 5 의 "관이 서는지 먼저 확인한다" 와
-같은 생각이고, 확인 대상만 다르다.
+**So look at the result path once after the first announce.** It is the same idea as rule 5's
+"check the pipe first"; only the thing checked differs.
 
 ```bash
 echo "PACSRUN_ARTIFACT=$FIRST_SMALL_FILE"
 sleep 120
-# 결과 경로에 그 이름이 보이는가. 안 보이면 announce 가 닿지 않는 것이다.
+# Is that name visible in the result path? If not, the announce is not getting through.
 aws s3 ls "$PACSRUN_RESULT_PATH" | grep -q "$(basename "$FIRST_SMALL_FILE")" \
-  || echo "★ announce 가 닿지 않는다 -- 로그 통로를 의심하고, 사람에게 알린다"
+  || echo "★ the announce is not getting through -- suspect the log channel, and tell a person"
 ```
 
-**닿지 않을 때 무엇을 할 수 있나.** script 쪽에서 고칠 수는 없다. 다만 그 상태를 **로그에 남기면**
-사람이 다른 경로로 회수할 수 있다. 그 vendor 에는 artifact 를 절대경로로 내주는 HTTP 서버가 이미
-떠 있어서, 2026-09-14 에는 그쪽으로 전부 받아 살렸다. **아무 말도 없이 끝나는 것이 가장 나쁘다.**
+**What can be done when it does not get through.** Nothing on the script's side can fix it. But
+**leaving that state in the log** lets a person collect the results another way. That vendor
+already runs an HTTP server that serves artifacts by absolute path, and on 2026-09-14 everything
+was recovered through it. **Ending without a word is the worst outcome.**
 
-### 규약
+### The contract
 
-파일 하나를 **완성한 직후**, stdout 에 한 줄을 찍는다. 그러면 driver 가 그 파일을 회수한다.
+**Right after you finish** a file, print one line to stdout. The driver then collects that file.
 
 ```bash
 tar czf /root/work/adapter.tar.gz "$ADAPTER"
 echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
 ```
 
-- **경로는 컨테이너 안의 절대 경로**다. driver 가 그 경로를 읽어 밖으로 옮긴다.
-- **파일마다 한 줄.** 여러 개면 여러 줄이고, 순서는 상관없다.
-- **완성한 뒤에 찍는다.** 쓰는 중인 파일을 알리면 잘린 파일이 회수된다. `tar` 는 닫힌 뒤,
-  로그는 마지막 flush 뒤.
+- **The path is an absolute path inside the container.** The driver reads that path and moves the
+  file out.
+- **One line per file.** Several files, several lines, in any order.
+- **Print it after the file is complete.** Announce a file that is still being written and a
+  truncated file is collected. For a `tar`, after it has closed; for a log, after its last flush.
 
-### 파일 이름이 곧 S3 의 이름이다 — 같은 이름 둘은 서로를 덮는다
+### The file name is the S3 name — two files with the same name overwrite each other
 
-key 는 **job 의 result prefix + 파일 이름(basename)** 이다. `/root/work/adapter.tar.gz` 는
-`s3://<bucket>/<prefix>adapter.tar.gz` 로 간다. 경로의 앞부분은 버려지므로
-`runs/iter_1/ckpt.pt` 와 `runs/iter_2/ckpt.pt` 를 둘 다 announce 하면 **뒤엣것이 앞엣것을
-덮는다.** 회차나 rank 를 파일 이름에 넣는다: `ckpt_iter2.pt`, `adapter_rank0.tar.gz`.
+The key is **the job's result prefix + the file name (basename)**. `/root/work/adapter.tar.gz` goes
+to `s3://<bucket>/<prefix>adapter.tar.gz`. The front of the path is discarded, so announcing both
+`runs/iter_1/ckpt.pt` and `runs/iter_2/ckpt.pt` means **the later one overwrites the earlier.** Put
+the round or the rank into the file name: `ckpt_iter2.pt`, `adapter_rank0.tar.gz`.
 
-### 왜 `aws s3 cp` 가 아닌가
+### Why not `aws s3 cp`
 
-결과를 S3 에 쓰는 주체는 **어느 vendor 에서도 driver** 다. 이유는 둘이다.
+On **every vendor, the driver** is what writes results to S3. Two reasons.
 
-- **컨테이너에 주는 자격증명이 먼저 만료된다.** AWS 상한이 43,200초(12시간)라 21시간 job 의
-  **마지막** 업로드 — 그 run 을 한 이유 — 가 만료 뒤에 일어난다.
-- **업로드 방식이 vendor 마다 다르다.** script 가 그것을 알아야 하면 script 가 vendor 종속이
-  된다. announce 한 줄은 어디서나 같은 문장이다.
+- **The credential given to the container expires first.** AWS's ceiling is 43,200 seconds (12
+  hours), so a 21-hour job's **last** upload — the reason for the run — happens after it expires.
+- **The upload method differs by vendor.** If the script had to know it, the script would be tied
+  to a vendor. An announce line is the same sentence everywhere.
 
-컨테이너가 받는 자격증명이 아무 쓸모가 없다는 뜻은 아니다. **그것으로 자기 prefix 를 읽는다** —
-회차를 이어 갈 때 앞 회차의 checkpoint 를 되받는 것이 그 용도다(§13 마지막 절, `continue_from`).
+That does not make the credential the container receives useless. **It reads its own prefix with
+it** — getting back the previous round's checkpoint when continuing to the next round is what it
+is for (the last part of §13, `continue_from`).
 
-driver 가 파일을 가져오는 길만 vendor 마다 다르고, **script 는 그 차이를 몰라도 된다.**
+Only the way the driver fetches files differs by vendor, and **the script does not need to know
+the difference.**
 
-| vendor | driver 가 어떻게 가져오나 |
+| vendor | how the driver fetches |
 |---|---|
-| RunPod | 컨테이너 안의 작은 HTTP server 에 `<pod-id>-8888.proxy.runpod.net` 으로 GET (`PACSrun/driver/runpod/driver.py:233` `ARTIFACT_RE`, `:2012` `_fetch_one`) |
-| VM + k3s (AWS, GCP, Shadeform. 이후 Seeweb) | k3s API 의 exec 로 `stat -c %s` 로 크기를 받고 `cat` 으로 바이트를 받는다 (`PACSrun/driver/common/artifact_fetch.py`, grep `PACSRUN-K3S-FETCH`) |
+| RunPod | a GET to a small HTTP server inside the container via `<pod-id>-8888.proxy.runpod.net` (`PACSrun/driver/runpod/driver.py:233` `ARTIFACT_RE`, `:2012` `_fetch_one`) |
+| VM + k3s (AWS, GCP, Shadeform. Seeweb later) | the size with `stat -c %s` and the bytes with `cat`, both through the k3s API's exec (`PACSrun/driver/common/artifact_fetch.py`, grep `PACSRUN-K3S-FETCH`) |
 
-**★ 2026-09-09 현재 상태: k3s 경로는 구현됐고 아직 배포되지 않았다.** 그래서 **AWS/GCP 에서는
-그동안 `aws s3 cp` 를 announce 와 함께 둔다** — 그러면 어느 경로에서도 산다(RunPod 에서는
-`aws s3 cp` 가 AccessDenied 로 조용히 실패하고 announce 가 일한다). 배포된 뒤에는 announce
-하나로 충분하고, `aws s3 cp` 는 12시간 뒤 만료되는 그 자격증명에 의존하는 부분이라 지우는 것이
-낫다. **어느 쪽인지는 `hyperun explain` 이 답한다** — 이 문서가 아니라 서버에 물어본다.
+**★ Status as of 2026-09-09: the k3s path is implemented and not yet deployed.** So **on AWS/GCP,
+keep `aws s3 cp` alongside the announce for now** — then it survives on either path (on RunPod
+`aws s3 cp` fails silently with AccessDenied and the announce does the work). Once it is deployed,
+an announce alone is enough, and `aws s3 cp` is the part that depends on the credential that
+expires after 12 hours, so it is better removed. **Which state it is in, `hyperun explain`
+answers** — ask the server, not this document.
 
-#### k3s 경로가 하는 검사 둘, script 가 알아야 하는 것
+#### Two checks the k3s path makes, which the script needs to know about
 
-- **크기를 대조한다.** `stat` 이 말한 바이트 수와 실제로 올라간 수가 다르면 **object 를 지우고**
-  다시 시도한다(3회). 그래서 **쓰는 중인 파일을 announce 하면 회수가 실패한다** — 잘린 파일이
-  올라가는 것이 아니라 아예 안 올라간다. 완성 뒤에 찍으라는 위 규칙이 이것 때문이다.
-- **exit 0 인데 announce 한 것이 S3 에 없으면 job 은 exit 34 로 끝난다.** 학습이 성공했는데
-  결과가 안 나갔으면 그것은 성공이 아니라는 판정이고, Succeeded 로 표시된 빈 prefix 보다 낫다.
+- **It compares sizes.** If the byte count `stat` gave differs from what actually arrived, it
+  **deletes the object** and tries again (3 times). So **announcing a file that is still being
+  written makes the fetch fail** — the file is not uploaded truncated; it is not uploaded at all.
+  That is why the rule above says to print after completion.
+- **If the exit is 0 but something announced is not in S3, the job ends with exit 34.** Training
+  succeeded but its results did not get out, so it is judged not a success — better than an empty
+  prefix marked Succeeded.
 
-`explain` 이 "Write it there yourself" 라고만 말하는 것은 이 절이 있기 전의 문장이다.
+`explain` saying only "Write it there yourself" is a sentence from before this section existed.
 
-### 관이 서는지 먼저 한 번 확인한다 (규칙 5 의 결과 경로 검사를 대신한다)
+### Check once, first, that the pipe works (this replaces rule 5's result path check)
 
-학습 21시간을 태운 뒤 회수가 안 되는 것을 알면 늦다. **작은 파일 하나로 먼저 찍어 본다.**
+Finding out after burning 21 hours of training that nothing can be collected is too late. **Try it
+first with one small file.**
 
 ```bash
 date > /root/work/_probe.txt
 echo "PACSRUN_ARTIFACT=/root/work/_probe.txt"
 ```
 
-그 줄이 driver 로그에 `fetched ... bytes` 로 되돌아오는지 보고 학습을 시작한다.
+Look for that line coming back in the driver log as `fetched ... bytes`, then start training.
 
-**로그에서 그 줄은 `<internal>=/root/work/_probe.txt` 로 보인다.** gateway 의 로그 relay 가
-`PACSRUN_` 로 시작하는 이름을 가리기 때문이고(`server/ddpsrun_server/k8s.py` 의 `redact`,
-`server/tests/test_k8s.py:23` 이 그 동작을 고정한다), **경로는 그대로 남으므로 확인은 된다.** 이름이 안 보이는
-것이 실패가 아니다 — 그 줄이 아예 없는 것이 실패다.
+**In the log, that line shows as `<internal>=/root/work/_probe.txt`.** The gateway's log relay
+masks names that start with `PACSRUN_` (`redact` in `server/ddpsrun_server/k8s.py`;
+`server/tests/test_k8s.py:23` pins that behaviour), and **the path stays, so the check still
+works.** The name not showing is not a failure — the line not being there at all is.
 
-### 회차로 나눠 내보내면 중단에도 남는다
+### Exported round by round, it survives an interruption
 
-`Recovering` 후 컨테이너는 **빈 상태로 다시 시작한다** — `training.resumable` 은 사용자가
-주장하는 표시이고 도구가 되돌려주는 것은 없다. 회차가 끝날 때마다 그 산출물을 위 규약으로
-내보내면, 15시간째에 회수돼도 그때까지의 회차는 남는다.
+After `Recovering`, the container **starts again empty** — `training.resumable` is a claim the user
+makes, and the tool gives nothing back for it. Export each round's output with the contract above
+as the round ends, and even if the machine is reclaimed in the 15th hour, the rounds up to then
+remain.
 
-**의존해도 되는 사실:** 재시작 후에도 **result path 는 같다.** 서버가 job id 로 한 번 만들어
-`spec.resultPath` 에 넣고, recovery 는 같은 PacsJob 을 쓰므로 그 필드가 바뀌지 않는다.
+**A fact you can rely on:** the **result path stays the same** after a restart. The server makes it
+once from the job id and puts it in `spec.resultPath`, and recovery uses the same PacsJob, so that
+field does not change.
 
 ---
 
-## 14. 두 번째 AWS 계정을 쓰는 job 은 세 변수를 스스로 가른다
+## 14. A job that uses a second AWS account separates the three variables itself
 
-**PACSrun 은 결과 회수용 자격증명을 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
-`AWS_SESSION_TOKEN` 으로 주입한다.** job 이 **다른** AWS 계정을 부르는 경우 — 예를 들어 Bedrock
-judge — 그 코드도 같은 세 이름을 찾는다. **boto3 는 환경변수를 프로파일보다 먼저 읽으므로
-`AWS_PROFILE` 로는 갈라지지 않는다.**
+**PACSrun injects the credential for collecting results as `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`.** When a job calls a **different** AWS account —
+a Bedrock judge, for example — that code looks for the same three names. **boto3 reads environment
+variables before profiles, so `AWS_PROFILE` does not separate them.**
 
-**어느 쪽이 이겨도 나머지 절반이 깨진다.** judge 가 지면 평가가 거부되고, 회수 쪽이 지면
-**21시간을 돌린 결과를 마지막에 못 올린다** — 회수는 job 이 끝날 때 일어나므로 그 실패는 가장
-비싼 시점에 드러난다.
+**Whichever side wins, the other half breaks.** If the judge loses, evaluation is refused; if
+collection loses, **the results of a 21-hour run cannot be uploaded at the end** — collection
+happens when the job ends, so that failure shows at the most expensive moment.
 
-`validate` 가 이것을 먼저 말한다: 세 이름 중 하나를 job 이 직접 들고 있거나, `AWS` 와
-`ACCESS_KEY` 를 함께 가진 다른 이름이 보이면 `aws-credential-collision` 이 뜬다
-(`server/ddpsrun_server/validate.py` 의 `check_aws_credential_collision`).
+`validate` says this first: if the job holds one of the three names directly, or another name with
+both `AWS` and `ACCESS_KEY` in it is present, `aws-credential-collision` fires
+(`check_aws_credential_collision` in `server/ddpsrun_server/validate.py`).
 
-**되는 모양 — judge 키는 자기 이름으로 받고 쓰는 자리에서만 명시적으로 넘긴다.**
+**The shape that works — receive the judge key under its own name, and pass it explicitly only
+where it is used.**
 
 ```bash
 python - <<'PY'
@@ -576,32 +617,33 @@ bedrock = s.client("bedrock-runtime", region_name="us-west-2")
 PY
 ```
 
-**연구원 코드가 boto3 기본 체인을 쓰고 고칠 수 없는 경우**에만, 그 호출 구간 앞에서 세 변수를
-judge 값으로 치환하고 **끝나면 되돌린다.** 되돌리지 않으면 13번의 회수가 깨진다.
+**Only when the researcher's code uses boto3's default chain and cannot be changed**, swap the
+three variables to the judge's values before that part runs and **restore them when it ends.**
+Without the restore, rule 13's collection breaks.
 
 ```bash
-# 치환 -- 되돌리기까지 한 쌍으로만 쓴다.
+# swap -- only ever as a pair with the restore.
 export _SAVED_KEY="$AWS_ACCESS_KEY_ID" _SAVED_SECRET="$AWS_SECRET_ACCESS_KEY" _SAVED_TOKEN="$AWS_SESSION_TOKEN"
 export AWS_ACCESS_KEY_ID="$JUDGE_AWS_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$JUDGE_AWS_SECRET_ACCESS_KEY" AWS_SESSION_TOKEN="$JUDGE_AWS_SESSION_TOKEN"
-python evaluate.py            # judge 를 부르는 구간
+python evaluate.py            # the part that calls the judge
 export AWS_ACCESS_KEY_ID="$_SAVED_KEY" AWS_SECRET_ACCESS_KEY="$_SAVED_SECRET" AWS_SESSION_TOKEN="$_SAVED_TOKEN"
 ```
 
 ---
 
-## 15. 뜬 뒤에야 알 수 있는 것 셋 — script 가 한 줄씩 찍어 둔다
+## 15. Three things known only after the machine is up — the script prints one line for each
 
-이 셋은 **submit 시점에 정할 수 없다.** 스키마에 필드가 없고, 값은 어느 host 를 받았는지에
-달렸다. 그래서 규칙은 "요청한다" 가 아니라 "**확인하고 기록한다**" 다.
+These three **cannot be set at submit time.** The schema has no field for them, and the values
+depend on which host you got. So the rule is not "request it" but "**check it and record it**".
 
-| 무엇 | 지금 값이 어디서 오나 | script 가 할 일 |
+| what | where the value comes from now | what the script does |
 |---|---|---|
-| 디스크 | operator 전역 `PACSRUN_DISK_GB=200`. job 별로 못 정한다 | `df -h /root` 를 학습 전에 한 줄 찍는다. venv 3개 + 모델 30GB 급이면 200GB 로 충분하다는 것이 09-04 실측이다 |
-| `/dev/shm` | 받은 host 가 정한다. 필드 없음 | `df -h /dev/shm` 를 찍는다. TP4 vLLM 이 요구하므로 작으면 그 사실을 로그에 남기고 tensor parallel 크기를 낮추는 쪽을 사용자에게 알린다 |
-| NCCL P2P | RunPod 일부 host 에서 첫 all-reduce 가 정지한다. 필드 없음 | `NCCL_P2P_DISABLE` 을 **한 곳에서** 정해 두고 되돌릴 수 있게 한다. 정지 자체는 플랫폼이 잡아 exit 21 로 끝낸다 |
+| disk | the operator-wide `PACSRUN_DISK_GB=200`. It cannot be set per job | print one line of `df -h /root` before training. Measured on 09-04: 3 venvs + a model around 30 GB fit in 200 GB |
+| `/dev/shm` | set by the host you got. No field | print `df -h /dev/shm`. TP4 vLLM needs it, so if it is small, leave that fact in the log and tell the user the tensor parallel size should come down |
+| NCCL P2P | on some RunPod hosts the first all-reduce hangs. No field | set `NCCL_P2P_DISABLE` **in one place** so it can be reverted. The platform catches the hang itself and ends it with exit 21 |
 
 ```bash
-# 학습 전에, 순서대로. 세 줄 다 로그로 남는 것이 목적이다.
+# before training, in order. The point is that all three lines stay in the log.
 df -h /root /dev/shm
 nvidia-smi --query-gpu=index,name,memory.total --format=csv
 : "${NCCL_P2P_DISABLE:=0}"; export NCCL_P2P_DISABLE
@@ -610,25 +652,25 @@ echo "NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE"
 
 ---
 
-## 16. 분산학습 — 좌표는 우리가 주고, launcher 에 넘기는 것은 script 가 한다
+## 16. Distributed training — we give the coordinates, the script passes them to the launcher
 
-**pod 이 서로 이야기해야 하면 `--group-size N --group-mode distributed` 로 낸다.** 그것이
-없으면 pod N 개는 **서로 모르는 독립 실행 N 개**다. 끝나기는 하고, 기계 N 대 값을 내고,
-관계없는 결과 N 개를 남긴다.
+**If the pods have to talk to each other, submit with `--group-size N --group-mode distributed`.**
+Without it, N pods are **N independent runs that do not know each other.** They do finish, they
+cost N machines, and they leave N unrelated results.
 
-### 우리가 주는 것, 이름 그대로
+### What we give, by name
 
-| 변수 | 무엇 | 누가 채우나 |
+| variable | what | who fills it |
 |---|---|---|
-| `PACSRUN_GROUP_SIZE` | 이 group 이 pod 몇 개인가 | operator (`PACSRUN-GROUP-COORDS`) |
-| `PACSRUN_GROUP_RANK` | 이 pod 이 자기 group 의 몇 번째인가 | operator |
-| `PACSRUN_GROUP_INDEX` | 이 group 이 job 의 몇 번째 group 인가 | operator |
-| `PACSRUN_MASTER_ADDR` | rank 0 machine 의 **사설** 주소 | driver (`PACSRUN-GROUP-HOSTNET`) |
-| `PACSRUN_MASTER_PORT` | `29500 + group_index` | driver |
-| `PACSRUN_POD_INDEX` | job 의 pod 전체에서 몇 번째인가. group 과 별개로 남는다 | operator |
+| `PACSRUN_GROUP_SIZE` | how many pods this group has | the operator (`PACSRUN-GROUP-COORDS`) |
+| `PACSRUN_GROUP_RANK` | which one this pod is within its group | the operator |
+| `PACSRUN_GROUP_INDEX` | which group of the job this group is | the operator |
+| `PACSRUN_MASTER_ADDR` | the **private** address of the rank 0 machine | the driver (`PACSRUN-GROUP-HOSTNET`) |
+| `PACSRUN_MASTER_PORT` | `29500 + group_index` | the driver |
+| `PACSRUN_POD_INDEX` | which one this is among all the job's pods. It stays separate from the group | the operator |
 
-**이름이 어느 framework 것도 아닌 것은 의도다.** torchrun 은 `--node_rank`/`--master_addr` 를
-원하고 다른 launcher 는 다른 것을 원한다. **그 번역이 script 가 쓸 줄이다.**
+**That the names belong to no framework is intentional.** torchrun wants `--node_rank`/`--master_addr`,
+and other launchers want other things. **That translation is the line the script writes.**
 
 ```bash
 torchrun \
@@ -640,32 +682,34 @@ torchrun \
   train.py
 ```
 
-### ★ 좌표를 안 읽으면 아무 소리 없이 멈춘다
+### ★ If the coordinates are not read, it stops without a sound
 
-`driver/common/remotek8s.py` 에 그 실측이 적혀 있다: **"NEITHER RANK PRINTED ANYTHING. Both
-sat in `dist.init_process_group` with no error and no output."** 모든 rank 가 아무도 열지 않은
-rendezvous 를 기다리고, **카드는 busy 로 읽히고**(NCCL 의 대기는 도는 kernel 이다),
-3,600초 뒤 stall detector 가 exit 21 로 끝낼 때까지 과금된다.
+`driver/common/remotek8s.py` records the measurement: **"NEITHER RANK PRINTED ANYTHING. Both
+sat in `dist.init_process_group` with no error and no output."** Every rank waits for a rendezvous
+nobody opened, **the card reads as busy** (NCCL's wait is a running kernel), and it is billed until
+the stall detector ends it with exit 21 after 3,600 seconds.
 
-`hyperun validate --group-size N --group-mode distributed --script run.sh` 가 넷을 본다:
-좌표를 하나도 안 읽으면 **error**(`group-coords-unread`), launcher 가 없으면 warning,
-`--nproc_per_node` 가 `--gpu-count` 와 다르면 error, `--nnodes` 가 group size 와 다르면 error.
+`hyperun validate --group-size N --group-mode distributed --script run.sh` looks at four things:
+reading none of the coordinates is an **error** (`group-coords-unread`), no launcher is a warning,
+`--nproc_per_node` different from `--gpu-count` is an error, and `--nnodes` different from the
+group size is an error.
 
-### 값을 두 곳에 적지 않는다
+### Do not write a value in two places
 
-`--nnodes 2` 라고 박아 두면 `--group-size 4` 로 바꾼 날 조용히 어긋난다. **`$PACSRUN_GROUP_SIZE`
-를 쓴다.** `--nproc_per_node` 는 pod 당 카드 수이므로 `--gpu-count` 와 같아야 하고, 그 둘은
-validate 가 대조한다.
+Hard-code `--nnodes 2` and it silently disagrees the day you change to `--group-size 4`. **Use
+`$PACSRUN_GROUP_SIZE`.** `--nproc_per_node` is the number of cards per pod, so it has to equal
+`--gpu-count`, and validate compares the two.
 
-### 성능 기대치는 낮춰 잡는다
+### Keep performance expectations low
 
-**pod 경계 하나가 카드 한 장보다 느리다.** 같은 machine 안에서도 0.56배였다
-(`facts/pod-boundary-costs-ddp.md`). 앗아가는 것은 P2P 가 아니라 **shared memory** 하나다.
-기계 두 대는 그보다 3.07배 더 느리다. 그리고 region 을 넘으면 왕복 60~70 ms 에 GB 당 $0.02 가
-붙는다 — 한 step 이 866,890,752 바이트를 옮긴 실측이 있다(2026-09-05).
-**즉 분산은 "더 빠르게" 가 아니라 "한 장에 안 들어가서" 하는 것이다.**
+**One pod boundary is slower than a single card.** Even within the same machine it was 0.56×
+(`facts/pod-boundary-costs-ddp.md`). What it takes away is not P2P but one thing, **shared
+memory**. Two machines are 3.07× slower again. And crossing regions adds a 60–70 ms round trip
+and $0.02 per GB — there is a measurement of one step moving 866,890,752 bytes (2026-09-05).
+**In other words, distribution is not done "to go faster" but "because it does not fit on one
+card".**
 
-### `/dev/shm` 과 NCCL P2P 는 뜬 뒤에야 안다
+### `/dev/shm` and NCCL P2P are known only after the machine is up
 
-15번의 표가 그것이다. 특히 **RunPod 일부 host 에서 첫 all-reduce 가 정지한다** —
-`NCCL_P2P_DISABLE=1` 로 되돌릴 수 있게 그 값을 한 곳에서 정해 둔다.
+That is the table in section 15. In particular, **on some RunPod hosts the first all-reduce hangs**
+— set that value in one place so it can be reverted with `NCCL_P2P_DISABLE=1`.

@@ -1248,8 +1248,8 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
     # THIS IS NOT A NEW RULE, IT IS THE ONE NOBODY ENFORCED. The web UI has
     # disabled its "See the cost" button on any error since the three-step form
     # existed (ui/app.js, `$("s2-next").disabled = errors.length > 0`), and
-    # AGENTS.md tells every agent "제출 전에 hyperun validate 를 부르고, exit 1
-    # 이면 멈춰라". Only this route took the body regardless, so the CLI and
+    # AGENTS.md tells every agent "Call `hyperun validate` before submitting, and
+    # stop if it exits 1". Only this route took the body regardless, so the CLI and
     # anyone calling the API directly could create a job the other two paths
     # would never let through.
     #
