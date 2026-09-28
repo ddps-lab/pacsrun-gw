@@ -112,23 +112,33 @@ CHOOSABLE: tuple[Choice, ...] = (
                              "spells it 'RTX PRO 6000', so this name reaches AWS "
                              "only. RunPod sells it at $2.09 per card-hour "
                              "(read 2026-09-09) but no name here asks for it."),
-    # ★ THESE TWO NAMES DO NOT REACH THE SAME VENDORS, corrected 2026-09-09.
-    # Both notes used to say "RunPod sells it singly", which was true of the
-    # CARD and false of the NAME `A100-80GB`: RunPod's decider matches a family
-    # name plus a variant (decider.go:661), so "A100" reaches its "A100 PCIe"
-    # and "A100 SXM" while "A100-80GB" -- AWS's spelling, the family plus AWS's
-    # memory suffix -- matches neither. baseline-c asked for `A100` and that is
-    # why it ran. The VRAM is the other way round from what the names suggest:
-    # AWS's A100 rows are the 40 GB p4d, RunPod's A100s are both 80 GB.
+    # ★ BOTH NAMES REACH RUNPOD'S 80 GB A100s NOW, and the 40 GB / 80 GB split in
+    # these names is AWS's and Shadeform's, not RunPod's. Rechecked 2026-09-29.
+    #
+    # What this comment said on 2026-09-09 was true then: RunPod's decider matched
+    # a whole name or a family plus a variant, so "A100" reached its "A100 PCIe"
+    # and "A100 SXM" and "A100-80GB" matched neither. The decider has since
+    # gained `splitVRAMSuffix` (PACSrun decider.go, askAccepter): a name ending in
+    # a memory size is also read as its family AND at least that much memory, so
+    # "A100-80GB" is "A100" with >= 80 GB and reaches both. The note below kept
+    # telling people to ask for "A100" to reach RunPod, and the price lookup kept
+    # the old rule (HYPERUN-RUNPOD-NAME-RULE, measurements.runpod_machines_for).
+    #
+    # WHAT IS STILL TRUE, and it is LIMITATIONS.md item 3: RunPod sells no 40 GB
+    # A100, so "A100" -- 40 GB on AWS (p4d) and on Shadeform -- is answered by an
+    # 80 GB card on RunPod. The decider reads a size as a floor ("a job that asks
+    # for 80 GB is not harmed by a 96 GB card"), so the job gets at least what it
+    # asked for; but a `cheapest` comparison for "A100" sets 40 GB offers beside
+    # an 80 GB one. The RunPod price sentence names the GPU type id it priced
+    # ("NVIDIA A100 80GB PCIe"), which is where a reader can see the difference.
     Choice("A100", 40, "AWS sells it only as a whole 8-GPU machine, and AWS's is "
                        "the 40 GB card. RunPod sells it singly and RunPod's are "
                        "80 GB ($1.59 per card-hour, read 2026-09-09), but RunPod "
                        "does not sell spot."),
-    Choice("A100-80GB", 80, "AWS sells it only as a whole 8-GPU machine. This "
-                            "spelling reaches AWS only -- RunPod's 80 GB A100s "
-                            "are named 'A100 PCIe' and 'A100 SXM', which the "
-                            "RunPod path does not match to this name. Ask for "
-                            "'A100' to reach them."),
+    Choice("A100-80GB", 80, "AWS sells it only as a whole 8-GPU machine. RunPod "
+                            "sells it singly -- its 'A100 PCIe' and 'A100 SXM' "
+                            "are both 80 GB and this name reaches them -- but "
+                            "RunPod does not sell spot."),
     Choice("H100", 80),
     Choice("H200", 141),
     Choice("B200", 180),

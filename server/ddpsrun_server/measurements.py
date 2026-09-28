@@ -26,6 +26,7 @@ Grep anchor: DDPSRUN-MEASUREMENTS
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -641,11 +642,55 @@ def runpod_machines_for(card: str) -> tuple[PriceRow, ...]:
 
     Returns:
         The matching rows, one per (GPU type, GPU count). Empty when RunPod
-        sells no card of that name -- which for `A100-80GB` and `RTXPRO6000`
-        means the NAME, not the silicon; see `catalogue.CHOOSABLE`'s note.
+        sells no card this name reaches.
+
+    HYPERUN-RUNPOD-NAME-RULE. THE SAME RULE AS THE RUNPOD DECIDER, because a price
+    for a card placement would not buy is a wrong number, and a missing price for
+    one it would buy sends the estimate to an older source. The decider
+    (PACSrun pkg/decider/runpod/decider.go, askAccepter) takes a name two ways:
+    the whole name, or -- when the name ends in a memory size -- the family before
+    it AND at least that much memory. So "A100-80GB" reaches RunPod's
+    "A100 PCIe" and "A100 SXM", both 80 GB.
+
+    This used to match the whole name only, which was right when the decider did
+    the same. Once `splitVRAMSuffix` arrived the decider bought RunPod's 80 GB
+    A100s for "A100-80GB" while this found no row for it, and the estimate
+    quoted "what we paid on 2026-08-29" from `GPUS` instead of the catalogue
+    (LIMITATIONS.md item 4, 2026-09-28).
+
+    THE MEMORY COMES FROM THE GPU TYPE ID, which is the one place a price row
+    carries it, and RunPod writes it into only some of them: "NVIDIA A100 80GB
+    PCIe" and "NVIDIA A100-SXM4-80GB" say 80, "NVIDIA L40S" says nothing. A row
+    whose id states no memory is left out of a suffixed ask rather than assumed
+    big enough -- the estimate then falls back exactly as it did before.
     """
     key = (card or "").strip().lower()
-    return tuple(row for row in RUNPOD_MACHINES if row.card.lower() == key)
+    whole = tuple(row for row in RUNPOD_MACHINES if row.card.lower() == key)
+    if whole:
+        return whole
+    family, floor = _split_memory_suffix(card)
+    if not family:
+        return ()
+    return tuple(row for row in RUNPOD_MACHINES
+                 if row.card.lower() == family.lower()
+                 and (_memory_in_type_id(row.instance) or 0) >= floor)
+
+
+def _split_memory_suffix(name: str | None) -> tuple[str, int]:
+    """`"A100-80GB"` -> `("A100", 80)`; a name with no memory suffix -> `("", 0)`.
+
+    The Python half of PACSrun's `splitVRAMSuffix`: a trailing number followed by
+    G or GB, separated from the family by a hyphen or a space. "80GB" alone has no
+    family and is not a split.
+    """
+    match = re.fullmatch(r"\s*(.+?)[\s-]+(\d+)\s*[Gg][Bb]?\s*", name or "")
+    return (match.group(1), int(match.group(2))) if match else ("", 0)
+
+
+def _memory_in_type_id(type_id: str) -> int | None:
+    """The GB figure a RunPod GPU type id states, or None when it states none."""
+    match = re.search(r"(\d+)\s*GB", type_id or "")
+    return int(match.group(1)) if match else None
 
 
 def runpod_counts(card: str) -> tuple[int, ...]:

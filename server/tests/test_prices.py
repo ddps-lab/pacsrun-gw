@@ -553,23 +553,29 @@ def test_runpod_is_never_offered_more_cards_than_it_will_attach_to_one_pod():
     assert "at most 9 L4 to one pod" in over.basis
 
 
-def test_the_six_names_runpod_cannot_sell_have_no_rows_and_two_are_the_name():
-    """A card missing from the table is a fact about the NAME half the time.
+def test_the_five_names_runpod_cannot_sell_have_no_rows_and_one_is_the_name():
+    """A card missing from the table is sometimes a fact about the NAME.
 
     T4, T4g, A10G and V100-32GB: RunPod's Secure Cloud does not sell them.
-    A100-80GB and RTXPRO6000: RunPod sells the SILICON and this spelling cannot
-    reach it, because `matchesModel` takes a family name plus a variant and both
-    of these are AWS's spellings (decider.go:661). The catalogue note says so,
-    which is where a user reads it.
+    RTXPRO6000: RunPod sells the SILICON and spells it "RTX PRO 6000", which this
+    name does not reach. The catalogue note says so, which is where a user reads it.
+
+    A100-80GB WAS ON THIS LIST and is not any more. PACSrun eb13d0f (2026-09-11)
+    taught the RunPod decider to read a trailing memory size as a floor, so
+    "A100-80GB" reaches RunPod's 80 GB "A100 PCIe" and "A100 SXM" -- pinned by
+    PACSrun pkg/decider/runpod/decider_test.go, the test that asks askAccepter
+    for "A100-80GB". This file kept asserting the older rule for 18 days, and the
+    price lookup, the note and validate's remedy followed it (HYPERUN-RUNPOD-NAME-RULE).
     """
     missing = [c.name for c in catalogue.CHOOSABLE
                if not m.runpod_machines_for(c.name)]
-    assert missing == ["T4", "T4g", "A10G", "V100-32GB", "RTXPRO6000",
-                       "A100-80GB"]
+    assert missing == ["T4", "T4g", "A10G", "V100-32GB", "RTXPRO6000"]
     assert "A100" in m.RUNPOD_CARDS, "the family name IS reachable"
-    for name, reachable in (("A100-80GB", "'A100'"), ("RTXPRO6000", "RTX PRO 6000")):
-        note = catalogue.choice_for(name).note
-        assert reachable in note, f"{name}'s note must name what RunPod calls it"
+    assert "RTX PRO 6000" in catalogue.choice_for("RTXPRO6000").note, \
+        "RTXPRO6000's note must name what RunPod calls it"
+    # And the suffixed name reaches exactly the 80 GB rows, not something smaller.
+    ids = {row.instance for row in m.runpod_machines_for("A100-80GB")}
+    assert ids == {"NVIDIA A100 80GB PCIe", "NVIDIA A100-SXM4-80GB"}
 
 
 def test_an_invoice_still_beats_the_published_price():
@@ -620,16 +626,22 @@ def test_a_runpod_only_ask_that_cannot_be_filled_is_an_error_not_a_hint():
     list the solve has somewhere else to land, so the same fact is INFO."""
     from ddpsrun_server import validate as v
 
-    alone = [f for f in v.check_gpu_is_buyable("A100-80GB", 4, "on-demand", 1,
+    # RTXPRO6000 and not A100-80GB since 2026-09-29: A100-80GB x4 IS fillable on
+    # RunPod (a 4-card A100 80GB pod), so it is no longer an example of this.
+    alone = [f for f in v.check_gpu_is_buyable("RTXPRO6000", 1, "on-demand", 1,
                                                None, ["runpod"])
              if f.code == "runpod-cannot-fill"]
     assert len(alone) == 1 and alone[0].level == "error"
-    assert "A100 PCIe" in alone[0].message, "it names what RunPod calls the card"
+    assert "RTX PRO 6000" in alone[0].message, "it names what RunPod calls the card"
 
-    with_aws = [f for f in v.check_gpu_is_buyable("A100-80GB", 4, "on-demand", 1,
+    with_aws = [f for f in v.check_gpu_is_buyable("RTXPRO6000", 2, "on-demand", 1,
                                                   None, None)
                 if f.code == "runpod-cannot-fill"]
     assert len(with_aws) == 1 and with_aws[0].level == "info"
+
+    # What used to be this test's example says nothing now, because RunPod fills it.
+    assert [f.code for f in v.check_gpu_is_buyable("A100-80GB", 4, "on-demand", 1,
+                                                   None, ["runpod"])] == []
 
     # A shape RunPod DOES fill says nothing at all.
     fine = v.check_gpu_is_buyable("L40S", 4, "on-demand", 1, None, ["runpod"])
@@ -641,14 +653,24 @@ def test_the_unfillable_remedy_now_says_whether_runpod_fills_it():
     it fits' -- a remedy that could not say what would happen."""
     from ddpsrun_server import validate as v
 
-    # AWS sells the A100-80GB in 8-card machines only, so count 4 does not fit
-    # there; and RunPod cannot answer that NAME either, which the remedy says.
-    aws_gap = [f for f in v.check_gpu_is_buyable("A100-80GB", 4, "on-demand", 1,
+    # AWS sells the V100-32GB in 8-card machines only, so count 4 does not fit
+    # there; and RunPod sells no V100 at all, which the remedy says. This was
+    # A100-80GB until 2026-09-29, and that stopped being true on 2026-09-11 --
+    # see the note on test_the_five_names_runpod_cannot_sell_....
+    aws_gap = [f for f in v.check_gpu_is_buyable("V100-32GB", 4, "on-demand", 1,
                                                  None, None)
                if f.code == "gpu-count-unfillable"]
     assert len(aws_gap) == 1
-    assert "nothing in RunPod's catalogue matches the name 'A100-80GB'" in aws_gap[0].fix
+    assert "nothing in RunPod's catalogue matches the name 'V100-32GB'" in aws_gap[0].fix
     assert "cannot promise" not in aws_gap[0].fix
+
+    # A100-80GB x4 is the same AWS gap, and RunPod DOES fill it now.
+    a100_80 = [f for f in v.check_gpu_is_buyable("A100-80GB", 4, "on-demand", 1,
+                                                 None, None)
+               if f.code == "gpu-count-unfillable"]
+    assert len(a100_80) == 1
+    assert "RunPod DOES fill this shape" in a100_80[0].fix
+    assert "$6.36 per pod-hour" in a100_80[0].fix
 
     # The A100 count 4 is the same AWS gap, and here RunPod DOES fill it -- with
     # the pod and its price named.
