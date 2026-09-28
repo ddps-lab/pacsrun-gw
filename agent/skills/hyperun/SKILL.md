@@ -167,33 +167,23 @@ the job can run at all: the H100 is $6.88/hour in us-west-2, $8.60 in ap-northea
 in ap-northeast-2 it is sold only as an 8-GPU machine, so a one-card ask there cannot be
 filled and the job sits in Pending. `hyperun schema` lists what is on offer.
 
-**Three vendors can run a job -- `aws`, `runpod` and `shadeform` -- and Shadeform is the
-one to recommend.** An ask that names no `--vendor` and no `--region` is sent with
-`shadeform, runpod, aws` in that order, and the default `ordered` walk buys from the first
-that answers. Recommend it for two reasons: it is the cheapest of the three on most cards
-(read 2026-09-28: A100-80GB $1.35 against RunPod's $1.59, L40S $0.88 against $1.09), and
-in the lab's use a terminal into a Shadeform machine (`hyperun shell`, the browser
-terminal) opens faster -- say that one is the lab's observation, not a measurement. Two
-facts go to the user with the recommendation: Shadeform's catalogue carries no stock, and
-returning result files from a Shadeform machine has not yet completed a live run.
-`basis` names every other vendor with its price; read all of it out.
+**Three vendors can run a job -- `aws`, `runpod` and `shadeform` -- and the job compares
+all of them and buys the cheapest. Do not ask the user to pick a vendor.** Pass no
+`--vendor` and no `--region`: the job is sent with every runnable vendor and
+`placement_mode cheapest`, the walk asks each one, and the cheapest that has a machine
+wins. The estimate quotes that cheapest vendor and `basis` names the others with their
+prices -- tell the user the quote and the vendor in one line, e.g. "Shadeform L40S at
+$0.88/hour, the cheapest of the three (RunPod $1.09, AWS $1.86)".
 
-**Turn the user's choice into flags exactly.**
-
-| they choose | you pass |
-|---|---|
-| the recommendation, or "any vendor" | no `--vendor`, no `--region` |
-| "the cheapest, any vendor" | no `--vendor`, no `--region`, `--placement-mode cheapest` |
-| one vendor | `--vendor <that one>` |
-| several, in their order | `--vendor a --vendor b` |
+Pass `--vendor` only when the USER names one themselves -- to require it, or to leave one
+out -- and then pass exactly what they said. Do not add vendor options to your own
+questions; the comparison is the platform's job.
 
 An empty vendor list did NOT always mean "any vendor". Until 2026-09-28 PACSrun read it
 as the operator's one default region, AWS us-west-2: `job-a9ea30b8ba7a` chose "cheapest,
 any vendor", was shown Shadeform's price, and was bought on AWS, the only candidate. A
 job naming regions, or asking for spot, is still sent without the default vendors --
 neither Shadeform nor RunPod sells spot, so a spot ask goes to AWS alone.
-
-Which vendor to allow is the user's call.
 
 ## Step 3 — validate, and stop on an error
 
@@ -309,12 +299,13 @@ one. Say so rather than reporting a problem.
 
 ### ★ Tell them where it actually runs, and tell them again when that changes
 
-The vendor a job lands on is not always the one first in its list: the first may have
-no machine, or an offering may fail to start and be skipped. `hyperun status` prints a
+The vendor a job lands on is not always the one the estimate quoted: the cheapest may
+have no machine by the time the job is placed, or an offering may fail to start and be
+skipped. `hyperun status` prints a
 `placement` line -- `placement_note` in `--json` -- that says what was asked, what it
 runs on, whether that is not the first vendor asked, and how many offerings failed on
 the way. **As soon as the phase leaves Pending, read that line and compare the vendor
-with what the user chose.** If it differs, tell them in one sentence which vendor it
+with the one the estimate quoted (or the one the user named).** If it differs, tell them in one sentence which vendor it
 runs on and why, quoting the note, before anything else. Do the same after every
 restart: a job that recovers can land on another vendor. Keep the vendor in mind for
 what follows -- the price, the terminal, and where the result files come back from all

@@ -68,7 +68,7 @@ def test_an_ask_naming_nothing_is_quoted_where_its_walk_starts_and_names_every_o
     assert rate.usd_per_hour_low == 0.88
     assert rate.vendor == "shadeform"
     assert "massedcompute_L40S" in rate.basis
-    assert "Shadeform, RunPod, AWS in that order" in rate.basis
+    assert "compares Shadeform, RunPod, AWS and buys the cheapest" in rate.basis
     # Both of the others are named, not just the first.
     assert "g6e.xlarge" in rate.basis and "1.8610" in rate.basis
     assert "RunPod" in rate.basis and "1.0900" in rate.basis
@@ -83,8 +83,9 @@ def test_every_vendor_that_can_rent_is_priced():
     assert only.vendor == "shadeform"
     assert only.usd_per_hour_low == 1.35
     assert "hyperstack_A100-80GB" in only.basis and "montreal-canada-2" in only.basis
-    # The answer says what the catalogue cannot: stock, and the untested return path.
-    assert "no stock" in only.basis and "live run" in only.basis
+    # No warning about returning results: that was stale. Shadeform brought back
+    # files by announce alone on 2026-09-17 (job-c5f6c3b2ccc6, models.RUNNABLE_VENDORS).
+    assert "live run" not in only.basis and "no stock" not in only.basis
 
 
 def test_a_shadeform_region_narrows_the_rows_it_is_priced_from():
@@ -666,11 +667,14 @@ def test_ordered_quotes_the_first_vendor_asked_and_cheapest_quotes_the_cheapest(
     """For a card where the first vendor asked is NOT the cheapest, the two modes
     must disagree -- that is what the mode changes. `A100` (40 GB on Shadeform's
     lambdalabs rows, 80 GB on RunPod) is $1.99 on Shadeform and $1.59 on RunPod."""
-    ordered = e.hourly_rate("A100", 1, 1, None, "on-demand")
+    ordered = e.hourly_rate("A100", 1, 1, None, "on-demand", None, "ordered")
     cheapest = e.hourly_rate("A100", 1, 1, None, "on-demand", None, "cheapest")
+    default = e.hourly_rate("A100", 1, 1, None, "on-demand")
     assert ordered.vendor == "shadeform" and ordered.usd_per_hour_low == 1.99
     assert cheapest.vendor == "runpod" and cheapest.usd_per_hour_low == 1.59
-    assert "buys the cheapest answer" in cheapest.basis
+    assert "buys the cheapest that has a machine" in cheapest.basis
+    # Naming no vendor means compare-and-take-the-cheapest (models.effective_mode).
+    assert default.vendor == "runpod" and default.usd_per_hour_low == 1.59
 
 
 def test_regions_decide_the_vendors_when_none_are_named():

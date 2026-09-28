@@ -171,11 +171,13 @@ class GpuRequest(BaseModel):
 # its GPU advertised, the workload container runs, and the machine is handed back on every path
 # including the failing ones.
 #
-# ★ WHAT IS NOT YET PROVEN, said here because a user reads this list to decide: ARTIFACT
-# RETRIEVAL. `pods/exec` needs a running container and a workload that writes its results and
-# exits is gone one second later; the fix (PACSRUN-K3S-FETCH-HOLD, PACSrun d3c611e) holds the
-# container open and has unit coverage but has not completed a live run. A job with no
-# spec.result_path is unaffected. The same defect is on the aws path and has been all along.
+# ★ ARTIFACT RETRIEVAL IS PROVEN LIVE TOO, and this note said the opposite until 2026-09-28.
+# It was written on 2026-09-10, before the hold (PACSRUN-K3S-FETCH-HOLD, PACSrun d3c611e) had
+# run, and three agent-facing sentences were copied from it without checking. The runs since:
+# job-c5f6c3b2ccc6 (2026-09-17, massedcompute_A6000) announced demo-out.tar.gz with
+# PACSRUN_ARTIFACT alone -- no `aws s3 cp`, no boto3 -- and it is in its result path;
+# ckpt-livetest (2026-09-12) and market64-exp0 (2026-09-13) brought back 213 MB and 369 MB
+# checkpoints on L40S. So there is nothing about Shadeform a user has to be warned of.
 RUNNABLE_VENDORS: tuple[str, ...] = ("aws", "runpod", "shadeform")
 PRICE_ONLY_VENDORS: tuple[str, ...] = ("gcp", "azure", "lambda", "nebius")
 KNOWN_VENDORS: tuple[str, ...] = RUNNABLE_VENDORS + PRICE_ONLY_VENDORS
@@ -196,11 +198,11 @@ KNOWN_VENDORS: tuple[str, ...] = RUNNABLE_VENDORS + PRICE_ONLY_VENDORS
 # writes the three words, and PACSrun's own fill step turns each into a candidate in this order:
 # `shadeform` and `runpod` are placement words, `aws` becomes the default region.
 #
-# WHY SHADEFORM FIRST. The lab's decision on 2026-09-28: it is the cheapest of the three on most
-# cards in the 2026-09-28 catalogue (A100-80GB $1.35 against RunPod $1.59, L40S $0.88 against
-# $1.09), and in the lab's use a terminal into a Shadeform machine opens faster -- an observation,
-# not a measurement. Under the default `ordered` mode this order IS the preference; under
-# `cheapest` the order does not matter.
+# AND IT IS SENT WITH placement_mode "cheapest" unless the caller named a mode (effective_mode).
+# The lab's decision on 2026-09-28: a job naming no vendor compares every runnable vendor and buys
+# the cheapest answer -- no vendor is preferred and the user is not asked to pick one. The order
+# below is then only the order the walk asks in; it decides nothing. (For a few hours the same day
+# the default was `ordered` with Shadeform first, which made the order a preference.)
 #
 # WHEN IT DOES NOT APPLY. A job that names regions already chose its places, so it is sent as
 # written. A spot job is sent with no vendors: neither Shadeform nor RunPod sells spot, and the
@@ -226,6 +228,21 @@ def effective_vendors(vendors: list[str] | None, regions: list[str] | None,
     if regions or capacity_type == "spot":
         return []
     return list(DEFAULT_VENDOR_ORDER)
+
+
+def effective_mode(vendors: list[str] | None, regions: list[str] | None,
+                   capacity_type: str | None, mode: str | None) -> str | None:
+    """The placement mode a job goes out with (HYPERUN-DEFAULT-VENDORS).
+
+    A caller's own mode always wins. When the vendors are FILLED -- no vendor, no
+    region, not spot -- the job compares all of them and buys the cheapest, so the
+    mode is "cheapest". Otherwise None, which PACSrun reads as "ordered".
+    """
+    if mode:
+        return mode
+    if not vendors and not regions and capacity_type != "spot":
+        return "cheapest"
+    return None
 
 # What the walk does with its candidates. The words and their meanings are the
 # CRD's (spec.placement.mode); this copy exists so the request can be checked
@@ -340,9 +357,10 @@ class SubmitRequest(BaseModel):
     vendors: list[str] = Field(
         default_factory=list,
         description="WHO the machines may be bought from, in the order they are "
-        "asked. Empty, with no regions either, sends the job with "
-        f"{', '.join(DEFAULT_VENDOR_ORDER)} in that order (spot jobs excepted: they "
-        "go to AWS alone, the only one selling spot). "
+        "asked. Empty, with no regions either, sends the job with every runnable "
+        f"vendor ({', '.join(DEFAULT_VENDOR_ORDER)}) and placement_mode 'cheapest', "
+        "so it buys the cheapest answer (spot jobs excepted: they go to AWS alone, "
+        "the only one selling spot). "
         f"Runnable: {', '.join(RUNNABLE_VENDORS)}. Price-only: "
         f"{', '.join(PRICE_ONLY_VENDORS)} -- these are answered from catalogue "
         "CSVs and no actuator here can rent from them, so list one only together "
@@ -1211,8 +1229,10 @@ def to_pacsjob(
     sent_vendors = effective_vendors(request.vendors, request.regions, capacity_type)
     if sent_vendors:
         placement["vendors"] = sent_vendors
-    if request.placement_mode:
-        placement["mode"] = request.placement_mode
+    sent_mode = effective_mode(request.vendors, request.regions, capacity_type,
+                               request.placement_mode)
+    if sent_mode:
+        placement["mode"] = sent_mode
     # DDPSRUN-REGIONS. Dropped until 2026-09-08, exactly as `vendors` was: the CRD
     # has had placement.regions all along and the gateway sent nothing, so every
     # job through this screen got the operator's one default AWS region and there

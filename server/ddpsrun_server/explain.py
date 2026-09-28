@@ -128,19 +128,14 @@ BEFORE YOU SUBMIT
   price is published. So "cost_usd": null next to a real "rate" means we know
   what an hour costs and not how many hours -- and the rate belongs to a vendor.
   THREE VENDORS CAN RUN A JOB: aws, runpod and shadeform. An ask naming no
-  vendor and no region is SENT with shadeform, runpod and aws in that order (a
-  spot job goes to aws alone), and the default "ordered" walk buys from the first
-  that answers -- so Shadeform is the default choice. Send placement_mode
-  "cheapest" to buy the cheapest answer instead. The estimate quotes the vendor
-  the walk would buy from and names the others.
-  Read 2026-09-28, one card per pod: an L40S is $0.88/hour on Shadeform, $1.09 on
-  RunPod and $1.8610 on AWS; an H100 $2.50, $2.89 and $6.88; an A100-80GB $1.35
-  on Shadeform and $1.59 on RunPod, and AWS sells no single-card A100 machine at
-  all. In the lab's use a terminal into a Shadeform machine opens faster (an
-  observation, not a measurement). Shadeform's rows come from a catalogue that
-  carries no stock, and returning result files from a Shadeform machine has not
-  yet completed a live run. Send "vendors" if you care which, and read
-  GET /v1/prices?vendor=<name> for that vendor's rows.
+  vendor and no region COMPARES ALL THREE AND BUYS THE CHEAPEST: it is sent with
+  every vendor and placement_mode "cheapest" (a spot job goes to aws alone, the
+  only one selling spot). The estimate quotes that cheapest vendor and names the
+  others. Read 2026-09-28, one card per pod: an L40S is $0.88/hour on Shadeform,
+  $1.09 on RunPod and $1.8610 on AWS; an H100 $2.50, $2.89 and $6.88; an
+  A100-80GB $1.35 on Shadeform and $1.59 on RunPod, and AWS sells no single-card
+  A100 machine at all. Send "vendors" only if a vendor has to be excluded or
+  required, and read GET /v1/prices?vendor=<name> for that vendor's rows.
 
   GET /v1/jobs/{id} says where the job went: "vendor", and "placement_note", one
   sentence naming what was asked, what it runs on, whether that is not the first

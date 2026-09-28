@@ -196,7 +196,7 @@ def test_no_capacity_type_writes_only_the_default_vendors():
     # 2026-09-28 (HYPERUN-DEFAULT-VENDORS) it does carry the three vendors, because
     # an empty placement meant AWS alone to PACSrun.
     obj = to_pacsjob(minimal(gpu={"vram_gb": 48}), ALICE, SETTINGS, JOB_ID)
-    assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"]}
+    assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"], "mode": "cheapest"}
 
 
 def test_a_capacity_type_is_written_into_placement():
@@ -204,7 +204,7 @@ def test_a_capacity_type_is_written_into_placement():
     # declines anything that is not on-demand before it reads the catalogue.
     obj = to_pacsjob(minimal(gpu={"vram_gb": 48}), ALICE, SETTINGS, JOB_ID, "on-demand")
     assert obj["spec"]["placement"] == {"capacityType": "on-demand",
-                                        "vendors": ["shadeform", "runpod", "aws"]}
+                                        "vendors": ["shadeform", "runpod", "aws"], "mode": "cheapest"}
 
 
 def test_a_cpu_only_job_asks_for_no_gpu():
@@ -216,7 +216,7 @@ def test_expected_hours_is_recorded_but_not_acted_on():
     obj = to_pacsjob(minimal(expected_hours=8.0), ALICE, SETTINGS, JOB_ID)
     assert obj["metadata"]["annotations"]["ddpsrun.io/expected-hours"] == "8.0"
     # The hours change nothing about placement: only the default vendors are there.
-    assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"]}
+    assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"], "mode": "cheapest"}
 
 
 def test_a_job_the_controller_has_not_touched_yet_still_renders():
@@ -352,11 +352,12 @@ def test_vendors_alone_still_produce_a_placement_block():
 def test_a_job_naming_no_vendor_and_no_region_is_sent_with_all_three():
     """HYPERUN-DEFAULT-VENDORS (2026-09-28). This used to write no placement at all, and
     PACSrun reads that as the operator's one default region -- AWS alone. job-a9ea30b8ba7a
-    chose "cheapest, any vendor" and its walk had one candidate. Shadeform goes first
-    because under the default ordered mode the order is the preference."""
+    chose "cheapest, any vendor" and its walk had one candidate. It is sent with
+    placement_mode cheapest too: the lab's rule is compare every vendor, buy the
+    cheapest, and ask the user nothing about vendors."""
     request = SubmitRequest(name="n", image="img")
     obj = to_pacsjob(request, ALICE, SETTINGS, JOB_ID, capacity_type=None)
-    assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"]}
+    assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"], "mode": "cheapest"}
 
 
 def test_a_job_naming_regions_or_asking_for_spot_is_not_filled():
@@ -374,6 +375,12 @@ def test_a_job_naming_regions_or_asking_for_spot_is_not_filled():
 def test_the_default_order_matches_what_the_estimate_prices():
     assert tuple(estimate.DEFAULT_ORDER) == tuple(DEFAULT_VENDOR_ORDER)
     assert set(DEFAULT_VENDOR_ORDER) == set(RUNNABLE_VENDORS)
+
+
+def test_a_mode_the_caller_named_is_kept():
+    request = SubmitRequest(name="n", image="img", placement_mode="compare")
+    obj = to_pacsjob(request, ALICE, SETTINGS, JOB_ID, capacity_type="on-demand")
+    assert obj["spec"]["placement"]["mode"] == "compare"
 
 
 def test_an_unrecognised_vendor_is_refused_and_the_message_lists_the_real_ones():

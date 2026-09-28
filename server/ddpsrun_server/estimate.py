@@ -862,11 +862,8 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
                     f"Shadeform {shape} on-demand at ${row.usd_per_hour:.4f} per "
                     f"machine-hour ({row.instance} in {row.region}), the cheapest "
                     f"of {matching} matching row(s) in the SkyPilot catalogue read "
-                    f"on {SHADEFORM_PRICED_ON}. That catalogue carries no stock, so "
-                    f"this is a price rather than a promise of a machine, and "
-                    f"retrieving result files from a Shadeform machine has not yet "
-                    f"completed a live run (models.RUNNABLE_VENDORS). Shadeform "
-                    f"sells no spot. Vendor prices move.",
+                    f"on {SHADEFORM_PRICED_ON}. Shadeform sells no spot. Vendor "
+                    f"prices move.",
                     "shadeform", pods))
 
     if not options:
@@ -877,6 +874,10 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
     # absent) buys from the first candidate that answers, so the first PRICED one
     # is the honest single number; `cheapest` and `compare` rank every answer.
     options.sort(key=lambda r: asked.index(r.vendor))
+    # models.effective_mode: a job naming no vendor, no region and not spot is sent
+    # with every vendor AND placement_mode "cheapest", so it is quoted that way.
+    if mode is None and not vendors and not regions and capacity != "spot":
+        mode = "cheapest"
     ordered = (mode or "ordered") == "ordered"
     best = options[0] if ordered else min(options, key=lambda r: r.usd_per_hour_low)
     others = [r for r in options if r is not best]
@@ -896,8 +897,8 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
         elif mode == "compare":
             extra = f" Other candidates: {named}. compare ranks them and buys nothing."
         else:
-            extra = (f" Other candidates: {named}. With placement_mode cheapest the "
-                     f"job buys the cheapest answer, which is this one.")
+            extra = (f" The job compares {order} and buys the cheapest that has a "
+                     f"machine, which is this one; the others: {named}.")
     return Rate(best.usd_per_hour_low, best.usd_per_hour_high,
                 best.basis + extra, best.vendor, best.machines)
 

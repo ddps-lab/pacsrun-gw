@@ -114,13 +114,11 @@ def job_arguments() -> argparse.ArgumentParser:
     # first time a vendor is added.
     shared.add_argument(
         "--vendor", action="append", metavar="NAME",
-        help="who the machine may be bought from, in the order they are asked. "
-        "Repeat it to allow several. Omit it, and --region, and the job is sent "
-        "with shadeform, runpod and aws in that order (a spot job goes to aws "
-        "alone); add --placement-mode cheapest to buy the cheapest of them "
-        "instead of the first that answers. aws, runpod and shadeform can "
-        "actually run a job; gcp, azure, lambda and nebius can only be PRICED, "
-        "so name one of those only with --placement-mode compare.",
+        help="who the machine may be bought from. Repeat it to allow several. "
+        "Omit it, and --region, and the job compares aws, runpod and shadeform "
+        "and buys the cheapest (a spot job goes to aws alone). aws, runpod and "
+        "shadeform can actually run a job; gcp, azure, lambda and nebius can only "
+        "be PRICED, so name one of those only with --placement-mode compare.",
     )
     # DDPSRUN-REGIONS. Missing until 2026-09-08, so every job this CLI submitted
     # ran in the operator's one default region and there was no way to say
