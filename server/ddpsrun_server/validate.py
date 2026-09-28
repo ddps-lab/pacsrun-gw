@@ -916,6 +916,20 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
             ))
         return findings
 
+    # HYPERUN-NAME-FLOOR. A spelling the catalogue has renamed still finds its card,
+    # and the job goes out under the new name; this says so, because the new name can
+    # buy a card the old one could not on some vendors.
+    typed = gpu_name.strip()
+    if typed.lower() in catalogue.RENAMED:
+        findings.append(Finding(
+            WARNING, "gpu-name-renamed",
+            f"{typed!r} is read as {choice.name!r}: an A100 with at least 40 GB. That name "
+            f"used to mean the 40 GB card on AWS and Shadeform and an 80 GB card on RunPod; "
+            f"now it means at least 40 GB on all three, so an 80 GB card can answer it where "
+            f"it is cheaper.",
+            f"Write {choice.name!r} to keep this, or 'A100-80GB' if the job needs 80 GB.",
+        ))
+
     pods = max(1, parallelism)
     # THE MACHINE SIZES ON OFFER DEPEND ON THE REGION -- the H100 comes as 1 or 8
     # in us-west-2 and as 8 only elsewhere -- so the region has to travel with

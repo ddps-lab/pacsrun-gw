@@ -112,29 +112,31 @@ CHOOSABLE: tuple[Choice, ...] = (
                              "spells it 'RTX PRO 6000', so this name reaches AWS "
                              "only. RunPod sells it at $2.09 per card-hour "
                              "(read 2026-09-09) but no name here asks for it."),
-    # ★ BOTH NAMES REACH RUNPOD'S 80 GB A100s NOW, and the 40 GB / 80 GB split in
-    # these names is AWS's and Shadeform's, not RunPod's. Rechecked 2026-09-29.
+    # ★ HYPERUN-NAME-FLOOR, 2026-09-29: "A100" IS NOW "A100-40GB", AND A MEMORY SUFFIX IS A
+    # FLOOR ON EVERY VENDOR. LIMITATIONS.md item 3.
     #
-    # What this comment said on 2026-09-09 was true then: RunPod's decider matched
-    # a whole name or a family plus a variant, so "A100" reached its "A100 PCIe"
-    # and "A100 SXM" and "A100-80GB" matched neither. The decider has since
-    # gained `splitVRAMSuffix` (PACSrun decider.go, askAccepter): a name ending in
-    # a memory size is also read as its family AND at least that much memory, so
-    # "A100-80GB" is "A100" with >= 80 GB and reaches both. The note below kept
-    # telling people to ask for "A100" to reach RunPod, and the price lookup kept
-    # the old rule (HYPERUN-RUNPOD-NAME-RULE, measurements.runpod_machines_for).
+    # WHAT WAS WRONG. One word meant two cards. "A100" was the 40 GB card on AWS (p4d) and on
+    # Shadeform, because SkyPilot spells that card with no memory, and an 80 GB card on RunPod,
+    # which sells no 40 GB A100 and whose decider matched the family. So `--gpu-name A100` in
+    # `ordered` answered Shadeform's 40 GB at $1.99 and in `cheapest` RunPod's 80 GB at $1.59:
+    # two memories compared under one name.
     #
-    # WHAT IS STILL TRUE, and it is LIMITATIONS.md item 3: RunPod sells no 40 GB
-    # A100, so "A100" -- 40 GB on AWS (p4d) and on Shadeform -- is answered by an
-    # 80 GB card on RunPod. The decider reads a size as a floor ("a job that asks
-    # for 80 GB is not harmed by a 96 GB card"), so the job gets at least what it
-    # asked for; but a `cheapest` comparison for "A100" sets 40 GB offers beside
-    # an 80 GB one. The RunPod price sentence names the GPU type id it priced
-    # ("NVIDIA A100 80GB PCIe"), which is where a reader can see the difference.
-    Choice("A100", 40, "AWS sells it only as a whole 8-GPU machine, and AWS's is "
-                       "the 40 GB card. RunPod sells it singly and RunPod's are "
-                       "80 GB ($1.59 per card-hour, read 2026-09-09), but RunPod "
-                       "does not sell spot."),
+    # WHAT IT IS NOW. The name says its memory, and the memory is a FLOOR -- the rule RunPod's
+    # decider already had (splitVRAMSuffix) and PACSrun now applies on AWS, GCP and Shadeform
+    # too (PACSRUN-NAME-FLOOR, pkg/decider/names.go). "A100-40GB" is any A100 with at least
+    # 40 GB, so the 80 GB one answers it where it is cheaper -- and on 2026-09-28 it was, on
+    # RunPod and on Shadeform ($1.35 against $1.99). "A100-80GB" reaches only 80 GB cards, as
+    # it always did. The price sentence names the machine it priced, which is where a reader
+    # sees which of the two a comparison landed on.
+    #
+    # "A100" STILL WORKS, as a rename (RENAMED below) and with a warning from validate. It is
+    # read as "A100-40GB", which never gets a job less memory than it got before: it was 40 GB
+    # on AWS and Shadeform and 80 GB on RunPod, and now it is at least 40 everywhere.
+    Choice("A100-40GB", 40, "An A100 with at least 40 GB, so an 80 GB card can answer it, and "
+                            "that is often the cheaper one: on 2026-09-28 RunPod sold only 80 GB "
+                            "A100s ($1.59) and Shadeform's 80 GB was $1.35 against $1.99 for "
+                            "40 GB. AWS sells both only as whole 8-GPU machines. RunPod does not "
+                            "sell spot. If the job needs 80 GB, ask for A100-80GB."),
     Choice("A100-80GB", 80, "AWS sells it only as a whole 8-GPU machine. RunPod "
                             "sells it singly -- its 'A100 PCIe' and 'A100 SXM' "
                             "are both 80 GB and this name reaches them -- but "
@@ -148,19 +150,38 @@ CHOOSABLE: tuple[Choice, ...] = (
 
 BY_NAME = {choice.name.lower(): choice for choice in CHOOSABLE}
 
+# Names this catalogue used to offer, and the name each one is read as now. HYPERUN-NAME-FLOOR.
+# A request that still sends the old name is not refused -- an older CLI, a saved job file or an
+# agent's memory can carry it -- but validate says it was renamed, and everything past the
+# request (the estimate, the PacsJob) sees the new name only.
+RENAMED: dict[str, str] = {"a100": "A100-40GB"}
+
+
+def canonical(name: str | None) -> str:
+    """The name a request's GPU is read as: the rename when there is one, else as written.
+
+    Args:
+        name: whatever the caller wrote.
+
+    Returns:
+        "A100-40GB" for "A100" (any case); otherwise the name, stripped.
+    """
+    stripped = (name or "").strip()
+    return RENAMED.get(stripped.lower(), stripped)
+
 
 def choice_for(name: str) -> Choice | None:
     """Look a card up by the catalogue's spelling.
 
     Args:
-        name: whatever the caller wrote.
+        name: whatever the caller wrote. A renamed spelling finds its new name.
 
     Returns:
         The `Choice`, or None when this is not a name the catalogue knows. None
         is the answer that matters: it means the ask can never be filled, and
         saying so before submitting is the whole point of this module.
     """
-    return BY_NAME.get((name or "").strip().lower())
+    return BY_NAME.get(canonical(name).lower())
 
 
 def nvidia_smi_spelling(name: str) -> str | None:
@@ -194,6 +215,8 @@ def nvidia_smi_spelling(name: str) -> str | None:
             head = candidate.split("-")[0]
             if head == "A100" and "80" in candidate and choice_for("A100-80GB"):
                 return "A100-80GB"
+            if head == "A100" and choice_for("A100-40GB"):
+                return "A100-40GB"
             if head and choice_for(head):
                 return choice_for(head).name
     return None

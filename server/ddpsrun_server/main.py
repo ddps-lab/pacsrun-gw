@@ -57,6 +57,7 @@ from fastapi import Response
 from fastapi.responses import PlainTextResponse
 
 from . import artifacts
+from . import catalogue
 from . import naming
 from . import registry      # DDPSRUN-IMAGES: the container images this lab has built
 from . import cognito
@@ -817,7 +818,9 @@ def _estimate_for(body: JudgementRequest) -> estimator.Estimate:
     """Run the estimator over a request. Shared by /v1/estimate, /v1/validate
     and /v1/jobs, so all three reach the same conclusion about the same job."""
     return estimator.estimate(
-        gpu_name=gpu_name_for(body),
+        # HYPERUN-NAME-FLOOR. Priced under the name PACSrun will be sent, so a renamed
+        # "A100" is priced as the "A100-40GB" it is submitted as.
+        gpu_name=catalogue.canonical(gpu_name_for(body)),
         cap=cap_from(body),
         pairs=body.training.pairs,
         epochs=body.training.epochs,
@@ -893,8 +896,15 @@ def prices_route(
     if vendor:
         rows = tuple(r for r in rows if r.vendor == vendor.strip().lower())
     if card:
-        wanted = card.strip().lower()
-        rows = tuple(r for r in rows if r.card.lower() == wanted)
+        # HYPERUN-NAME-FLOOR. The rows this name reaches, by the rule placement uses:
+        # "A100-40GB" is spelled "A100" and "A100-80GB" in the SkyPilot rows, and
+        # RunPod's own rows are matched on their GPU type id's memory.
+        name = catalogue.canonical(card)
+        skypilot = {spelling.lower() for spelling in measurements.skypilot_cards_for(name)}
+        runpod = set(measurements.runpod_machines_for(name))
+        rows = tuple(r for r in rows
+                     if (r in runpod if r.vendor == "runpod"
+                         else r.card.lower() in skypilot))
     if region:
         rows = tuple(r for r in rows if r.region == region.strip())
 

@@ -664,3 +664,13 @@ def test_the_note_says_when_the_job_did_not_land_on_the_first_vendor_asked():
     # machine yet" for a job that by design never gets one.
     compared = placement_note(["shadeform", "runpod", "aws"], [], "compare", None, None, 0)
     assert compared.endswith("compare ranks the answers and buys nothing.")
+
+
+def test_the_old_a100_name_goes_to_pacsrun_as_the_new_one():
+    """HYPERUN-NAME-FLOOR. PACSrun reads "A100-40GB" as an A100 with at least 40 GB on
+    every vendor; the bare "A100" would still mean 40 GB on AWS and 80 GB on RunPod."""
+    obj = to_pacsjob(minimal(gpu={"name": "A100", "count": 8}), ALICE, SETTINGS, JOB_ID)
+    assert obj["spec"]["resources"]["gpus"]["name"] == "A100-40GB"
+    other = to_pacsjob(minimal(gpu={"name": "L40S"}), ALICE, SETTINGS, JOB_ID)
+    assert other["spec"]["resources"]["gpus"]["name"] == "L40S"
+

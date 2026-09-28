@@ -609,8 +609,8 @@
               <option value="V100-32GB">V100-32GB (32 GB) - sold only as an 8-GPU machine</option>
               <option value="L40S">L40S (48 GB)</option>
               <option value="RTXPRO6000">RTXPRO6000 (96 GB)</option>
-              <option value="A100">A100 (40 GB) - sold only as an 8-GPU machine</option>
-              <option value="A100-80GB">A100-80GB (80 GB) - sold only as an 8-GPU machine</option>
+              <option value="A100-40GB">A100-40GB (40 GB or more) - AWS sells it only as an 8-GPU machine</option>
+              <option value="A100-80GB">A100-80GB (80 GB) - AWS sells it only as an 8-GPU machine</option>
               <option value="H100">H100 (80 GB)</option>
               <option value="H200">H200 (141 GB) - sold only as an 8-GPU machine</option>
               <option value="B200">B200 (180 GB) - sold only as an 8-GPU machine</option>
@@ -621,7 +621,7 @@
                count is 1 (validate.py's `if gpu_count == 1 and not choice.sold_singly`). Without a
                box for the count, those six could be selected and never submitted -- the check was
                already written to allow 8, there was just no way to ask for it. -->
-          <label><span><b>GPUs per pod</b> <span class="dim">V100/A100/H200/B200/B300 are sold only as a whole 8-card machine</span></span>
+          <label><span><b>GPUs per pod</b> <span class="dim">on AWS, V100/A100/H200/B200/B300 come only as a whole 8-card machine</span></span>
             <input id="f-gpucount" type="number" min="1" max="8" value="1"></label>
           <label><span><b>Parallelism</b> <span class="dim">how many independent pods</span></span>
             <input id="f-parallelism" type="number" min="1" max="256" value="1"></label>

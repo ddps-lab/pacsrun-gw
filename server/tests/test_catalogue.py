@@ -181,3 +181,50 @@ def test_the_screen_offers_exactly_what_the_catalogue_lists():
     block = block[:block.index("</select>")]
     offered = set(re.findall(r'<option value="([^"]+)"', block))
     assert offered == {c.name for c in catalogue.CHOOSABLE}
+
+
+# ------------------------------------------------------------------ HYPERUN-NAME-FLOOR
+# LIMITATIONS.md item 3, 2026-09-29. "A100" was the 40 GB card on AWS and Shadeform and an
+# 80 GB card on RunPod, so `ordered` and `cheapest` compared two memories under one name.
+
+
+def test_a100_is_renamed_and_still_found():
+    assert "A100" not in {c.name for c in catalogue.CHOOSABLE}
+    assert catalogue.canonical("A100") == "A100-40GB"
+    assert catalogue.canonical(" a100 ") == "A100-40GB"
+    assert catalogue.canonical("A100-80GB") == "A100-80GB"
+    assert catalogue.choice_for("A100").name == "A100-40GB"
+    assert catalogue.nvidia_smi_spelling("NVIDIA A100-PCIE-40GB") == "A100-40GB"
+
+
+def test_the_old_name_is_warned_about_and_not_refused():
+    result = findings("A100", count=8)
+    assert "gpu-name-unknown" not in codes(result)
+    renamed = next(f for f in result if f.code == "gpu-name-renamed")
+    assert renamed.level == v.WARNING
+    assert "'A100-80GB'" in renamed.fix
+    assert "gpu-name-renamed" not in codes(findings("A100-40GB", count=8))
+
+
+def test_a_memory_suffix_is_a_floor_across_the_skypilot_rows():
+    """The rule PACSrun applies on every vendor (PACSRUN-NAME-FLOOR): the family with at
+    least that much memory. SkyPilot spells the 40 GB A100 with no memory at all."""
+    assert measurements.skypilot_cards_for("A100-40GB") == ("A100", "A100-80GB")
+    assert measurements.skypilot_cards_for("A100-80GB") == ("A100-80GB",)
+    # No suffix, no floor: an exact match, as before.
+    assert measurements.skypilot_cards_for("A10G") == ("A10G",)
+    assert measurements.skypilot_cards_for("V100-32GB") == ("V100-32GB",)
+
+
+def test_one_a100_40gb_is_priced_at_the_cheaper_80gb_card_where_that_is_cheaper():
+    """2026-09-28's table: Shadeform's 80 GB A100 at $1.35 against $1.99 for 40 GB, and
+    RunPod sells only 80 GB A100s. Under a floor, the 80 GB card answers a 40 GB ask."""
+    row, _ = measurements.shadeform_cheapest("A100-40GB", 1)
+    assert row.card == "A100-80GB" and row.usd_per_hour == 1.35
+    exact_40, _ = measurements.shadeform_cheapest("A100", 1)
+    assert exact_40.usd_per_hour > row.usd_per_hour
+    assert "80GB" in measurements.runpod_cheapest("A100-40GB", 1).instance
+    # AWS: p4d (40 GB) and p4de (80 GB), both in eights only.
+    assert measurements.aws_counts("A100-40GB") == (8,)
+    assert {r.card for r in measurements.aws_machines_for("A100-40GB", ["us-east-1"])} \
+        <= {"A100", "A100-80GB"}

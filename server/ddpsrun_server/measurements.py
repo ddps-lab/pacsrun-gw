@@ -430,6 +430,79 @@ SHADEFORM_MACHINES: tuple[PriceRow, ...] = tuple(
     row for row in PRICE_ROWS if row.vendor == "shadeform")
 
 
+# ★ HYPERUN-NAME-FLOOR (2026-09-29). How a name that carries its memory reaches this
+# table's AWS, GCP and Shadeform rows -- the same rule PACSrun now applies on every
+# vendor (PACSRUN-NAME-FLOOR, pkg/decider/names.go): the whole name, or the family
+# before the memory suffix with AT LEAST that much memory.
+#
+# WHY THE TABLE NEEDS HELP. These rows are spelled as SkyPilot spells them, and
+# SkyPilot names the smaller card of a family with no memory at all: "A100" is the
+# 40 GB card, "A100-80GB" the 80 GB one; "V100" is 16 GB, "V100-32GB" 32 GB. So for a
+# bare spelling the memory has to come from somewhere, and this is where. RunPod's
+# rows are NOT covered by it -- RunPod's "A100" rows are 80 GB cards, and
+# `runpod_machines_for` reads their memory off the GPU type id instead.
+SKYPILOT_BARE_MEMORY_GB: dict[str, int] = {"A100": 40, "V100": 16}
+
+# Every card spelling the AWS, GCP and Shadeform rows use.
+SKYPILOT_CARDS: tuple[str, ...] = tuple(sorted(
+    {row.card for row in PRICE_ROWS if row.vendor != "runpod"}))
+
+
+def skypilot_cards_for(card: str) -> tuple[str, ...]:
+    """The spellings in the AWS, GCP and Shadeform rows that this name reaches.
+
+    Args:
+        card: the catalogue's spelling, e.g. "A100-40GB".
+
+    Returns:
+        `(card,)` for a name with no memory suffix -- an exact match, as before.
+        For a suffixed name, every spelling of the same family with at least that
+        much memory: "A100-40GB" -> ("A100", "A100-80GB"), "A100-80GB" ->
+        ("A100-80GB",). Never empty.
+    """
+    name = (card or "").strip()
+    family, floor = _split_memory_suffix(name)
+    if not family:
+        return (name,)
+    reached = []
+    for spelling in SKYPILOT_CARDS:
+        if spelling.lower() == name.lower():
+            reached.append(spelling)
+            continue
+        own_family, own_memory = _split_memory_suffix(spelling)
+        own_family = own_family or spelling
+        own_memory = own_memory or SKYPILOT_BARE_MEMORY_GB.get(spelling, 0)
+        if own_family.lower() == family.lower() and own_memory >= floor:
+            reached.append(spelling)
+    return tuple(reached) or (name,)
+
+
+def memory_above_ask(card: str, row: "PriceRow") -> int | None:
+    """The row's memory per card, when it is MORE than a suffixed name asks for.
+
+    HYPERUN-NAME-FLOOR. "A100-40GB" is a floor, so an 80 GB row can be the one priced,
+    and a sentence that says "one A100-40GB" about it would hide exactly what
+    LIMITATIONS.md item 3 was about. The estimate names the memory when this answers.
+
+    Args:
+        card: the name asked for, e.g. "A100-40GB".
+        row: the row that was priced.
+
+    Returns:
+        The row's GB per card, or None when the name carries no memory, the row's
+        memory is not known, or it is no more than the name asked for.
+    """
+    _, floor = _split_memory_suffix(card)
+    if not floor:
+        return None
+    if row.vendor == "runpod":
+        memory = _memory_in_type_id(row.instance)
+    else:
+        _, memory = _split_memory_suffix(row.card)
+        memory = memory or SKYPILOT_BARE_MEMORY_GB.get(row.card)
+    return memory if memory and memory > floor else None
+
+
 # `AwsMachine` was the old name for a us-west-2-only row. Kept as an alias so a
 # reader who greps the older commits or the raw logs lands somewhere.
 AwsMachine = PriceRow
@@ -449,10 +522,10 @@ def aws_machines_for(card: str,
     Returns:
         The matching rows. Empty when no allowed region offers the card.
     """
-    key = (card or "").strip().lower()
+    keys = {spelling.lower() for spelling in skypilot_cards_for(card)}
     allowed = {r.strip() for r in (regions or []) if r.strip()} or {DEFAULT_AWS_REGION}
     return tuple(row for row in AWS_MACHINES
-                 if row.card.lower() == key and row.region in allowed)
+                 if row.card.lower() in keys and row.region in allowed)
 
 
 def aws_counts(card: str,
@@ -749,9 +822,9 @@ def shadeform_counts(card: str) -> tuple[int, ...]:
         The distinct machine sizes, ascending. Empty when Shadeform lists no card
         of that name at all.
     """
-    key = (card or "").strip().lower()
+    keys = {spelling.lower() for spelling in skypilot_cards_for(card)}
     return tuple(sorted({row.gpus for row in SHADEFORM_MACHINES
-                         if row.card.lower() == key}))
+                         if row.card.lower() in keys}))
 
 
 def shadeform_cheapest(card: str, gpus_per_pod: int,
@@ -793,11 +866,11 @@ def shadeform_cheapest(card: str, gpus_per_pod: int,
         `(row, matching)` -- the cheapest row at that exact count and how many rows
         matched -- or None when Shadeform lists no such card at that count.
     """
-    key = (card or "").strip().lower()
+    keys = {spelling.lower() for spelling in skypilot_cards_for(card)}
     per_pod = max(1, gpus_per_pod)
     allowed = {r.strip() for r in (regions or []) if r.strip()}
     fits = [row for row in SHADEFORM_MACHINES
-            if row.card.lower() == key and row.gpus == per_pod
+            if row.card.lower() in keys and row.gpus == per_pod
             and row.usd_per_hour is not None
             and (not allowed or row.region in allowed)]
     if not fits:

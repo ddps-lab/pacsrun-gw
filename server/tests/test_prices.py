@@ -219,7 +219,10 @@ def test_the_machine_sizes_reproduce_the_boolean_they_replaced():
     one of the two was wrong."""
     hand_read_2026_09_02 = {
         "T4": True, "T4g": True, "L4": True, "A10G": True, "RTX PRO 4500": True,
-        "V100-32GB": False, "L40S": True, "RTXPRO6000": True, "A100": False,
+        "V100-32GB": False, "L40S": True, "RTXPRO6000": True,
+        # Read as "A100" on 2026-09-02; the same card was renamed "A100-40GB" on
+        # 2026-09-29 (HYPERUN-NAME-FLOOR) and it still comes only in eights on AWS.
+        "A100-40GB": False,
         "A100-80GB": False, "H100": True, "H200": False, "B200": False,
         "B300": False,
     }
@@ -304,8 +307,11 @@ def test_the_table_covers_every_region_the_catalogue_prices():
     assert len(aws) == 323
     assert len(gcp) == 392
     # Every choosable card is priced somewhere, which was already true for
-    # us-west-2 and must not regress as regions are added.
-    assert {c.name for c in catalogue.CHOOSABLE} <= {r.card for r in aws}
+    # us-west-2 and must not regress as regions are added. "Priced" by the rule a
+    # lookup uses (HYPERUN-NAME-FLOOR): "A100-40GB" is spelled "A100" in these rows.
+    spellings = {r.card for r in aws}
+    for choice in catalogue.CHOOSABLE:
+        assert set(m.skypilot_cards_for(choice.name)) & spellings, choice.name
 
 
 def test_an_ask_that_names_no_region_gets_the_operators_one_default():

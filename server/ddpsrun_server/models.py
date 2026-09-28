@@ -1148,7 +1148,11 @@ def to_pacsjob(
         if request.gpu.vram_gb is not None:
             gpus["vramGB"] = request.gpu.vram_gb
         else:
-            gpus["name"] = request.gpu.name
+            # HYPERUN-NAME-FLOOR. The name PACSrun reads, not the one typed: "A100"
+            # goes out as "A100-40GB", which PACSrun reads as an A100 with at least
+            # 40 GB on every vendor. Imported here for the reason vram_gb_for does.
+            from . import catalogue
+            gpus["name"] = catalogue.canonical(request.gpu.name)
         resources["gpus"] = gpus
 
     spec: dict[str, Any] = {

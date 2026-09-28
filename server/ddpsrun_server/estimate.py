@@ -48,6 +48,7 @@ from .measurements import (
     RUNPOD_CARDS,
     RUNPOD_PRICED_ON,
     SHADEFORM_PRICED_ON,
+    memory_above_ask,
     runpod_cheapest,
     runpod_counts,
     runpod_machines_for,
@@ -734,10 +735,13 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
                 lo = hi = round(whole, 4)
                 where = f"on-demand list price in {machine.region}"
             seat_note = (f", {seats} pod(s) per machine" if seats > 1 else "")
+            # HYPERUN-NAME-FLOOR: say so when a larger card than the name answers it.
+            bigger = memory_above_ask(gpu_name, machine)
+            size_note = (f", {bigger} GB each -- the name is a floor" if bigger else "")
             options.append(Rate(
                 lo, hi,
                 f"AWS {count_machines} x {machine.instance} "
-                f"({machine.gpus} x {gpu_name}{seat_note}) at {where}, read from "
+                f"({machine.gpus} x {gpu_name}{size_note}{seat_note}) at {where}, read from "
                 f"the catalogue on {AWS_PRICED_ON}. Vendor prices move.",
                 "aws", count_machines))
 
@@ -823,6 +827,11 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
                     "runpod", pods))
             elif listed is not None:
                 lo = hi = round(listed.usd_per_hour * pods, 4)
+                # HYPERUN-NAME-FLOOR. In the shape, so it survives into the "others"
+                # line, which keeps only the words before " at ".
+                bigger = memory_above_ask(gpu_name, listed)
+                if bigger:
+                    shape += f" ({bigger} GB each -- the name is a floor)"
                 # HOW MANY GPU TYPES ANSWER THIS NAME. A family name reaches
                 # several: read 2026-09-09, "H100" reaches H100 PCIe at
                 # $2.89/GPU, H100 NVL at $3.19 and H100 SXM at $3.49. The
@@ -901,6 +910,9 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
                 lo = hi = round(row.usd_per_hour * pods, 4)
                 shape = (f"{pods} x one {gpu_name}" if per_pod == 1 else
                          f"{pods} machine(s) x {per_pod} x {gpu_name}")
+                bigger = memory_above_ask(gpu_name, row)
+                if bigger:
+                    shape += f" ({bigger} GB each -- the name is a floor)"
                 options.append(Rate(
                     lo, hi,
                     f"Shadeform {shape} on-demand at ${row.usd_per_hour:.4f} per "

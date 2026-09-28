@@ -1693,6 +1693,16 @@ def test_the_price_table_filters(client):
     assert len(one["regions"]) == 22
 
     assert client.get("/v1/prices?card=nosuchcard").json()["rows"] == []
+    # HYPERUN-NAME-FLOOR. A name answers with the rows it reaches: "A100-40GB" is
+    # spelled "A100" and "A100-80GB" in the SkyPilot rows, and the old "A100" is
+    # read as it.
+    floor = client.get("/v1/prices?card=A100-40GB&vendor=aws").json()["rows"]
+    assert {r["card"] for r in floor} == {"A100", "A100-80GB"}
+    assert client.get("/v1/prices?card=A100&vendor=aws").json()["rows"] == floor
+    only_80 = client.get("/v1/prices?card=A100-80GB&vendor=aws").json()["rows"]
+    assert {r["card"] for r in only_80} == {"A100-80GB"}
+    runpod = client.get("/v1/prices?card=A100-40GB&vendor=runpod").json()["rows"]
+    assert runpod and all("80GB" in r["instance"] for r in runpod)
 
 
 def test_the_price_table_says_which_basis_each_row_is(client):
@@ -2617,4 +2627,24 @@ def test_the_job_view_carries_the_request_and_the_time_it_actually_paused(client
     assert body["stopped"] is True
     assert body["stopped_at"] == "2026-09-16T05:00:00Z", (
         "the sweep measures its 7-day protection from this, so the screen has to show it")
+
+
+def test_the_old_a100_name_is_priced_as_the_a100_40gb_it_is_submitted_as(client):
+    """HYPERUN-NAME-FLOOR. The estimate prices the name PACSrun will be sent, so the
+    renamed "A100" and "A100-40GB" get one answer, and it names the machine it priced
+    -- which is where a reader sees that an 80 GB card answered a 40 GB ask."""
+    body = {**NANOGPT, "gpu": {"name": "A100", "count": 1}}
+    old = as_alice(client, "POST", "/v1/estimate", json=body).json()
+    new = as_alice(client, "POST", "/v1/estimate",
+                   json={**body, "gpu": {"name": "A100-40GB", "count": 1}}).json()
+    assert old["rate"] == new["rate"]
+    assert old["cost_usd"] == new["cost_usd"]
+    # Shadeform's 80 GB card at $1.35 answers it, and the sentence says the card is
+    # larger than the name -- including in the list of the others, which keeps only
+    # the words before " at ".
+    assert new["rate"]["basis"].startswith(
+        "Shadeform 1 x one A100-40GB (80 GB each -- the name is a floor) on-demand")
+    assert "RunPod 1 x one A100-40GB (80 GB each -- the name is a floor)" in new["rate"]["basis"]
+    answer = as_alice(client, "POST", "/v1/validate", json=body).json()
+    assert "gpu-name-renamed" in {f["code"] for f in answer["findings"]}
 
