@@ -149,3 +149,21 @@ def test_the_skill_lists_every_rule_the_contract_has():
         f"script-contract.md 는 규칙 {len(numbers)}개인데 SKILL.md 표는 {listed} 를 적었다. "
         f"규칙을 더하거나 뺐으면 그 표도 고친다."
     )
+
+
+def test_agents_md_lists_every_rule_the_contract_has():
+    """AGENTS.md's summary of the contract has the contract's rule numbers.
+
+    Until 2026-09-29 it said "nine rules" and listed nine while the contract had
+    sixteen, and its rule 8 told agents to print `PACSRUN_GPU=` every 30 seconds,
+    which section 9 had already retired. SKILL.md's table has the test above;
+    AGENTS.md had none, and it is the only guide Codex and other agents read.
+    """
+    contract = (REFERENCES / "script-contract.md").read_text(encoding="utf-8")
+    numbers = [int(m) for m in re.findall(r"^## (\d+)\.", contract, re.M)]
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    listed = [int(m) for m in re.findall(r"^(\d+)\. ", agents, re.M)]
+    assert listed == numbers, (
+        f"script-contract.md has rules {numbers} but AGENTS.md lists {listed}. "
+        f"A rule added or removed there is added or removed here too."
+    )

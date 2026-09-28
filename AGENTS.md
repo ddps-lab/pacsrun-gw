@@ -34,18 +34,28 @@ server to hold vendor API keys and a catalog cache.
 
 ## When you read a user's repository to write a training script
 
-Read `agent/references/script-contract.md`. It has nine rules and **every one of them has
-actually been broken**, so each rule comes with what happened when it was. In short:
+Read `agent/references/script-contract.md`. **Every rule in it has actually been broken**, so
+each rule comes with what happened when it was. Its rules, by number:
 
-1. Check the paths in the documentation against the repository's real layout
-2. Tie training's output path and inference's input path to one variable
-3. Make the script produce any required output the commands do not
-4. Print the file's line count right after the clone, and the sample count right after training starts
-5. Use `trap ... EXIT` so that, whatever stage it dies in, everything up to then is uploaded
-6. When training ends, upload the adapter first instead of waiting for inference
-7. Attach a checkpoint watcher to a long training run, and kill that process when finishing
-8. Print the GPU state as one `PACSRUN_GPU=` line every 30 seconds
-9. Ask the server for judgements
+1. Check the repository's real layout against its documentation
+2. Find the pairs that must share one variable (training's output path and inference's input
+   path is one)
+3. Make the script produce the outputs no command produces
+4. Put the intermediate checks early
+5. Check that the dataset and the model are reachable before training
+6. Whatever stage it dies in, upload everything up to then (`trap ... EXIT`)
+7. Export an earlier stage's output first, instead of waiting for the later stage (7b: when the
+   output path is not fixed, collect from the real folder)
+8. Attach a checkpoint watcher to a long training run, and kill it on exit
+9. The script no longer has to print the GPU state; the driver does
+10. Ask the user how the machine is bought
+11. Ask the server for the other judgements
+12. When the script grows or is several files, do not put it into args as it is (12b: the script
+    body becomes its own command line, so `pkill -f` matches itself)
+13. Export results with `PACSRUN_ARTIFACT`
+14. A job that uses a second AWS account separates the three variables itself
+15. Three things known only after the machine is up: print one line for each
+16. Distributed training: we give the coordinates, the script passes them to the launcher
 
 ## When something fails
 
@@ -74,4 +84,5 @@ agents do not read that file, so the guide everyone reads is this `AGENTS.md`.**
 
 ## Design
 
-It is in `docs/`. Start with `00-overview.md`.
+The design documents are not in this public repository. What an agent needs is in
+`hyperun explain` and the four references above.
