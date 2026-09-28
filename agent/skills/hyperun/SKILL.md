@@ -117,6 +117,12 @@ The two that cost the most:
 
 ## Step 2 — never decide the GPU, the runtime or the purchase type yourself
 
+**Never pass an `--expected-hours` the user did not give you.** Not a round figure, not one
+padded for image pulls, not one worked out from their README. Ask: "How long do you expect
+this to run?" If the repository states a runtime, quote it in the question ("the README says
+about 3 minutes on an A100") and let them answer. Every dollar figure you show is their hours
+times a published rate, so a number you chose is a price you invented.
+
 ```bash
 hyperun estimate --name <n> --image <i> --gpu-vram 48        # any job
 # and, ONLY if the job really is a TRL preference-tuning run at a sequence cap:
@@ -139,11 +145,13 @@ inference sweep, an analytics job — the honest answer is `unknown`, and the to
 **So do not translate a job into those flags to make a number appear.** Calling a
 pretraining corpus "pairs" produces a confident figure with nothing behind it, which is
 the failure `unknown` exists to prevent (a prediction for an unmeasured combination was
-once 96% wrong). Instead: leave them out, and ask the user for `--expected-hours`. The
-estimate then multiplies THEIR hours by the real rate and labels the total
-`user-supplied`, so the reader can see whose number it is.
+once 96% wrong). Instead: leave them out, and ask the user for `--expected-hours` (the rule
+at the top of this step). The estimate then multiplies THEIR hours by the real rate, labels
+the total `user-supplied`, and answers `modelled: false` with a `basis` that says so -- that
+sentence is telling YOU the hours are the user's to give, not asking you to invent them.
 
 ```bash
+# after the user said "about 21 hours":
 hyperun estimate --name <n> --image <i> --gpu A100-80GB --gpu-count 4 \
   --vendor runpod --expected-hours 21        # cost_basis: user-supplied
 ```
