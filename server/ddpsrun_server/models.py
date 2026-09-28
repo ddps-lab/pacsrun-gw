@@ -788,7 +788,10 @@ def placement_note(asked: list[str], regions: list[str], mode: str | None,
     else:
         where = ("named no vendor and no region, so the operator's one default region "
                  "(AWS) was the only candidate")
-    if not vendor:
+    if mode == "compare":
+        # compare ranks the answers and stops; "no machine yet" would promise one.
+        text = f"The job {where}; compare ranks the answers and buys nothing."
+    elif not vendor:
         text = f"The job {where}; it has no machine yet."
     else:
         text = f"The job {where}; it runs on {vendor}" + (f" {gpu}" if gpu else "") + "."

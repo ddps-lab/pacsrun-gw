@@ -653,3 +653,7 @@ def test_the_note_says_when_the_job_did_not_land_on_the_first_vendor_asked():
     assert "not the first" not in first
     waiting = placement_note(["shadeform", "runpod", "aws"], [], None, None, None, 0)
     assert waiting.endswith("it has no machine yet.")
+    # job-444deedf4967, the first compare run after the fill: it printed "it has no
+    # machine yet" for a job that by design never gets one.
+    compared = placement_note(["shadeform", "runpod", "aws"], [], "compare", None, None, 0)
+    assert compared.endswith("compare ranks the answers and buys nothing.")
