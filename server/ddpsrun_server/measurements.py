@@ -765,9 +765,17 @@ def shadeform_cheapest(card: str, gpus_per_pod: int,
     naming `vendors: ["shadeform"]` was answered with RunPod's $1.59 for a one-card
     A100-80GB, while this file listed Shadeform rows from $1.35.
 
-    ONE MACHINE PER POD AND AN EXACT COUNT, as on RunPod. Whether PACSrun's Shadeform
-    path seats several pods on one larger machine, the way the AWS reader does, is not
-    modelled here -- so a multi-pod ask can be priced high, never low.
+    ONE MACHINE PER POD AND AN EXACT COUNT, as on RunPod -- and that IS what PACSrun
+    buys, checked 2026-09-29. Its Shadeform driver says so at the top: "ONE MACHINE PER
+    SLOT, ALWAYS ... a job with `parallelism: 2` gets two independent single-node
+    clusters" (PACSrun driver/shadeform/driver.py), and each machine is named from its
+    own slot's pod. Nothing seats two pods on one Shadeform machine, so there is no
+    packing for this to model and a multi-pod ask is priced exactly, not high.
+
+    This paragraph used to say the packing was "not modelled here -- so a multi-pod ask
+    can be priced high, never low", which read as a known gap (LIMITATIONS.md item 10).
+    It was an unchecked question. If the driver ever gains a shared server the way the
+    AWS driver has one, this is the function to change.
 
     ANY REGION, CHEAPEST FIRST. The driver picks an in-stock row from the vendor's own
     catalogue wherever it is (models.py, the RUNNABLE_VENDORS note), so an ask naming
