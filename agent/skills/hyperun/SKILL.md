@@ -72,11 +72,11 @@ user to run `hyperun login --server <url>` and stop — you must not ask for the
 ## Step 1 — read their repository before writing anything
 
 **Read `../../references/script-contract.md` before you write a line of run.sh.** It is
-the rule set, it is fifteen rules long, and every one of them came from a job that
+the rule set, and every one of them came from a job that
 broke. The paths in this document are relative to THIS file: the references sit two
 levels up, at the plugin root (`<plugin>/references/`), not beside SKILL.md.
 
-The sixteen, so you know which to open:
+Its rules, so you know which to open:
 
 | # | rule | when it matters |
 |---|---|---|
@@ -87,17 +87,24 @@ The sixteen, so you know which to open:
 | 5 | prove the dataset, the model and the result path are reachable BEFORE training | always |
 | 6 | upload what exists whenever a stage dies (`trap ... EXIT`) | always |
 | 7 | ship the trained artifact before any second stage, not after | two-stage jobs |
-| 8 | watch the checkpoints on a long run | over ~4 h |
+| 8 | copy the trainer's checkpoints to the result path while it trains | always |
 | 9 | do NOT write your own GPU watcher — the platform prints the reading | always |
 | 10 | ask the user for spot vs on-demand, with the numbers | always |
 | 11 | ask the server for the rest (`estimate`, `validate`) | always |
 | 12 | a big script or several files do not go in `args` | script > ~50 KB |
-| 13 | results leave through `PACSRUN_ARTIFACT=`, never `aws s3 cp` | always |
+| 13 | finished results leave through `PACSRUN_ARTIFACT=`; checkpoints are written directly | always |
 | 14 | a second AWS account gets its own variable names | Bedrock/judge jobs |
 | 15 | disk, `/dev/shm` and NCCL P2P are printed once and read after | multi-card jobs |
 | 16 | pass our group coordinates to your launcher yourself | distributed jobs |
+| 17 | after a restart: wait for the credential file, take the checkpoints back, continue | always |
 
-The two that cost the most:
+The ones that cost the most:
+
+- **Every run.sh continues from its last checkpoint, however short the job** (rules 8 and
+  17). When a machine is lost the job starts again from the top of the script on an empty
+  disk, so without this it starts again from step 0 -- market64-exp0 did that twice in one
+  day, four hours each time. Rule 17 has the lines, the hook for a script that calls
+  `trainer.train()` with nothing, and what to tell the user when a tool cannot resume.
 
 - **Check the paths in their documentation against the repository's real layout.**
   A recipe said `runs/xxx/` and the repository had `dpo-training/runs/xxx/`.
@@ -158,7 +165,7 @@ hyperun estimate --name <n> --image <i> --gpu-name A100-80GB --gpu-count 4 \
 
 **`capacity_type` is the user's decision and you must ask for it.** `submit` refuses without
 it. on-demand costs more and is not taken away; spot is cheaper and can be reclaimed
-mid-run, which on a long job with no checkpoint means losing everything. Show the estimate's
+mid-run, and a job whose run.sh cannot continue (rule 17) then starts again from step 0. Show the estimate's
 recommendation and its reason, and let them choose. It exists because a prediction was once made for a combination nobody had
 measured and it was 96% wrong. Filling that gap with your own guess removes the only
 protection against repeating it.

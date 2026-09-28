@@ -163,10 +163,21 @@ upload_everything() {
     tar czf /root/work/adapter.tar.gz "$ADAPTER" \
       && echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
   fi
-  # A second safety net needed only on AWS/GCP until the k3s fetch is deployed (the ★ in §13).
-  aws s3 cp "train_${JOB}.log" "$RESULT_PATH" || true
-  [ -f /root/work/adapter.tar.gz ] \
-    && aws s3 cp /root/work/adapter.tar.gz "$RESULT_PATH$ADAPTER.tar.gz" || true
+  # Stay alive until they are in the result path: on AWS and GCP the driver copies an announced
+  # file out THROUGH the running container, and nothing keeps that container open once this
+  # script ends (the ★ in §13). On RunPod and Shadeform this returns at once.
+  local landed=("train_${JOB}.log")
+  [ -f /root/work/adapter.tar.gz ] && landed+=(adapter.tar.gz)
+  wait_until_landed "${landed[@]}"
+}
+wait_until_landed() {        # basenames, as they will be named in the result path (§13)
+  local name
+  for name in "$@"; do
+    for _ in $(seq 1 60); do                     # up to 5 minutes per file
+      aws s3 ls "${PACSRUN_RESULT_PATH%/}/$name" >/dev/null 2>&1 && break
+      sleep 5
+    done
+  done
 }
 trap upload_everything EXIT
 ```
@@ -175,10 +186,11 @@ trap upload_everything EXIT
 its 20th hour has **spent all the money and left nothing.** `hyperun validate` catches this as
 `no-exit-trap`.
 
-**★ Why announcing inside the trap is safe.** After the workload ends, the driver keeps the
-machine and waits up to 600 seconds for its queue to empty (§13). So even a line printed at the
-last moment is collected — unlike `aws s3 cp`, an announce does not depend on a credential that
-expires.
+**★ Why the trap waits after announcing.** After the workload ends, the driver keeps the machine
+and waits up to 600 seconds for its queue to empty (§13) -- but on AWS and GCP it reads the file
+through the container, and the container ends with the script. So the script itself stays until
+its files are in the result path. `aws s3 ls` works because the container's credential can read its
+own prefix (§13, "Why announce").
 
 ---
 
@@ -260,30 +272,65 @@ empty tar at the end.
 
 ---
 
-## 8. Attach a checkpoint watcher to long training
+## 8. Save checkpoints to the result path while training — every job
 
-The trainer writes `checkpoint-NNN/` locally every epoch. To move it to S3, compress it **after it
-has been fully written**.
+**Every job does this, whatever its length or how the machine is bought** (decided 2026-09-29). A
+spot machine is reclaimed without warning, and a machine can be lost on any vendor -- market64-exp0
+lost two in one day, at 3 h 56 m and 3 h 58 m, and started over from step 0 both times. This
+section is the upload; §17 adds getting the checkpoints back and continuing from them.
+
+The trainer writes checkpoints on the machine's disk -- HF Trainer as `checkpoint-NNN/` folders
+under its `output_dir`. **The container copies them, in the trainer's own layout, to
+`checkpoints/` under its result path.** It may write there (§13, "Why announce"). Checkpoints are
+NOT announced: an announce is for a finished file, the driver would fetch every one of them, and at
+the end it holds the machine until all of them are copied.
 
 ```bash
+CKPT_DIR="$OUTPUT_DIR"                                   # where the trainer writes checkpoint-NNN/
+CKPT_URI="${PACSRUN_RESULT_PATH%/}/checkpoints"
 watch_checkpoints() {
+  local dir name
   while true; do
-    sleep 60
-    for dir in "$ADAPTER"/checkpoint-*; do
-      [ -d "$dir" ] || continue
+    sleep 300
+    for dir in "$CKPT_DIR"/checkpoint-*; do
+      [ -d "$dir" ] || continue                          # none yet: the glob stays as written
       [ -f "$dir/.uploaded" ] && continue
-      # only touch what has not changed for 120 s. A tar taken mid-write uploads half
+      # only a folder unchanged for 120 s: one still being written would upload half of itself
       [ -n "$(find "$dir" -newermt '-120 seconds' -print -quit)" ] && continue
-      # close the tar first, then announce. The order is the rule -- §13's size check turns a
-      # file still being written into a failed fetch (it is not uploaded truncated; it is not
-      # uploaded).
-      tar czf "/root/work/$(basename "$dir").tar.gz" "$dir" \
-        && echo "PACSRUN_ARTIFACT=/root/work/$(basename "$dir").tar.gz" \
-        && touch "$dir/.uploaded"
+      name=$(basename "$dir")
+      # the folder first, then an empty .complete LAST -- a folder that has it in S3 is whole,
+      # and §17 drops any folder that does not (a machine lost mid-upload leaves half of one)
+      if aws s3 sync --only-show-errors "$dir" "$CKPT_URI/$name" \
+         && aws s3 cp --only-show-errors - "$CKPT_URI/$name/.complete" < /dev/null; then
+        touch "$dir/.uploaded"; echo "checkpoint uploaded: $name"
+      else
+        echo "★ checkpoint upload FAILED: $name -- trying again in 5 minutes"
+      fi
     done
   done
 }
 watch_checkpoints & WATCH_PID=$!
+```
+
+- **Old folders stay in S3.** The trainer deletes old `checkpoint-NNN/` on its disk
+  (`save_total_limit`); the copies in S3 are kept, so a checkpoint can still be had after the disk
+  has moved on. A 394 MB folder (market64's) costs well under a cent a day.
+- **Three ways this watcher went wrong on 2026-09-12**, in the market64 wrapper it comes from:
+  under `set -euo pipefail` a `newest=$(ls -d .../checkpoint-*)` failed before the first
+  checkpoint existed and the background watcher died without a word -- 28 minutes, nothing
+  uploaded (the glob and `[ -d ]` above cannot fail that way); an upload error sent to
+  `2>/dev/null` is found only after the machine is gone, so print it; and a hook written as
+  `sitecustomize.py` was never imported (§17).
+- **A tool that writes ONE file**, like nanoGPT's `ckpt.pt`, needs no marker: an S3 object appears
+  only once its upload has finished. Upload it when it has changed and then sat still for 120 s:
+
+```bash
+f="$CKPT_DIR/ckpt.pt"
+if [ -f "$f" ] && [ -z "$(find "$f" -newermt '-120 seconds')" ] \
+   && { [ ! -f "$f.uploaded" ] || [ "$f" -nt "$f.uploaded" ]; }; then
+  aws s3 cp --only-show-errors "$f" "$CKPT_URI/ckpt.pt" && touch "$f.uploaded" \
+    || echo "★ checkpoint upload FAILED: ckpt.pt"
+fi
 ```
 
 **Always kill the watcher on exit.** If it stays alive, `tee` never gets EOF, so `PACSRUN_EXIT=`
@@ -458,14 +505,15 @@ address does not even exist before the submit. The order is: the user uploads wi
 
 ---
 
-## 13. Export results with `PACSRUN_ARTIFACT` — write them with `aws s3 cp` and you lose them after 21 hours
+## 13. Export finished results with `PACSRUN_ARTIFACT`
 
 **We nearly lost results for lack of this section.** On 2026-09-08 a session about to submit task C
 with only the repository **could not find this contract anywhere in the documentation**, and
 learned it by chance from an old wrapper that had been committed to the repository along with the
 result tar of a 09-04 job. Without that chance it would have written with `aws s3 cp`, and 21 hours
-later every result would have vanished with `AccessDenied`. The `troubleshooting.md` entry "The job
-is `Succeeded` but S3 is empty" is the trace of that failure.
+later every result would have been refused, because a container's credential then ran out after 12
+hours (that changed on 2026-09-14 -- see "Why announce" below). The `troubleshooting.md` entry "The
+job is `Succeeded` but S3 is empty" is the trace of that failure.
 
 ### ★ That one line travels on the log — when the log stops, nothing is uploaded
 
@@ -517,18 +565,29 @@ to `s3://<bucket>/<prefix>adapter.tar.gz`. The front of the path is discarded, s
 `runs/iter_1/ckpt.pt` and `runs/iter_2/ckpt.pt` means **the later one overwrites the earlier.** Put
 the round or the rank into the file name: `ckpt_iter2.pt`, `adapter_rank0.tar.gz`.
 
-### Why not `aws s3 cp`
+### Why announce, and what the container writes itself
 
-On **every vendor, the driver** is what writes results to S3. Two reasons.
+**Finished results are announced; checkpoints are written directly.** The two are different jobs.
 
-- **The credential given to the container expires first.** AWS's ceiling is 43,200 seconds (12
-  hours), so a 21-hour job's **last** upload — the reason for the run — happens after it expires.
-- **The upload method differs by vendor.** If the script had to know it, the script would be tied
-  to a vendor. An announce line is the same sentence everywhere.
+- **A finished result** -- the adapter, the scores, the log -- is announced, and on every vendor
+  the driver collects it. The script does not need to know how: the way a file leaves the machine
+  differs by vendor (the table below), and an announce line is the same sentence everywhere.
+- **A checkpoint** changes many times during a run, and an announce is for a file that is done. So
+  the container writes checkpoints to its own result path itself, and reads them back after a
+  restart. §17 is how.
 
-That does not make the credential the container receives useless. **It reads its own prefix with
-it** — getting back the previous round's checkpoint when continuing to the next round is what it
-is for (the last part of §13, `continue_from`).
+**The container's credential can do that, and it no longer runs out.** Since PACSrun #63 and #64
+(2026-09-14 and 09-15, grep `PACSRUN-CREDS-FILE`) the container is not given the key itself but a
+path, `AWS_SHARED_CREDENTIALS_FILE`; the driver writes the key into that file and replaces it an
+hour before it expires, and the key may write the job's own prefix. Checked live on
+`job-9316fc95cfe3` (Shadeform, 2026-09-14): the S3 write succeeded with `method =
+shared-credentials-file`. Two things follow for a script:
+
+- **The first seconds have no file.** The driver writes it only once the container is running, so
+  a script whose first step touches S3 waits for the file first -- §17 has the lines. RunPod's
+  wrapper already waits (`PACSRUN_CREDS_FILE_READY after <n>s`).
+- **A long-lived process keeps the key it started with.** botocore reads the file once per client,
+  so an uploader that runs for hours should be a fresh `aws` or `python` process each time.
 
 Only the way the driver fetches files differs by vendor, and **the script does not need to know
 the difference.**
@@ -538,12 +597,15 @@ the difference.**
 | RunPod | a GET to a small HTTP server inside the container via `<pod-id>-8888.proxy.runpod.net` (`PACSrun/driver/runpod/driver.py:233` `ARTIFACT_RE`, `:2012` `_fetch_one`) |
 | VM + k3s (AWS, GCP, Shadeform. Seeweb later) | the size with `stat -c %s` and the bytes with `cat`, both through the k3s API's exec (`PACSrun/driver/common/artifact_fetch.py`, grep `PACSRUN-K3S-FETCH`) |
 
-**★ Status as of 2026-09-09: the k3s path is implemented and not yet deployed.** So **on AWS/GCP,
-keep `aws s3 cp` alongside the announce for now** — then it survives on either path (on RunPod
-`aws s3 cp` fails silently with AccessDenied and the announce does the work). Once it is deployed,
-an announce alone is enough, and `aws s3 cp` is the part that depends on the credential that
-expires after 12 hours, so it is better removed. **Which state it is in, `hyperun explain`
-answers** — ask the server, not this document.
+**★ Status, read from PACSrun's code on 2026-09-29.** The k3s path is deployed on AWS, GCP and
+Shadeform. It reads a file through the workload's running container, and only the Shadeform driver
+keeps that container open after the script ends (`PACSRUN-K3S-FETCH-HOLD`,
+`PACSrun/driver/shadeform/driver.py`, `hold_for_fetch=True`). On AWS and GCP a file announced in the
+script's last moments -- from an EXIT trap -- can therefore miss, and a missed announced file ends
+the job with exit 34 (below) even if the same file reached S3 some other way. So the script waits
+until its announced files are in the result path before it ends (§6, `wait_until_landed`).
+Announce alone is seen working live on Shadeform (`job-c5f6c3b2ccc6`, 2026-09-17) and on RunPod; on
+AWS and GCP it is not yet seen either way.
 
 #### Two checks the k3s path makes, which the script needs to know about
 
@@ -554,8 +616,6 @@ answers** — ask the server, not this document.
 - **If the exit is 0 but something announced is not in S3, the job ends with exit 34.** Training
   succeeded but its results did not get out, so it is judged not a success — better than an empty
   prefix marked Succeeded.
-
-`explain` saying only "Write it there yourself" is a sentence from before this section existed.
 
 ### Check once, first, that the pipe works (this replaces rule 5's result path check)
 
@@ -713,3 +773,124 @@ card".**
 
 That is the table in section 15. In particular, **on some RunPod hosts the first all-reduce hangs**
 — set that value in one place so it can be reverted with `NCCL_P2P_DISABLE=1`.
+
+---
+
+## 17. Continue from the last checkpoint after a restart
+
+**Every job continues** (decided 2026-09-29). When PACSrun loses a machine it starts the job again
+on another one, from the top of the script, on an empty disk (§13, "Exported round by round"); the
+result path is the same. So before training the script waits for its credential file, takes the
+checkpoints back from the result path, and has the trainer continue from the newest. The pieces,
+in the order they sit in `run.sh`:
+
+```bash
+set -euo pipefail
+# 1. The credential file arrives a few seconds AFTER the container starts (§13, "Why announce"),
+#    and taking checkpoints back is the first thing that touches S3. RunPod's wrapper already
+#    waits; on Shadeform and AWS nothing does.
+wait_for_credentials() {
+  [ -n "${AWS_SHARED_CREDENTIALS_FILE:-}" ] || return 0
+  for _ in $(seq 1 120); do
+    [ -s "$AWS_SHARED_CREDENTIALS_FILE" ] && { echo "credentials file ready"; return 0; }
+    sleep 1
+  done
+  echo "★ no credentials file after 120 s -- no restore, this run starts at step 0"
+  return 1
+}
+# 2. Take back what an earlier machine saved, keeping only folders whose upload finished.
+restore_checkpoints() {
+  local dir
+  mkdir -p "$CKPT_DIR"
+  if ! aws s3 ls "$CKPT_URI/" >/dev/null 2>&1; then
+    echo "no checkpoint in the result path -- starting at step 0"; return 0
+  fi
+  aws s3 sync --only-show-errors "$CKPT_URI" "$CKPT_DIR" \
+    || { echo "★ checkpoint restore FAILED -- starting at step 0"; return 0; }
+  for dir in "$CKPT_DIR"/checkpoint-*; do
+    [ -d "$dir" ] || continue
+    if [ -f "$dir/.complete" ]; then
+      touch "$dir/.uploaded"                              # already in S3: §8 must not send it again
+    else
+      echo "dropping $(basename "$dir"): its upload never finished"; rm -rf "$dir"
+    fi
+  done
+  echo "restored $(ls -d "$CKPT_DIR"/checkpoint-* 2>/dev/null | wc -l | tr -d ' ') checkpoint(s)"
+}
+wait_for_credentials && restore_checkpoints
+watch_checkpoints & WATCH_PID=$!                          # §8
+trap on_exit EXIT                                         # §8: kill the watcher, then §6's upload
+# 3. Train. The trainer continues from the newest checkpoint -- how, by tool, is below.
+```
+
+### How each tool continues
+
+| tool | what it writes | how it continues |
+|---|---|---|
+| HF `Trainer`, and the TRL trainers built on it (`DPOTrainer`, `SFTTrainer`) | `checkpoint-NNN/` under `output_dir`, every `save_steps` | `trainer.train(resume_from_checkpoint=True)` takes the newest. When the script calls `train()` with nothing and is not ours to edit, the hook below adds it |
+| nanoGPT | one file, `ckpt.pt`, in `out_dir` | take `ckpt.pt` back into `out_dir` and run with `--init_from=resume`; `train.py` then restores `iter_num`, `best_val_loss` and the optimizer state (read from its code, not run) |
+| anything else | read the repository | its `--resume` / `--resume-from` flag if it has one. If it has none, tell the user before submitting that a restart begins at step 0 |
+
+For nanoGPT the restore is one object: `aws s3 cp "$CKPT_URI/ckpt.pt" "$CKPT_DIR/ckpt.pt"` when
+`aws s3 ls` finds it, then `touch "$CKPT_DIR/ckpt.pt.uploaded"`, and `--init_from=resume` only
+when the file is there (`scratch` otherwise).
+
+### The hook, for a script that calls `trainer.train()` with nothing
+
+The researcher's script is not ours to edit, so the hook wraps the library under it. It goes in
+the training venv as a `.pth` file, which Python runs at start-up, before the script. **Not
+`sitecustomize.py`**: the `runpod/pytorch` image already ships one earlier on `sys.path`, and only
+one module of that name is ever imported -- measured live 2026-09-12, where the patch silently did
+nothing. The hook itself ran live the same day in the market64 wrapper
+(`experiments/real-job/pacsjob/trainer_resume_hook.py` in the lab's SkyPilot clone); a resumed run
+of it has not yet been seen.
+
+```bash
+install_resume_hook() {                                   # $1: the python that runs training
+  local sp
+  sp=$("$1" -c 'import site; print(site.getsitepackages()[0])') || return 0
+  cat > "$sp/pacsrun_resume_hook.py" <<'HOOK'
+import os
+def _install():
+    try:
+        import transformers
+        from transformers.trainer_utils import get_last_checkpoint
+    except Exception:
+        return                                            # a venv without transformers
+    cls = transformers.Trainer
+    if getattr(cls, "_pacsrun_resume", False):
+        return
+    original = cls.train
+    def train(self, resume_from_checkpoint=None, *args, **kwargs):
+        # only when the caller said nothing: False means "fresh" and a path means that path
+        if resume_from_checkpoint is None:
+            out = getattr(self.args, "output_dir", None)
+            last = get_last_checkpoint(out) if out and os.path.isdir(out) else None
+            print("[PACSRUN-TRAINER-RESUME] " + (f"continuing from {last}" if last
+                  else "no checkpoint, starting at step 0"), flush=True)
+            resume_from_checkpoint = last
+        return original(self, resume_from_checkpoint, *args, **kwargs)
+    cls.train = train
+    cls._pacsrun_resume = True
+try:
+    _install()
+except Exception as exc:                                  # never break the venv over this
+    print(f"[PACSRUN-TRAINER-RESUME] not installed: {exc}", flush=True)
+HOOK
+  echo "import pacsrun_resume_hook" > "$sp/zzz_pacsrun_resume_hook.pth"
+  # say at the START whether it took, not six hours in
+  "$1" -c 'import transformers; print("resume hook:", getattr(transformers.Trainer, "_pacsrun_resume", False))'
+}
+```
+
+### Before you rely on it
+
+- **The trainer has to save during the run.** Read the script's `save_strategy` / `save_steps` (or
+  the tool's equivalent). One that saves only at the end has nothing to continue from -- tell the
+  user.
+- **A finished stage is not run again.** If the final output of training is already in the result
+  path -- the machine was lost during a later stage -- skip training and go on to that stage.
+- **A distributed group** (§16): with HF DDP only rank 0 writes the checkpoint, so only
+  `PACSRUN_GROUP_RANK=0` runs the watcher. A sharded checkpoint that every rank writes to its own
+  disk (FSDP, DeepSpeed ZeRO) is not covered here -- tell the user.
+

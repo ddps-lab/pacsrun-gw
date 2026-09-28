@@ -61,23 +61,23 @@ it the job ends `Succeeded` with no problem at all — the hours it burned simpl
 driver log for `fetched`; if there is none, this is the case. On 2026-09-08 a 21-hour job stood one
 line short of this.
 
-The second cause is **credential expiry**. STS temporary credentials have a maximum
-`DurationSeconds` of 43200, that is 12 hours. A job longer than that cannot upload its own results
-at the end.
+The second cause, **until 2026-09-14, was credential expiry.** STS temporary credentials last at
+most 43200 seconds (`DurationSeconds`), that is 12 hours, and a job longer than that could not
+upload its own results at the end. Since PACSrun #63 and #64 (grep `PACSRUN-CREDS-FILE`) the
+container's credential is a file the driver replaces before it expires, and it may write the job's
+own result prefix, so this cause is gone on AWS, Shadeform and RunPod. On GCP it is not checked.
 
-The remedy is fetch mode. The remote gets only a read-only credential, and **the driver pod fetches
-the results and uploads them in its place.** `hyperun estimate` warns in advance when a job goes
-past 11 hours.
+Collection by the driver is still the operator's `PACSRUN_FETCH_MODE` (`fetchMode` at
+`PACSrun/internal/controller/vendorpod.go:1053`), a cluster-wide switch that cannot be turned on and
+off per job, and it is on. It no longer makes the container's credential read-only -- that arm was
+removed on 2026-09-14 (`PACSrun/driver/runpod/driver.py`, `_session_policy`).
 
-**This is a cluster-wide switch.** It reads the operator's `PACSRUN_FETCH_MODE` environment variable
-(`fetchMode` at `PACSrun/internal/controller/vendorpod.go:1053`, grep `PACSRUN-FETCH-MODE`), and
-cannot be turned on and off per job.
-
-**★ And this symptom itself is about to go away.** Once collection is in on the k3s path (AWS/GCP),
-**a job whose announced file is not in S3 ends not as `Succeeded` but with exit 34**
-(`PACSRUN-K3S-FETCH`, `PACSrun/driver/common/artifact_fetch.py`). That is, "succeeded but empty"
-becomes "failed, and says why". As of 2026-09-09 it is implemented and **not yet deployed**, so
-until then the two causes above still hold.
+**★ And an announced file that never lands is a failure now, not a silent success.** On the k3s
+path (AWS, GCP, Shadeform) a job whose announced file is not in S3 ends with exit 34 rather than
+`Succeeded` (`PACSRUN-K3S-FETCH`, `PACSrun/driver/common/artifact_fetch.py`), so "succeeded but
+empty" becomes "failed, and says why". On AWS and GCP a file announced as the script ends can miss
+that way, because the driver reads it through a container that has already stopped --
+script-contract section 13 has the status and section 6 the lines that wait for it.
 
 ---
 
@@ -104,14 +104,21 @@ has closed (script-contract section 13).
 
 ---
 
-## Fetch mode, and `AccessDenied ... CreateMultipartUpload` shows up
+## `AccessDenied ... CreateMultipartUpload` shows up
 
 ```
 An error occurred (AccessDenied) when calling the CreateMultipartUpload operation
 ```
 
-**This is normal.** In fetch mode the remote gets only a read-only credential. The driver is what
-uploads. Seeing this line does not mean the job failed.
+**Until 2026-09-14 this was normal**: in fetch mode the remote got only a read-only credential and
+the driver did the uploading. That arm was removed (PACSRUN-CREDS-FILE), and the container's
+credential may now write the job's own result prefix. So this line now means one of three things:
+
+| where | why |
+|---|---|
+| in the first seconds of the run | the driver has not written the credentials file yet -- wait for it (script-contract section 17) |
+| a key outside `$PACSRUN_RESULT_PATH` | the credential writes the job's own prefix and nothing else |
+| a GCP job | whether the GCP driver writes the file is not checked |
 
 ---
 

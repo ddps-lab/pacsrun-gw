@@ -578,7 +578,7 @@ What the server cannot read out of a container image.
 | `epochs` |  | How many passes over the dataset. |
 | `grad_accum` |  | gradient_accumulation_steps. Our script uses 8. |
 | `pairs` |  | How many training pairs the dataset holds. Without it there is no step count and therefore no runtime. |
-| `resumable` |  | A CLAIM ABOUT YOUR SCRIPT, not a feature the tool provides. Nothing here saves or restores anything: after a Recovering the container starts EMPTY and your script has to find its own checkpoint and continue. What does survive is the result path — the server writes `spec.resultPath` once from the job id and recovery reuses the same PacsJob, so a script may rely on that path being the same after a restart. Setting this true only tells the advice that losing the machine does not cost the whole run. |
+| `resumable` |  | A CLAIM ABOUT YOUR SCRIPT, not a feature the tool provides. Nothing here saves or restores anything: after a Recovering the container starts EMPTY and your script has to find its own checkpoint and continue -- agent/references/script-contract.md rule 17 is how. What does survive is the result path — the server writes `spec.resultPath` once from the job id and recovery reuses the same PacsJob, so a script may rely on that path being the same after a restart. Setting this true only tells the advice that losing the machine does not cost the whole run. |
 | `row_tokens` |  | Average length of ONE response, in tokens. Without it there is no runtime. Read it off a previous run's log if you have one. |
 | `vocab` |  | The model's vocabulary size. 151,936 is Qwen3-4B. This term dominates the memory calculation, so a different model needs its own. |
 

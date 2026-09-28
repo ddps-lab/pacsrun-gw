@@ -102,11 +102,19 @@ RESULTS
       PACSRUN_ARTIFACT=/root/work/adapter.tar.gz
 
   and the driver collects it. Print it AFTER the file is closed, or a truncated
-  one is collected. Do NOT write to the result path with `aws s3 cp` — the
-  credentials a job container holds are not for that, and the failure arrives
-  at the END of the run: 2026-09-08 a 21-hour job was one line away from
-  finishing and losing every result that way. Send one small file first to see
-  the pipe work before starting the long part.
+  one is collected, and do not let the script end until the file is in the
+  result path: on AWS and GCP the driver reads it through the running
+  container, which ends with the script (script-contract 6 has the lines).
+  Send one small file first to see the pipe work before starting the long part.
+
+  CHECKPOINTS ARE THE EXCEPTION. They change during the run, so the script
+  writes them to the result path itself and reads them back after a restart.
+  The container's credential can: it is a file, named by
+  AWS_SHARED_CREDENTIALS_FILE, that the driver keeps fresh. The file arrives a
+  few seconds after the container starts, so wait for it before the first S3
+  call (script-contract 17). This used to say "do NOT write to the result path
+  with aws s3 cp"; that was true of the credential a container held before
+  2026-09-14.
 
 BEFORE YOU SUBMIT
   Call /v1/estimate and /v1/validate. They run nothing and cost nothing.

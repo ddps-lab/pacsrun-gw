@@ -46,16 +46,17 @@ each rule comes with what happened when it was. Its rules, by number:
 6. Whatever stage it dies in, upload everything up to then (`trap ... EXIT`)
 7. Export an earlier stage's output first, instead of waiting for the later stage (7b: when the
    output path is not fixed, collect from the real folder)
-8. Attach a checkpoint watcher to a long training run, and kill it on exit
+8. Copy the trainer's checkpoints to the result path while it trains, and kill the watcher on exit
 9. The script no longer has to print the GPU state; the driver does
 10. Ask the user how the machine is bought
 11. Ask the server for the other judgements
 12. When the script grows or is several files, do not put it into args as it is (12b: the script
     body becomes its own command line, so `pkill -f` matches itself)
-13. Export results with `PACSRUN_ARTIFACT`
+13. Export finished results with `PACSRUN_ARTIFACT`; checkpoints are written directly
 14. A job that uses a second AWS account separates the three variables itself
 15. Three things known only after the machine is up: print one line for each
 16. Distributed training: we give the coordinates, the script passes them to the launcher
+17. After a restart: wait for the credential file, take the checkpoints back, continue from the newest
 
 ## When something fails
 
