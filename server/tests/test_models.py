@@ -666,6 +666,30 @@ def test_the_note_says_when_the_job_did_not_land_on_the_first_vendor_asked():
     assert compared.endswith("compare ranks the answers and buys nothing.")
 
 
+def test_the_view_names_the_vendor_that_did_not_answer_and_why():
+    """LIMITATIONS.md item 9. job-444deedf4967 asked three vendors, and that RunPod
+    had not answered -- and why -- was in the operator log alone. PACSrun now keeps
+    it in status.notAnswering (PACSRUN-NOT-ANSWERING); the view passes it on."""
+    line = ("runpod: recommender returned no decisions for region runpod (RunPod sells "
+            "NVIDIA L40S for this ask, and no data center has it in stock right now)")
+    obj = {
+        "metadata": {"labels": {}},
+        "spec": {"placement": {"vendors": ["shadeform", "runpod", "aws"],
+                               "mode": "cheapest", "capacityType": "on-demand"}},
+        "status": {"phase": "Running",
+                   "currentOffering": {"vendor": "shadeform", "instanceType": "L40S"},
+                   "notAnswering": [line]},
+    }
+    view = JobView.from_pacsjob(obj)
+    assert view.not_answering == [line]
+    assert view.placement_note.endswith(f"Did not answer: {line}.")
+    # An operator older than the field sends nothing, and the note is what it was.
+    del obj["status"]["notAnswering"]
+    older = JobView.from_pacsjob(obj)
+    assert older.not_answering == []
+    assert "Did not answer" not in older.placement_note
+
+
 def test_the_old_a100_name_goes_to_pacsrun_as_the_new_one():
     """HYPERUN-NAME-FLOOR. PACSrun reads "A100-40GB" as an A100 with at least 40 GB on
     every vendor; the bare "A100" would still mean 40 GB on AWS and 80 GB on RunPod."""

@@ -774,7 +774,8 @@ class NamespacesResponse(BaseModel):
 
 
 def placement_note(asked: list[str], regions: list[str], mode: str | None,
-                   vendor: str | None, gpu: str | None, failed: int) -> str:
+                   vendor: str | None, gpu: str | None, failed: int,
+                   silent: list[str] | None = None) -> str:
     """One sentence on where a job was asked to go and where it went.
 
     WHY A SENTENCE AND NOT ONLY FIELDS. The reader is often an agent relaying to a
@@ -790,6 +791,8 @@ def placement_note(asked: list[str], regions: list[str], mode: str | None,
         vendor: status.currentOffering.vendor, None before a machine exists.
         gpu: status.currentOffering.instanceType.
         failed: len(status.excludedOfferings).
+        silent: status.notAnswering -- each candidate the last solve asked that
+            gave no answer, as "<candidate>: <why>" (PACSRUN-NOT-ANSWERING).
 
     Returns:
         The sentence. Never empty for a job with a placement to describe.
@@ -820,6 +823,12 @@ def placement_note(asked: list[str], regions: list[str], mode: str | None,
     if failed:
         text += (f" {failed} offering(s) failed to start or were lost and were skipped "
                  f"on the way.")
+    # HYPERUN-NOT-ANSWERING. On 2026-09-28 a job that asked three vendors could say which
+    # one won and not that RunPod had not answered, or why -- that was in the operator
+    # log alone. PACSrun now keeps the reasons in status (PACSRUN-NOT-ANSWERING), and
+    # they are PACSrun's own sentences, so they are passed on as they are.
+    if silent:
+        text += f" Did not answer: {'; '.join(silent)}."
     return text
 
 
@@ -892,6 +901,13 @@ class JobView(BaseModel):
         description="One sentence: where the job was asked to go, where it runs, "
         "and -- when those differ -- that it did not land on the first vendor asked. "
         "Written to be passed to the user as it is.",
+    )
+    not_answering: list[str] = Field(
+        default_factory=list,
+        description="Each candidate the last placement asked that gave no answer, "
+        "as '<candidate>: <why>', from status.notAnswering. Empty when every "
+        "candidate answered, and on an operator older than 2026-09-29. A compare "
+        "job carries the same lines in `message` instead.",
     )
     stopped: bool = Field(
         default=False,
@@ -975,6 +991,7 @@ class JobView(BaseModel):
         asked = [str(v) for v in (placement.get("vendors") or [])]
         mode = placement.get("mode") or None
         failed = len(status.get("excludedOfferings") or [])
+        silent = [str(line) for line in (status.get("notAnswering") or [])]
 
         return JobView(
             job_id=job_id or "",
@@ -1002,9 +1019,10 @@ class JobView(BaseModel):
             asked_vendors=asked,
             placement_mode=mode,
             failed_offerings=failed,
+            not_answering=silent,
             placement_note=placement_note(
                 asked, [str(r) for r in (placement.get("regions") or [])], mode,
-                vendor, gpu, failed),
+                vendor, gpu, failed, silent),
             stopped=bool(spec.get("stopped", False)),
             stopped_at=status.get("stoppedAt"),
             cost_usd=cost,

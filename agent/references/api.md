@@ -294,6 +294,7 @@ What `GET /v1/jobs/{id}` returns.
 | `job_id` | yes |  |
 | `message` |  | Detail, mostly on failure. |
 | `name` | yes |  |
+| `not_answering` |  | Each candidate the last placement asked that gave no answer, as '<candidate>: <why>', from status.notAnswering. Empty when every candidate answered, and on an operator older than 2026-09-29. A compare job carries the same lines in `message` instead. |
 | `phase` | yes | Pending, Starting, Running, Recovering, Succeeded, or Failed. Empty until the controller has looked at the job once. |
 | `placement_mode` |  | spec.placement.mode: 'ordered' (also when absent), 'cheapest' or 'compare'. |
 | `placement_note` |  | One sentence: where the job was asked to go, where it runs, and -- when those differ -- that it did not land on the first vendor asked. Written to be passed to the user as it is. |
