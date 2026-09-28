@@ -167,16 +167,33 @@ the job can run at all: the H100 is $6.88/hour in us-west-2, $8.60 in ap-northea
 in ap-northeast-2 it is sold only as an 8-GPU machine, so a one-card ask there cannot be
 filled and the job sits in Pending. `hyperun schema` lists what is on offer.
 
-**Three vendors can run a job -- `aws`, `runpod` and `shadeform` -- and the estimate
-prices all three.** An ask that names no vendor is priced at the cheapest, and `basis`
-names the other two with their prices: read all of it out, because "the cheapest" is
-only as wide as the list it was taken from. Until 2026-09-28 the estimate read only aws
-and runpod, and an agent told its user RunPod was the cheapest candidate while Shadeform
-listed the same A100-80GB for $1.35 against $1.59. Two facts about Shadeform go to the
-user with its price: its catalogue carries no stock, and returning result files from a
-Shadeform machine has not yet completed a live run. Neither Shadeform nor RunPod sells
-spot, so a spot ask can only be priced on AWS. Which vendor to allow is the user's call;
-pass it as `--vendor`.
+**Three vendors can run a job -- `aws`, `runpod` and `shadeform` -- and Shadeform is the
+one to recommend.** An ask that names no `--vendor` and no `--region` is sent with
+`shadeform, runpod, aws` in that order, and the default `ordered` walk buys from the first
+that answers. Recommend it for two reasons: it is the cheapest of the three on most cards
+(read 2026-09-28: A100-80GB $1.35 against RunPod's $1.59, L40S $0.88 against $1.09), and
+in the lab's use a terminal into a Shadeform machine (`hyperun shell`, the browser
+terminal) opens faster -- say that one is the lab's observation, not a measurement. Two
+facts go to the user with the recommendation: Shadeform's catalogue carries no stock, and
+returning result files from a Shadeform machine has not yet completed a live run.
+`basis` names every other vendor with its price; read all of it out.
+
+**Turn the user's choice into flags exactly.**
+
+| they choose | you pass |
+|---|---|
+| the recommendation, or "any vendor" | no `--vendor`, no `--region` |
+| "the cheapest, any vendor" | no `--vendor`, no `--region`, `--placement-mode cheapest` |
+| one vendor | `--vendor <that one>` |
+| several, in their order | `--vendor a --vendor b` |
+
+An empty vendor list did NOT always mean "any vendor". Until 2026-09-28 PACSrun read it
+as the operator's one default region, AWS us-west-2: `job-a9ea30b8ba7a` chose "cheapest,
+any vendor", was shown Shadeform's price, and was bought on AWS, the only candidate. A
+job naming regions, or asking for spot, is still sent without the default vendors --
+neither Shadeform nor RunPod sells spot, so a spot ask goes to AWS alone.
+
+Which vendor to allow is the user's call.
 
 ## Step 3 — validate, and stop on an error
 
@@ -287,7 +304,21 @@ hyperun logs <job_id> --follow
 ```
 
 A `Recovering` phase and a non-zero restart count are **not failures**. Rented capacity
-gets taken back and the job is restarted. Say so rather than reporting a problem.
+gets taken back, or an offering fails to start, and the job is restarted on the next
+one. Say so rather than reporting a problem.
+
+### ★ Tell them where it actually runs, and tell them again when that changes
+
+The vendor a job lands on is not always the one first in its list: the first may have
+no machine, or an offering may fail to start and be skipped. `hyperun status` prints a
+`placement` line -- `placement_note` in `--json` -- that says what was asked, what it
+runs on, whether that is not the first vendor asked, and how many offerings failed on
+the way. **As soon as the phase leaves Pending, read that line and compare the vendor
+with what the user chose.** If it differs, tell them in one sentence which vendor it
+runs on and why, quoting the note, before anything else. Do the same after every
+restart: a job that recovers can land on another vendor. Keep the vendor in mind for
+what follows -- the price, the terminal, and where the result files come back from all
+depend on it.
 
 ## The researcher's own documents
 

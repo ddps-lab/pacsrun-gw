@@ -108,6 +108,18 @@ SPOT_SAFE_HOURS = 4
 # tests/test_prices.py holds the two equal.
 PRICED_VENDORS: tuple[str, ...] = ("aws", "runpod", "shadeform")
 
+# The order a job naming no vendor and no region is SENT with, so the order its
+# walk asks them. MUST EQUAL `models.DEFAULT_VENDOR_ORDER` (HYPERUN-DEFAULT-VENDORS),
+# held equal by tests/test_prices.py for the reason PRICED_VENDORS is.
+DEFAULT_ORDER: tuple[str, ...] = ("shadeform", "runpod", "aws")
+
+# Placement words that name a vendor this module does not price. PACSrun reads
+# every OTHER unqualified word ("us-east-1") as an AWS region
+# (vendorpod.go, splitPlacementEntry), so that is what this module does too.
+_UNPRICED_WORDS: tuple[str, ...] = ("gcp", "azure", "lambda", "nebius")
+
+_VENDOR_NAMES = {"aws": "AWS", "runpod": "RunPod", "shadeform": "Shadeform"}
+
 
 class Confidence:
     """How much the hours figure is worth. Strings because they cross the API."""
@@ -538,9 +550,49 @@ def capacity_type(hours: float | None, resumable: bool) -> tuple[str, str]:
     )
 
 
+def vendors_to_price(vendors: list[str] | None, regions: list[str] | None,
+                     capacity: str) -> list[str]:
+    """Which vendors a job will actually ask, in the order it asks them.
+
+    THE SAME RULE THE JOB IS SENT WITH (models.effective_vendors), plus the case
+    that function leaves alone. A job naming regions asks exactly the vendors those
+    regions name, so they are read out of the words: "aws/us-east-1" and
+    "us-east-1" are AWS, "runpod" is RunPod, "shadeform" and "shadeform/<region>"
+    are Shadeform. A spot job naming nothing goes to AWS alone.
+
+    Before 2026-09-28 an ask naming nothing was priced across every vendor while
+    PACSrun asked AWS alone, so the price shown was for a machine the job could
+    not be bought on.
+
+    Args:
+        vendors: `placement.vendors` as the caller wrote it.
+        regions: `placement.regions` as the caller wrote it.
+        capacity: "spot" or "on-demand".
+
+    Returns:
+        The priced vendors, in walk order, with no repeats. Empty when every vendor
+        named is one this module does not price.
+    """
+    if vendors:
+        return [v for v in dict.fromkeys(vendors) if v in PRICED_VENDORS]
+    if regions:
+        found: list[str] = []
+        for entry in regions:
+            head = entry.split("/", 1)[0].strip()
+            vendor = (head if head in PRICED_VENDORS else
+                      None if head in _UNPRICED_WORDS else "aws")
+            if vendor and vendor not in found:
+                found.append(vendor)
+        return found
+    if capacity == "spot":
+        return ["aws"]
+    return list(DEFAULT_ORDER)
+
+
 def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
                 vendors: list[str] | None, capacity: str,
-                regions: list[str] | None = None) -> Rate:
+                regions: list[str] | None = None,
+                mode: str | None = None) -> Rate:
     """What one hour of this job's machines costs.
 
     THE DEFECT THIS FIXES, WHICH WAS A WRONG NUMBER AND NOT A MISSING ONE.
@@ -594,9 +646,7 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
     """
     per_pod = max(1, gpu_count)
     pods = max(1, parallelism)
-    asked = [v for v in (vendors or []) if v in PRICED_VENDORS]
-    if not asked:
-        asked = list(PRICED_VENDORS)
+    asked = vendors_to_price(vendors, regions, capacity)
 
     # Only `aws/<region>` entries name a region. A bare "aws" means the
     # operator's default, which is what an empty list already means here.
@@ -823,7 +873,12 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
         return Rate(None, None, " and ".join(reasons) + "." if reasons else
                     "no runnable vendor was asked for, so there is nothing to price.")
 
-    best = min(options, key=lambda r: r.usd_per_hour_low)
+    # WALK ORDER, then the mode decides which one is quoted. `ordered` (also when
+    # absent) buys from the first candidate that answers, so the first PRICED one
+    # is the honest single number; `cheapest` and `compare` rank every answer.
+    options.sort(key=lambda r: asked.index(r.vendor))
+    ordered = (mode or "ordered") == "ordered"
+    best = options[0] if ordered else min(options, key=lambda r: r.usd_per_hour_low)
     others = [r for r in options if r is not best]
     extra = ""
     if others:
@@ -832,8 +887,17 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
         # third exactly the way this function hid shadeform until 2026-09-28.
         named = "; ".join(f"{o.basis.split(' at ')[0]} at "
                           f"${o.usd_per_hour_low:.4f}/hour" for o in others)
-        extra = (f" Other candidates: {named}. The cheapest is used here because "
-                 f"we cannot know which one the solve will land on.")
+        order = ", ".join(_VENDOR_NAMES.get(v, v) for v in asked)
+        if ordered:
+            extra = (f" The job asks {order} in that order and buys from the first "
+                     f"that answers, so this is the price if "
+                     f"{_VENDOR_NAMES.get(best.vendor, best.vendor)} has a machine; "
+                     f"after it: {named}.")
+        elif mode == "compare":
+            extra = f" Other candidates: {named}. compare ranks them and buys nothing."
+        else:
+            extra = (f" Other candidates: {named}. With placement_mode cheapest the "
+                     f"job buys the cheapest answer, which is this one.")
     return Rate(best.usd_per_hour_low, best.usd_per_hour_high,
                 best.basis + extra, best.vendor, best.machines)
 
@@ -856,8 +920,13 @@ def estimate(
     vendors: list[str] | None = None,
     asked_capacity: str | None = None,
     regions: list[str] | None = None,
+    placement_mode: str | None = None,
 ) -> Estimate:
     """Answer everything `/v1/estimate` is asked, or say why we cannot.
+
+    `placement_mode` decides which of several priced vendors is quoted: the first
+    in walk order for `ordered` (and when absent), the cheapest otherwise. See
+    `hourly_rate`.
 
     Args:
         gpu_name: the GPU the job would run on.
@@ -949,7 +1018,7 @@ def estimate(
     # to the machine that will actually be bought.
     priced_as = asked_capacity or kind
     rate = hourly_rate(gpu_name, gpu_count, parallelism, vendors, priced_as,
-                       regions)
+                       regions, placement_mode)
     if asked_capacity and asked_capacity != kind:
         warnings.append(
             f"the rate above is for {asked_capacity}, which is what was asked "

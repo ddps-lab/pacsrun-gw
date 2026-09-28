@@ -268,7 +268,26 @@ def test_status_calls_a_restart_what_it_is(fake, capsys):
     run(["status", "job-a8acdef80a07"])
     printed = capsys.readouterr().out
     assert "L40S (runpod)" in printed
-    assert "the machine was reclaimed" in printed
+    # With no failed offerings the restarts were machines lost mid-run.
+    assert "the machine was lost and the job was restarted" in printed
+
+
+def test_status_says_offerings_failed_and_where_the_job_was_asked_to_go(fake, capsys):
+    # job-a9ea30b8ba7a: three g6.xlarge zones failed to START, and the CLI called
+    # it "the machine was reclaimed". The server's note is printed as it is, so the
+    # person sees the job asked AWS alone while they had chosen "any vendor".
+    fake.status_result = {
+        "job_id": "job-a9ea30b8ba7a", "name": "x", "phase": "Running",
+        "recovery_count": 3, "failed_offerings": 3, "gpu": "g6.xlarge", "vendor": "aws",
+        "placement_note": "The job named no vendor and no region, so the operator's one "
+                          "default region (AWS) was the only candidate; it runs on aws "
+                          "g6.xlarge.",
+    }
+    run(["status", "job-a9ea30b8ba7a"])
+    printed = capsys.readouterr().out
+    assert "3 offering(s) failed to start or were lost" in printed
+    assert "reclaimed" not in printed
+    assert "placement  The job named no vendor" in printed
 
 
 def test_logs_prints_every_line_without_its_timestamp(fake, capsys):

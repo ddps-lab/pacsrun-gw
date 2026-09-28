@@ -840,6 +840,9 @@ def _estimate_for(body: JudgementRequest) -> estimator.Estimate:
         vendors=body.vendors,
         asked_capacity=body.capacity_type,
         regions=body.regions,
+        # HYPERUN-DEFAULT-VENDORS: the mode picks which priced vendor is quoted,
+        # the first in walk order (ordered) or the cheapest.
+        placement_mode=body.placement_mode,
     )
 
 

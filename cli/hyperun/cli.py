@@ -114,12 +114,13 @@ def job_arguments() -> argparse.ArgumentParser:
     # first time a vendor is added.
     shared.add_argument(
         "--vendor", action="append", metavar="NAME",
-        help="who the machine may be bought from. Repeat it to allow several; "
-        "omit it entirely for no restriction, which is what every job did before "
-        "this flag existed. aws, runpod and shadeform can actually run a job, "
-        "and `hyperun estimate` prices all three and names the cheapest; gcp, "
-        "azure, lambda and nebius can only be PRICED, so name one of those only "
-        "with --placement-mode compare.",
+        help="who the machine may be bought from, in the order they are asked. "
+        "Repeat it to allow several. Omit it, and --region, and the job is sent "
+        "with shadeform, runpod and aws in that order (a spot job goes to aws "
+        "alone); add --placement-mode cheapest to buy the cheapest of them "
+        "instead of the first that answers. aws, runpod and shadeform can "
+        "actually run a job; gcp, azure, lambda and nebius can only be PRICED, "
+        "so name one of those only with --placement-mode compare.",
     )
     # DDPSRUN-REGIONS. Missing until 2026-09-08, so every job this CLI submitted
     # ran in the operator's one default region and there was no way to say
@@ -1055,9 +1056,19 @@ def cmd_status(args: argparse.Namespace) -> int:
     if view.get("gpu"):
         vendor = f" ({view['vendor']})" if view.get("vendor") else ""
         print(f"  running on {view['gpu']}{vendor}")
+    # HYPERUN-PLACEMENT-NOTE. Where the job was asked to go, next to where it went,
+    # so a person -- or an agent relaying to one -- sees a vendor that differs from
+    # the one they chose. An older server sends no note, and nothing is printed.
+    if view.get("placement_note"):
+        print(f"  placement  {view['placement_note']}")
     if view.get("recovery_count"):
-        # Not a failure. Rented capacity is taken back, and the job is restarted.
-        print(f"  restarts   {view['recovery_count']} (the machine was reclaimed)")
+        # Not a failure: the job was restarted. It used to say "the machine was
+        # reclaimed" every time, which was wrong for job-a9ea30b8ba7a -- its three
+        # restarts were offerings that failed to START, not machines taken back.
+        failed = view.get("failed_offerings") or 0
+        why = (f"{failed} offering(s) failed to start or were lost, and were skipped"
+               if failed else "the machine was lost and the job was restarted")
+        print(f"  restarts   {view['recovery_count']} ({why})")
     if view.get("message"):
         print(f"  message    {view['message']}")
     if view.get("result_path"):

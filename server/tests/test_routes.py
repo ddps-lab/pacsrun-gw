@@ -816,7 +816,8 @@ def test_a_submission_now_carries_a_capacity_type(client, cluster):
     # candidate, which is silent: the job runs, just never on RunPod.
     as_alice(client, "POST", "/v1/jobs", json=submit_body(gpu={"vram_gb": 48}))
     _, body = cluster.created[0]
-    assert body["spec"]["placement"] == {"capacityType": "on-demand"}
+    assert body["spec"]["placement"] == {"capacityType": "on-demand",
+                                         "vendors": ["shadeform", "runpod", "aws"]}
 
 
 def test_a_submit_body_from_stage_one_still_works(client, cluster):

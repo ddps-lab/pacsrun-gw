@@ -56,10 +56,11 @@ def test_an_aws_job_is_no_longer_priced_at_runpods_rate():
     assert round(on_runpod.usd_per_hour_low / on_aws.usd_per_hour_low, 2) == 0.59
 
 
-def test_an_unrestricted_ask_takes_the_cheapest_and_names_every_other():
-    """`vendors` empty means no restriction, and we cannot know which vendor the
-    solve lands on. Quoting one candidate silently is how the 47% happened, so
-    every other one is in the sentence.
+def test_an_ask_naming_nothing_is_quoted_where_its_walk_starts_and_names_every_other():
+    """An ask naming no vendor and no region is SENT with shadeform, runpod, aws
+    (HYPERUN-DEFAULT-VENDORS), and the default ordered walk buys from the first that
+    answers. Quoting one candidate silently is how the 47% happened, so every other
+    one is in the sentence.
 
     ★ THREE VENDORS SINCE 2026-09-28. Until then this read only aws and runpod and
     answered RunPod's $1.09 for an L40S; Shadeform lists one at $0.88."""
@@ -67,6 +68,7 @@ def test_an_unrestricted_ask_takes_the_cheapest_and_names_every_other():
     assert rate.usd_per_hour_low == 0.88
     assert rate.vendor == "shadeform"
     assert "massedcompute_L40S" in rate.basis
+    assert "Shadeform, RunPod, AWS in that order" in rate.basis
     # Both of the others are named, not just the first.
     assert "g6e.xlarge" in rate.basis and "1.8610" in rate.basis
     assert "RunPod" in rate.basis and "1.0900" in rate.basis
@@ -655,3 +657,36 @@ def test_the_unfillable_remedy_now_says_whether_runpod_fills_it():
     assert len(filled) == 1
     assert "RunPod DOES fill this shape" in filled[0].fix
     assert "$6.36 per pod-hour" in filled[0].fix
+
+
+# ------------------------------------- HYPERUN-DEFAULT-VENDORS (2026-09-28)
+
+
+def test_ordered_quotes_the_first_vendor_asked_and_cheapest_quotes_the_cheapest():
+    """For a card where the first vendor asked is NOT the cheapest, the two modes
+    must disagree -- that is what the mode changes. `A100` (40 GB on Shadeform's
+    lambdalabs rows, 80 GB on RunPod) is $1.99 on Shadeform and $1.59 on RunPod."""
+    ordered = e.hourly_rate("A100", 1, 1, None, "on-demand")
+    cheapest = e.hourly_rate("A100", 1, 1, None, "on-demand", None, "cheapest")
+    assert ordered.vendor == "shadeform" and ordered.usd_per_hour_low == 1.99
+    assert cheapest.vendor == "runpod" and cheapest.usd_per_hour_low == 1.59
+    assert "buys the cheapest answer" in cheapest.basis
+
+
+def test_regions_decide_the_vendors_when_none_are_named():
+    """A job naming regions is sent as written, so its walk asks exactly what the
+    regions name -- and the estimate prices exactly that."""
+    assert e.vendors_to_price(None, ["aws/ap-northeast-1"], "on-demand") == ["aws"]
+    assert e.vendors_to_price(None, ["runpod", "us-east-1"], "on-demand") == ["runpod", "aws"]
+    assert e.vendors_to_price(None, ["shadeform/houston-usa-1", "gcp"], "on-demand") == [
+        "shadeform"]
+    only_aws = e.hourly_rate("L40S", 1, 1, None, "on-demand", ["aws/us-west-2"])
+    assert only_aws.vendor == "aws" and "Other candidates" not in only_aws.basis
+
+
+def test_a_spot_ask_naming_nothing_is_priced_on_aws_alone():
+    """Neither Shadeform nor RunPod sells spot, so a spot job naming nothing is sent
+    with no vendors -- AWS alone -- and priced there."""
+    assert e.vendors_to_price(None, None, "spot") == ["aws"]
+    rate = e.hourly_rate("L40S", 1, 1, None, "spot")
+    assert rate.vendor == "aws"

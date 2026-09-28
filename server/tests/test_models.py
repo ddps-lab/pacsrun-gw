@@ -7,13 +7,16 @@ check that something a caller sent did NOT end up in the object.
 import pytest
 from pydantic import ValidationError
 
-from ddpsrun_server import naming
+from ddpsrun_server import estimate, naming
 from ddpsrun_server.auth import Principal
 from ddpsrun_server.config import ConfigError, SecretBinding, Settings
 from ddpsrun_server.models import (
+    DEFAULT_VENDOR_ORDER,
     KNOWN_VENDORS,
+    RUNNABLE_VENDORS,
     JobView,
     SubmitRequest,
+    placement_note,
     to_pacsjob,
 )
 
@@ -187,18 +190,21 @@ def test_asking_both_ways_or_neither_is_refused():
         minimal(gpu={"count": 1})
 
 
-def test_no_capacity_type_writes_no_placement_at_all():
+def test_no_capacity_type_writes_only_the_default_vendors():
     # The stage-1 shape, still reachable: with no capacity_type the object
-    # carries no placement and PACSrun applies its own defaults.
+    # carries no capacityType and PACSrun applies its own default for it. Since
+    # 2026-09-28 (HYPERUN-DEFAULT-VENDORS) it does carry the three vendors, because
+    # an empty placement meant AWS alone to PACSrun.
     obj = to_pacsjob(minimal(gpu={"vram_gb": 48}), ALICE, SETTINGS, JOB_ID)
-    assert "placement" not in obj["spec"]
+    assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"]}
 
 
 def test_a_capacity_type_is_written_into_placement():
     # Why this matters: an empty capacityType means spot, and RunPod's decider
     # declines anything that is not on-demand before it reads the catalogue.
     obj = to_pacsjob(minimal(gpu={"vram_gb": 48}), ALICE, SETTINGS, JOB_ID, "on-demand")
-    assert obj["spec"]["placement"] == {"capacityType": "on-demand"}
+    assert obj["spec"]["placement"] == {"capacityType": "on-demand",
+                                        "vendors": ["shadeform", "runpod", "aws"]}
 
 
 def test_a_cpu_only_job_asks_for_no_gpu():
@@ -209,7 +215,8 @@ def test_a_cpu_only_job_asks_for_no_gpu():
 def test_expected_hours_is_recorded_but_not_acted_on():
     obj = to_pacsjob(minimal(expected_hours=8.0), ALICE, SETTINGS, JOB_ID)
     assert obj["metadata"]["annotations"]["ddpsrun.io/expected-hours"] == "8.0"
-    assert "placement" not in obj["spec"]
+    # The hours change nothing about placement: only the default vendors are there.
+    assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"]}
 
 
 def test_a_job_the_controller_has_not_touched_yet_still_renders():
@@ -342,11 +349,31 @@ def test_vendors_alone_still_produce_a_placement_block():
     assert obj["spec"]["placement"] == {"vendors": ["runpod"]}
 
 
-def test_a_job_naming_nothing_has_no_placement_at_all():
-    """Byte-for-byte the old behaviour, which is what every job written before today did."""
+def test_a_job_naming_no_vendor_and_no_region_is_sent_with_all_three():
+    """HYPERUN-DEFAULT-VENDORS (2026-09-28). This used to write no placement at all, and
+    PACSrun reads that as the operator's one default region -- AWS alone. job-a9ea30b8ba7a
+    chose "cheapest, any vendor" and its walk had one candidate. Shadeform goes first
+    because under the default ordered mode the order is the preference."""
     request = SubmitRequest(name="n", image="img")
     obj = to_pacsjob(request, ALICE, SETTINGS, JOB_ID, capacity_type=None)
-    assert "placement" not in obj["spec"]
+    assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"]}
+
+
+def test_a_job_naming_regions_or_asking_for_spot_is_not_filled():
+    """A job that named regions chose its places; a spot job can only be sold by AWS,
+    which is what an empty vendor list already means."""
+    regions = to_pacsjob(SubmitRequest(name="n", image="img", regions=["aws/us-east-1"]),
+                         ALICE, SETTINGS, JOB_ID, capacity_type="on-demand")
+    assert "vendors" not in regions["spec"]["placement"]
+    assert regions["spec"]["placement"]["regions"] == ["aws/us-east-1"]
+    spot = to_pacsjob(SubmitRequest(name="n", image="img"), ALICE, SETTINGS, JOB_ID,
+                      capacity_type="spot")
+    assert spot["spec"]["placement"] == {"capacityType": "spot"}
+
+
+def test_the_default_order_matches_what_the_estimate_prices():
+    assert tuple(estimate.DEFAULT_ORDER) == tuple(DEFAULT_VENDOR_ORDER)
+    assert set(DEFAULT_VENDOR_ORDER) == set(RUNNABLE_VENDORS)
 
 
 def test_an_unrecognised_vendor_is_refused_and_the_message_lists_the_real_ones():
@@ -588,3 +615,41 @@ def test_the_cap_leaves_room_for_the_scripts_people_actually_write():
     assert SCRIPT_MAX_CHARS > 13 * 19_655
     # And a sixth of etcd's own limit, so the rest of the object still fits.
     assert SCRIPT_MAX_CHARS < 1.5 * 1024 * 1024 / 5
+
+
+# ------------------------------------------------ HYPERUN-PLACEMENT-NOTE (2026-09-28)
+
+
+def test_the_view_says_what_was_asked_next_to_what_was_bought():
+    """job-a9ea30b8ba7a, as the cluster held it: no vendor named, cheapest mode, three
+    g6.xlarge zones failed before the fourth started. The view used to carry only
+    `vendor: aws`, which is how an agent told its user nothing about either fact."""
+    obj = {
+        "metadata": {"labels": {}},
+        "spec": {"placement": {"capacityType": "on-demand", "mode": "cheapest"}},
+        "status": {
+            "phase": "Running", "recoveryCount": 3,
+            "currentOffering": {"vendor": "aws", "instanceType": "g6.xlarge",
+                                "region": "us-west-2", "zone": "usw2-az3"},
+            "excludedOfferings": [{"instanceType": "g6.xlarge", "zone": z}
+                                  for z in ("usw2-az4", "usw2-az1", "usw2-az2")],
+        },
+    }
+    view = JobView.from_pacsjob(obj)
+    assert view.asked_vendors == [] and view.placement_mode == "cheapest"
+    assert view.failed_offerings == 3
+    assert "only candidate" in view.placement_note
+    assert "runs on aws g6.xlarge" in view.placement_note
+    assert "3 offering(s) failed" in view.placement_note
+    # The zones stay behind, as zone and region always have: only the count crosses.
+    assert "usw2" not in view.model_dump_json()
+
+
+def test_the_note_says_when_the_job_did_not_land_on_the_first_vendor_asked():
+    note = placement_note(["shadeform", "runpod", "aws"], [], None, "runpod", "L40S", 0)
+    assert "in that order" in note
+    assert "not the first vendor asked: shadeform did not provide a machine" in note
+    first = placement_note(["shadeform", "runpod", "aws"], [], None, "shadeform", "x", 0)
+    assert "not the first" not in first
+    waiting = placement_note(["shadeform", "runpod", "aws"], [], None, None, None, 0)
+    assert waiting.endswith("it has no machine yet.")

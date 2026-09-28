@@ -180,6 +180,53 @@ RUNNABLE_VENDORS: tuple[str, ...] = ("aws", "runpod", "shadeform")
 PRICE_ONLY_VENDORS: tuple[str, ...] = ("gcp", "azure", "lambda", "nebius")
 KNOWN_VENDORS: tuple[str, ...] = RUNNABLE_VENDORS + PRICE_ONLY_VENDORS
 
+# ★ HYPERUN-DEFAULT-VENDORS (2026-09-28). What a job is sent with when it names NO vendor and NO
+# region, in the order PACSrun's walk asks them.
+#
+# WHAT "NO VENDOR" USED TO MEAN, AND THAT NOBODY AGREED. The CLI said "no restriction", the
+# estimate priced the cheapest of every runnable vendor, and PACSrun's walk -- the only one of
+# the three that buys anything -- read an empty vendors-and-regions placement as the operator's
+# ONE default region (internal/controller/placement.go, regionCandidates: `return
+# []string{defaultRegion}`), which is AWS us-west-2. job-a9ea30b8ba7a asked for "cheapest, any
+# vendor", was shown Shadeform's price, and was bought on AWS: the operator log says `"answers":
+# 1, "notAsked": "none: every candidate was asked"`, because AWS was the only candidate.
+#
+# THE FIX LIVES HERE AND NOT IN PACSrun, because PACSrun's rule is pinned for every PacsJob that
+# already exists ("vendors empty -> unchanged, and it MUST stay unchanged"). The gateway instead
+# writes the three words, and PACSrun's own fill step turns each into a candidate in this order:
+# `shadeform` and `runpod` are placement words, `aws` becomes the default region.
+#
+# WHY SHADEFORM FIRST. The lab's decision on 2026-09-28: it is the cheapest of the three on most
+# cards in the 2026-09-28 catalogue (A100-80GB $1.35 against RunPod $1.59, L40S $0.88 against
+# $1.09), and in the lab's use a terminal into a Shadeform machine opens faster -- an observation,
+# not a measurement. Under the default `ordered` mode this order IS the preference; under
+# `cheapest` the order does not matter.
+#
+# WHEN IT DOES NOT APPLY. A job that names regions already chose its places, so it is sent as
+# written. A spot job is sent with no vendors: neither Shadeform nor RunPod sells spot, and the
+# empty placement's meaning, AWS alone, is the right one for it.
+DEFAULT_VENDOR_ORDER: tuple[str, ...] = ("shadeform", "runpod", "aws")
+
+
+def effective_vendors(vendors: list[str] | None, regions: list[str] | None,
+                      capacity_type: str | None) -> list[str]:
+    """The vendor list a job actually goes out with (HYPERUN-DEFAULT-VENDORS).
+
+    Args:
+        vendors: what the caller wrote. Returned unchanged when non-empty.
+        regions: what the caller wrote. When non-empty the caller chose places,
+            so no vendor is added.
+        capacity_type: "spot" keeps the empty list, and with it AWS alone.
+
+    Returns:
+        The list to write into spec.placement.vendors; empty means "write none".
+    """
+    if vendors:
+        return list(vendors)
+    if regions or capacity_type == "spot":
+        return []
+    return list(DEFAULT_VENDOR_ORDER)
+
 # What the walk does with its candidates. The words and their meanings are the
 # CRD's (spec.placement.mode); this copy exists so the request can be checked
 # before it is sent.
@@ -292,8 +339,10 @@ class SubmitRequest(BaseModel):
     )
     vendors: list[str] = Field(
         default_factory=list,
-        description="WHO the machines may be bought from. Empty means no "
-        "restriction, which is how every job behaved before this field existed. "
+        description="WHO the machines may be bought from, in the order they are "
+        "asked. Empty, with no regions either, sends the job with "
+        f"{', '.join(DEFAULT_VENDOR_ORDER)} in that order (spot jobs excepted: they "
+        "go to AWS alone, the only one selling spot). "
         f"Runnable: {', '.join(RUNNABLE_VENDORS)}. Price-only: "
         f"{', '.join(PRICE_ONLY_VENDORS)} -- these are answered from catalogue "
         "CSVs and no actuator here can rent from them, so list one only together "
@@ -706,6 +755,53 @@ class NamespacesResponse(BaseModel):
     )
 
 
+def placement_note(asked: list[str], regions: list[str], mode: str | None,
+                   vendor: str | None, gpu: str | None, failed: int) -> str:
+    """One sentence on where a job was asked to go and where it went.
+
+    WHY A SENTENCE AND NOT ONLY FIELDS. The reader is often an agent relaying to a
+    person. On 2026-09-28 an agent had `vendor: aws` and nothing else, after its
+    user chose "cheapest, any vendor"; it could not say that AWS had been the only
+    candidate or that three offerings failed before one started. A sentence that is
+    true as written can be passed on without anybody re-deriving it.
+
+    Args:
+        asked: spec.placement.vendors, in order.
+        regions: spec.placement.regions, as the caller wrote them.
+        mode: spec.placement.mode; None means ordered.
+        vendor: status.currentOffering.vendor, None before a machine exists.
+        gpu: status.currentOffering.instanceType.
+        failed: len(status.excludedOfferings).
+
+    Returns:
+        The sentence. Never empty for a job with a placement to describe.
+    """
+    ordered = (mode or "ordered") == "ordered"
+    if asked:
+        where = f"asked {', '.join(asked)}"
+        if ordered and len(asked) > 1:
+            where += " in that order, buying from the first that answers"
+        elif mode == "cheapest":
+            where += " and bought the cheapest answer"
+    elif regions:
+        where = f"asked the regions {', '.join(regions)}"
+    else:
+        where = ("named no vendor and no region, so the operator's one default region "
+                 "(AWS) was the only candidate")
+    if not vendor:
+        text = f"The job {where}; it has no machine yet."
+    else:
+        text = f"The job {where}; it runs on {vendor}" + (f" {gpu}" if gpu else "") + "."
+        if asked and ordered and vendor in asked and vendor != asked[0]:
+            skipped = ", ".join(asked[:asked.index(vendor)])
+            text += (f" That is not the first vendor asked: {skipped} did not provide "
+                     f"a machine.")
+    if failed:
+        text += (f" {failed} offering(s) failed to start or were lost and were skipped "
+                 f"on the way.")
+    return text
+
+
 class JobView(BaseModel):
     """What `GET /v1/jobs/{id}` returns.
 
@@ -748,7 +844,33 @@ class JobView(BaseModel):
     )
     recovery_count: int = Field(
         default=0,
-        description="How many times the job lost its machine and was restarted.",
+        description="How many times the job was restarted: after losing a machine, "
+        "or after an offering failed to start and was skipped. `failed_offerings` "
+        "counts the offerings skipped either way.",
+    )
+    asked_vendors: list[str] = Field(
+        default_factory=list,
+        description="The vendors the job was sent with, in the order the walk asks "
+        "them (spec.placement.vendors). Empty for a job that named regions instead, "
+        "a spot job, or one submitted before 2026-09-28 with no vendor.",
+    )
+    placement_mode: str | None = Field(
+        default=None,
+        description="spec.placement.mode: 'ordered' (also when absent), 'cheapest' "
+        "or 'compare'.",
+    )
+    failed_offerings: int = Field(
+        default=0,
+        description="How many machine offerings were tried and skipped, from the "
+        "length of status.excludedOfferings. Only the count crosses the API; which "
+        "zones is this account's business, the same rule that keeps zone and region out "
+        "of this view.",
+    )
+    placement_note: str = Field(
+        default="",
+        description="One sentence: where the job was asked to go, where it runs, "
+        "and -- when those differ -- that it did not land on the first vendor asked. "
+        "Written to be passed to the user as it is.",
     )
     stopped: bool = Field(
         default=False,
@@ -824,6 +946,15 @@ class JobView(BaseModel):
         hours = job_hours(obj, datetime.now(timezone.utc))
         cost = job_cost(obj, hours) if hours is not None else None
 
+        # HYPERUN-PLACEMENT-NOTE (2026-09-28). What was asked, next to what was
+        # bought. Before this the view carried only `vendor`, so an agent could see
+        # "aws" and not that the user had chosen "any vendor, cheapest" -- nor that
+        # AWS had been the only candidate, nor that three offerings had failed first.
+        placement = spec.get("placement") or {}
+        asked = [str(v) for v in (placement.get("vendors") or [])]
+        mode = placement.get("mode") or None
+        failed = len(status.get("excludedOfferings") or [])
+
         return JobView(
             job_id=job_id or "",
             # The annotation first: it holds the name the user typed, Korean and
@@ -847,6 +978,12 @@ class JobView(BaseModel):
             gpu=gpu,
             vendor=vendor,
             recovery_count=int(status.get("recoveryCount", 0) or 0),
+            asked_vendors=asked,
+            placement_mode=mode,
+            failed_offerings=failed,
+            placement_note=placement_note(
+                asked, [str(r) for r in (placement.get("regions") or [])], mode,
+                vendor, gpu, failed),
             stopped=bool(spec.get("stopped", False)),
             stopped_at=status.get("stoppedAt"),
             cost_usd=cost,
@@ -1065,8 +1202,12 @@ def to_pacsjob(
     placement: dict[str, Any] = {}
     if capacity_type:
         placement["capacityType"] = capacity_type
-    if request.vendors:
-        placement["vendors"] = list(request.vendors)
+    # HYPERUN-DEFAULT-VENDORS: an ask naming no vendor and no region goes out with
+    # all three runnable vendors, Shadeform first, instead of reaching PACSrun as
+    # "the default region" -- which is AWS alone.
+    sent_vendors = effective_vendors(request.vendors, request.regions, capacity_type)
+    if sent_vendors:
+        placement["vendors"] = sent_vendors
     if request.placement_mode:
         placement["mode"] = request.placement_mode
     # DDPSRUN-REGIONS. Dropped until 2026-09-08, exactly as `vendors` was: the CRD
