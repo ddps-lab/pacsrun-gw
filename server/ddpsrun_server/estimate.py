@@ -176,7 +176,8 @@ class GpuAdvice:
 
     recommended: str | None
     recommended_vram_gb: int | None
-    peak_logits_gib: float
+    # None when it was not computed. 0.0 would read as "needs no memory".
+    peak_logits_gib: float | None
     reason: str
 
 
@@ -493,12 +494,13 @@ def recommend_gpu(
     # A missing cap must not fall through as zero. It did once, and the answer
     # read "the logits buffer reaches 0.00 GiB at cap 0", which is a number and
     # is therefore believable, and is wrong. Found 2026-08-31 running the CLI
-    # against the server.
+    # against the server. The peak is None for the same reason: it said 0.0
+    # here until 2026-09-29, and a nanoGPT answer showed "logits peak 0.0 GiB".
     if not cap:
         return GpuAdvice(
             recommended=None,
             recommended_vram_gb=None,
-            peak_logits_gib=0.0,
+            peak_logits_gib=None,
             reason=(
                 "we cannot say which GPU this needs without --max-len. That value "
                 "decides the largest allocation the run attempts, because the "
@@ -1006,7 +1008,7 @@ def estimate(
     shaped = modelled_shape(cap, pairs, row_tokens)
     advice = (recommend_gpu(cap, mitigations_on, vocab) if shaped
               else GpuAdvice(recommended=None, recommended_vram_gb=None,
-                             peak_logits_gib=0.0, reason=UNMODELLED_GPU_REASON))
+                             peak_logits_gib=None, reason=UNMODELLED_GPU_REASON))
 
     step_count: int | None = None
     if pairs and epochs:

@@ -284,7 +284,7 @@ def test_a_missing_cap_produces_no_gpu_advice_rather_than_a_zero():
     # 80 GB off the back of it. A number is believable; that one was wrong.
     advice = e.recommend_gpu(None, mitigations_on=True)
     assert advice.recommended is None
-    assert advice.peak_logits_gib == 0.0
+    assert advice.peak_logits_gib is None
     assert "--max-len" in advice.reason
 
 

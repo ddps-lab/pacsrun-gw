@@ -821,8 +821,10 @@ def cmd_estimate(args: argparse.Namespace) -> int:
     # "none (None GB), logits peak 0.0 GiB" -- which reads as a finding that the
     # job needs no memory. The reason is still printed, because it says why there
     # is no recommendation. `modelled` is absent from a server older than this
-    # client, which is the same as True: print the line exactly as before.
-    if result.get("modelled", True):
+    # client, which is the same as True: print the line exactly as before. A
+    # newer server also sends a null peak when it computed none (no cap, or not
+    # modelled); an older one sent 0.0 there, and that is printed as before.
+    if result.get("modelled", True) and gpu.get("peak_logits_gib") is not None:
         print(f"  GPU            {gpu.get('recommended') or 'none'}"
               f" ({gpu.get('recommended_vram_gb')} GB), logits peak {gpu['peak_logits_gib']} GiB")
         print(f"                 {gpu['reason']}")

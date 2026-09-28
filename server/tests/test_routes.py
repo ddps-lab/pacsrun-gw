@@ -929,6 +929,9 @@ def test_a_nanogpt_estimate_says_nothing_only_a_dpo_run_has(client):
     # finding that the job needs no memory.
     assert answer["gpu"]["recommended"] is None
     assert answer["gpu"]["reason"].startswith("not sized")
+    # Checking this against production still found `logits` in the answer:
+    # `peak_logits_gib: 0.0`, a number nobody computed. null says so.
+    assert answer["gpu"]["peak_logits_gib"] is None
 
 
 def test_a_nanogpt_validate_says_nothing_only_a_dpo_run_has(client):

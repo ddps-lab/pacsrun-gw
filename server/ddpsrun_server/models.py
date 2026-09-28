@@ -1431,7 +1431,10 @@ class GpuAdviceView(BaseModel):
 
     recommended: str | None = None
     recommended_vram_gb: int | None = None
-    peak_logits_gib: float
+    peak_logits_gib: float | None = Field(
+        description="GiB the logits buffer reaches at the cap. null when it was "
+                    "not computed: no cap was given, or the job is not the "
+                    "recipe the memory model was measured on (`modelled` false).")
     reason: str
 
 

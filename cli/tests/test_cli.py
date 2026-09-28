@@ -499,7 +499,9 @@ def test_an_unknown_estimate_says_so_instead_of_printing_a_blank(fake, capsys):
 
 # HYPERUN-UNMODELLED-SHAPE. THIS DICT IS THE SERVER'S OWN ANSWER, not one written
 # for the test: server/tests/test_routes.py's NANOGPT request, sent to the real
-# /v1/estimate on 2026-09-29 and pasted here. A fake written from what the CLI
+# /v1/estimate on 2026-09-29 and pasted here (again the same day, once
+# `peak_logits_gib` became null for a job it was not computed for). A fake
+# written from what the CLI
 # expects agrees with whatever the CLI does wrong; one copied from the server
 # cannot (see the 48 tests that once passed against a broken unpack).
 NANOGPT_ESTIMATE = {
@@ -525,7 +527,7 @@ NANOGPT_ESTIMATE = {
     "gpu": {
         "recommended": None,
         "recommended_vram_gb": None,
-        "peak_logits_gib": 0.0,
+        "peak_logits_gib": None,
         "reason": "not sized: GPU memory is modelled only for that same recipe, so no card is recommended and the one you named is the one priced."
     },
     "capacity_type": "on-demand",
@@ -553,11 +555,28 @@ def test_a_nanogpt_estimate_prints_no_dpo_vocabulary(fake, capsys):
 
 def test_an_older_server_without_modelled_still_gets_the_gpu_line(fake, capsys):
     # A server from before this field sends no `modelled`; that has to mean what
-    # it always meant, so the line is printed exactly as before.
+    # it always meant, so the line is printed exactly as before. Such a server
+    # also sent 0.0 for a peak it had not computed.
     older = {k: v for k, v in NANOGPT_ESTIMATE.items() if k != "modelled"}
+    older["gpu"] = {**NANOGPT_ESTIMATE["gpu"], "peak_logits_gib": 0.0}
     fake.estimate_result = older
     run(["estimate", "--name", "x", "--image", "i"])
     assert "logits peak" in capsys.readouterr().out
+
+
+def test_a_dpo_estimate_without_a_cap_prints_the_reason_not_a_null_peak(fake, capsys):
+    # A DPO job that sent pairs but no cap IS modelled, and the server sizes no
+    # card for it. The line would read "none (None GB), logits peak None GiB".
+    fake.estimate_result = {
+        **NANOGPT_ESTIMATE, "modelled": True,
+        "gpu": {"recommended": None, "recommended_vram_gb": None,
+                "peak_logits_gib": None,
+                "reason": "we cannot say which GPU this needs without --max-len."},
+    }
+    run(["estimate", "--name", "x", "--image", "i"])
+    printed = capsys.readouterr().out
+    assert "None" not in printed
+    assert "GPU            we cannot say which GPU this needs without --max-len." in printed
 
 
 def test_validate_exits_1_when_something_would_actually_stop_the_job(fake, capsys):

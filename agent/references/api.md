@@ -182,7 +182,7 @@ Which GPU, and the working that led there.
 
 | field | required | description |
 |---|---|---|
-| `peak_logits_gib` | yes |  |
+| `peak_logits_gib` | yes | GiB the logits buffer reaches at the cap. null when it was not computed: no cap was given, or the job is not the recipe the memory model was measured on (`modelled` false). |
 | `reason` | yes |  |
 | `recommended` |  |  |
 | `recommended_vram_gb` |  |  |
