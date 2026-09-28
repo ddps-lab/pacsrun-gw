@@ -101,15 +101,25 @@ estimate rather than assume, validate and stop on a finding, and submit only aft
 /plugin install hyperun
 ```
 
+To take a newer version later, run these two in a terminal and then **open a new Claude Code
+session**. A session that is already running keeps the version it started with, so an update
+made while it is open changes nothing in it:
+
+```
+claude plugin marketplace update pacsrun-gw
+claude plugin update hyperun@pacsrun-gw
+```
+
 The plugin's reference documents are in [`agent/references/`](agent/references/). The one worth
 reading yourself is [`script-contract.md`](agent/references/script-contract.md): a list of the ways
 a long training run dies in its last minute, each one taken from a run that did.
 
 ## What this is not
 
-- **Not an interactive machine.** There is no SSH and no shell into a running job. You submit a
-  program and read its output. If you need to poke at a live container, this is the wrong tool
-  today.
+- **Not an SSH box.** There is no SSH. You submit a program and read its output. To look inside
+  a running job there is a shell -- `hyperun shell <job>` from a terminal, or the Terminal panel
+  on the job's page in the web screen -- but the machine is rented for the job and goes when it
+  ends, so it is not somewhere to keep work.
 - **Not a scheduler you host.** `hyperun` is a client. Somebody has to run the gateway and the
   PACSrun operator; see [`docs/`](docs/) if that somebody is you.
 - **Not free of limits.** A job's credentials for writing results last twelve hours, which is
