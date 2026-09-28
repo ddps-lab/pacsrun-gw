@@ -1448,12 +1448,29 @@ def cmd_logs(args: argparse.Namespace) -> int:
     """
     client = client_from_config()
     # A window several times the interval, so one slow round trip does not lose
-    # lines. Capped at the server's own limit.
+    # lines. Capped at the server's own limit. Used for the polls AFTER the first.
     window = min(3600, max(5, int(args.interval * 5)))
     since: str | None = None
 
+    # HYPERUN-LOGS-BACKLOG. THE FIRST READ IS THE WHOLE LOG, not the last 30 seconds.
+    #
+    # This used to send `window` on every request, the first included, so a plain
+    # `hyperun logs <job>` read ONE 30-second window and stopped. On 2026-09-28
+    # job-a9ea30b8ba7a had printed 93 lines -- an agent following it from the
+    # start had every one -- and `hyperun logs` returned 0, because the job was
+    # between restarts and had said nothing for half a minute. A `--follow` started
+    # partway through lost everything before its first window the same way.
+    #
+    # `window_seconds=0` is the server's "no time filter, the newest max_lines of
+    # the whole log" (k8s.job_log_window), and it is what the web screen has
+    # always asked for first (ui/app.js, drawLog). The narrow window is right only
+    # for the polls that follow, where `since` drops what was already printed.
+    first = True
+
     while True:
-        result = client.log_window(args.job_id, since=since, window_seconds=window)
+        result = client.log_window(args.job_id, since=since,
+                                   window_seconds=0 if first else window)
+        first = False
         for line in result["lines"]:
             # The timestamp is bookkeeping for the next request, not something a
             # user asked to read, so it is dropped on the way to the terminal.

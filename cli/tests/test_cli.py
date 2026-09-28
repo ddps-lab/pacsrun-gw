@@ -329,6 +329,66 @@ def test_follow_asks_again_and_prints_only_what_is_new(fake, capsys, monkeypatch
     assert printed.count("line three") == 1
 
 
+# HYPERUN-LOGS-BACKLOG. The fixture's log_window IGNORES window_seconds -- it hands
+# back every line not yet seen -- so no test built on it could notice that the CLI
+# asked for only the last 30 seconds. This one is written from what the server does
+# (the server's k8s.job_log_window): `window_seconds` > 0 keeps only lines
+# stamped within that many seconds of now, and 0 means no time filter at all.
+def _windowed(fake, now):
+    import datetime
+    calls = []
+
+    def log_window(job_id, since=None, window_seconds=30):
+        calls.append(window_seconds)
+        def keep(line):
+            stamp = line.split(" ", 1)[0]
+            when = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            recent = window_seconds <= 0 or (now - when).total_seconds() <= window_seconds
+            return recent and (since is None or stamp > since)
+        lines = [l for l in fake.log_lines if keep(l)]
+        return {"lines": lines,
+                "last_timestamp": lines[-1].split(" ", 1)[0] if lines else None,
+                "window_seconds": window_seconds}
+    return log_window, calls
+
+
+def test_logs_shows_output_the_job_printed_minutes_ago(fake, capsys, monkeypatch):
+    # job-a9ea30b8ba7a, 2026-09-28: 93 lines printed, then half a minute of quiet
+    # between restarts, and `hyperun logs` printed none of them.
+    import datetime
+    now = datetime.datetime(2026, 9, 28, 8, 19, tzinfo=datetime.timezone.utc)
+    fake.log_lines = ["2026-09-28T08:05:00Z clone ok", "2026-09-28T08:06:10Z boot failed, retrying"]
+    windowed, calls = _windowed(fake, now)
+    monkeypatch.setattr(fake, "log_window", windowed)
+    run(["logs", "job-a9ea30b8ba7a"])
+    printed = capsys.readouterr().out
+    assert "clone ok" in printed and "boot failed, retrying" in printed
+    assert calls == [0], "one read, and it has to be the whole log, not the last 30 s"
+
+
+def test_follow_started_late_still_prints_the_backlog_once(fake, capsys, monkeypatch):
+    import datetime
+    monkeypatch.setattr(cli.time, "sleep", lambda _: None)
+    now = datetime.datetime(2026, 9, 28, 8, 19, tzinfo=datetime.timezone.utc)
+    fake.log_lines = ["2026-09-28T08:05:00Z clone ok"]
+    windowed, calls = _windowed(fake, now)
+
+    def two_rounds(job_id, since=None, window_seconds=30):
+        if len(calls) == 1:
+            fake.log_lines.append("2026-09-28T08:18:55Z step 1")
+        if len(calls) >= 2:
+            raise KeyboardInterrupt
+        return windowed(job_id, since=since, window_seconds=window_seconds)
+
+    monkeypatch.setattr(fake, "log_window", two_rounds)
+    run(["logs", "job-a9ea30b8ba7a", "--follow"])
+    printed = capsys.readouterr().out
+    assert printed.count("clone ok") == 1, "the backlog, and only once"
+    assert printed.count("step 1") == 1
+    # The first read is the whole log; after it, the narrow window and `since`.
+    assert calls[0] == 0 and calls[1] == 30
+
+
 def test_a_server_refusal_becomes_exit_1_and_its_own_message(fake, capsys, monkeypatch):
     def refuse(body):
         raise ServerError("there is no secret called 'NOPE'. Available: GITHUB_PAT")
