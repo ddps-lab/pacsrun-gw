@@ -152,7 +152,7 @@ sentence is telling YOU the hours are the user's to give, not asking you to inve
 
 ```bash
 # after the user said "about 21 hours":
-hyperun estimate --name <n> --image <i> --gpu A100-80GB --gpu-count 4 \
+hyperun estimate --name <n> --image <i> --gpu-name A100-80GB --gpu-count 4 \
   --vendor runpod --expected-hours 21        # cost_basis: user-supplied
 ```
 
