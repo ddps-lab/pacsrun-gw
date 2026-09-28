@@ -967,6 +967,7 @@ def estimate_route(body: JudgementRequest, principal: PrincipalDep) -> EstimateR
             peak_logits_gib=result.gpu.peak_logits_gib,
             reason=result.gpu.reason,
         ),
+        modelled=result.modelled,
         capacity_type=result.capacity_type,
         capacity_reason=result.capacity_reason,
         warnings=result.warnings,

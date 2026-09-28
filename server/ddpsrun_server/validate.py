@@ -253,13 +253,22 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
     # KV cache. So it is reported whether or not we can compute a peak, and its
     # message no longer quotes a DPO figure it cannot justify for other jobs.
     if not alloc_on and deferred is None:
+        # ★ THE CHECK STAYS HERE, THE DPO INCIDENT DOES NOT FOLLOW IT EVERYWHERE.
+        # The comment above said this message "no longer quotes a DPO figure", and
+        # it still did: `aiops-oom` is a logits buffer and the TRL patch, and on
+        # 2026-09-28 a nanoGPT job was told about both (LIMITATIONS.md item 1).
+        # The fragmentation risk is real for any PyTorch job, so the WARNING is
+        # kept for every GPU job; the incident is evidence only for the recipe it
+        # happened on, so it is quoted only when this job looks like that recipe.
+        # `cap` is what makes a job DPO-shaped for every other check in this file.
+        dpo_shaped = cap is not None or trainer == "DPO"
+        evidence = (f" {INCIDENTS['aiops-oom'].what_happened}" if dpo_shaped else "")
         findings.append(
             Finding(
                 WARNING, "alloc-conf-missing",
                 f"{ALLOC_CONF} is not set. CUDA's allocator fragments free "
                 f"memory into pieces, and one large contiguous request can then "
-                f"fail on a card with plenty free. "
-                f"{INCIDENTS['aiops-oom'].what_happened}",
+                f"fail on a card with plenty free.{evidence}",
                 f"add {ALLOC_CONF}={ALLOC_CONF_VALUE} to env, or prefix the "
                 f"training command with it. It costs nothing when nothing needs "
                 f"it.",
@@ -612,12 +621,22 @@ def check_runtime(job_estimate: estimator.Estimate) -> list[Finding]:
     hours = job_estimate.duration.high_hours
 
     if job_estimate.duration.confidence == estimator.Confidence.UNKNOWN:
+        # HYPERUN-UNMODELLED-SHAPE. The old fix -- "the answer appears on
+        # /v1/jobs/{id} once about 50 steps have run, which took 35 minutes on our
+        # shortest job" -- is about a DPO run: the server reads its progress off a
+        # trainer's bar, and "our shortest job" is a DPO job. For any other shape
+        # no answer appears later either, so the one thing that helps is saying
+        # the hours are the caller's to give.
+        fix = ("submit it anyway. The answer appears on /v1/jobs/{id} once "
+               "about 50 steps have run, which took 35 minutes on our shortest job."
+               if job_estimate.modelled else
+               "if you know roughly how long it runs, pass `expected_hours` and the "
+               "estimate prices it; the hours are yours to state, not ours.")
         findings.append(
             Finding(
                 INFO, "runtime-unknown",
                 f"we cannot say how long this will take. {job_estimate.duration.basis}",
-                "submit it anyway. The answer appears on /v1/jobs/{id} once "
-                "about 50 steps have run, which took 35 minutes on our shortest job.",
+                fix,
             )
         )
         return findings

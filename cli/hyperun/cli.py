@@ -816,9 +816,18 @@ def cmd_estimate(args: argparse.Namespace) -> int:
     if rate.get("basis"):
         print(f"  price basis    {rate['basis']}")
     print(f"  basis          {result['basis']}")
-    print(f"  GPU            {gpu.get('recommended') or 'none'}"
-          f" ({gpu.get('recommended_vram_gb')} GB), logits peak {gpu['peak_logits_gib']} GiB")
-    print(f"                 {gpu['reason']}")
+    # HYPERUN-UNMODELLED-SHAPE. For a job that is not the one recipe our model was
+    # measured on, the server did not size a GPU, and this line would print
+    # "none (None GB), logits peak 0.0 GiB" -- which reads as a finding that the
+    # job needs no memory. The reason is still printed, because it says why there
+    # is no recommendation. `modelled` is absent from a server older than this
+    # client, which is the same as True: print the line exactly as before.
+    if result.get("modelled", True):
+        print(f"  GPU            {gpu.get('recommended') or 'none'}"
+              f" ({gpu.get('recommended_vram_gb')} GB), logits peak {gpu['peak_logits_gib']} GiB")
+        print(f"                 {gpu['reason']}")
+    else:
+        print(f"  GPU            {gpu['reason']}")
     print(f"  capacity type  {result['capacity_type']}   "
           f"<- pass --capacity-type {result['capacity_type']} when you submit")
     print(f"                 {result['capacity_reason']}")

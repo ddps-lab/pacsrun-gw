@@ -202,6 +202,48 @@ class Estimate:
     # made with no money in it.
     cost_basis: str = ""
     warnings: list[str] = field(default_factory=list)
+    # HYPERUN-UNMODELLED-SHAPE. Whether this job is the shape our time and memory
+    # model was measured on. See `modelled_shape`. False means the answer PRICES
+    # and does nothing else -- no runtime, no GPU sizing -- and a client should
+    # not print the GPU line, which would read "none (None GB), logits peak 0.0
+    # GiB" and look like a finding that the job needs no memory.
+    modelled: bool = True
+
+
+def modelled_shape(cap: int | None, pairs: int | None, row_tokens: int | None) -> bool:
+    """Is this the one shape our time and memory model was measured on.
+
+    HYPERUN-UNMODELLED-SHAPE. Every number the model knows came from one recipe,
+    a TRL DPO run: `row_tokens` (the average length of one answer) sets the step
+    time, `pairs` and epochs set the step count, and `cap` (`--max-len`) sets the
+    logits buffer that decides the GPU. A request that sends NONE of those three
+    is some other kind of job -- a nanoGPT pretraining run, an inference sweep --
+    and has nothing in it the model can read.
+
+    WHAT WENT WRONG BEFORE THIS EXISTED, 2026-09-28. A nanoGPT estimate answered
+    "Send `training.row_tokens`" and "we cannot say which GPU this needs without
+    --max-len", and the agent reading it tried to find values that job does not
+    have. Asking a DPO job for a missing field is right; asking a nanoGPT job for
+    one is advice that cannot be followed.
+
+    ANY ONE OF THE THREE IS ENOUGH. A DPO job that sent `pairs` but forgot
+    `row_tokens` is still that recipe, and still wants to be told which field is
+    missing, so the old sentences stay for it.
+    """
+    return bool(cap or pairs or row_tokens)
+
+
+# What the answer says instead, for a job that is not that shape. Kept here, not
+# inline, so validate's `runtime-unknown` and the CLI read the same words.
+UNMODELLED_TIME_BASIS = (
+    "we do not model how long this job takes: our time model was measured on one "
+    "recipe (a TRL DPO run), and this job sent none of its inputs. Give "
+    "`expected_hours` and the cost is your hours times the published rate."
+)
+UNMODELLED_GPU_REASON = (
+    "not sized: GPU memory is modelled only for that same recipe, so no card is "
+    "recommended and the one you named is the one priced."
+)
 
 
 def steps(pairs: int, epochs: int, batch_size: int, grad_accum: int) -> int:
@@ -961,7 +1003,10 @@ def estimate(
         what would be needed to compute them.
     """
     warnings: list[str] = []
-    advice = recommend_gpu(cap, mitigations_on, vocab)
+    shaped = modelled_shape(cap, pairs, row_tokens)
+    advice = (recommend_gpu(cap, mitigations_on, vocab) if shaped
+              else GpuAdvice(recommended=None, recommended_vram_gb=None,
+                             peak_logits_gib=0.0, reason=UNMODELLED_GPU_REASON))
 
     step_count: int | None = None
     if pairs and epochs:
@@ -969,6 +1014,8 @@ def estimate(
 
     if row_tokens:
         duration = seconds_per_step(gpu_name, row_tokens, batch_size, grad_accum)
+    elif not shaped:
+        duration = Duration(None, None, Confidence.UNKNOWN, UNMODELLED_TIME_BASIS)
     else:
         duration = Duration(
             None, None, Confidence.UNKNOWN,
@@ -1083,6 +1130,7 @@ def estimate(
         capacity_reason=why,
         rate=rate,
         warnings=warnings,
+        modelled=shaped,
     )
 
 

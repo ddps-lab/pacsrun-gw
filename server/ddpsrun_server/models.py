@@ -1447,6 +1447,16 @@ class EstimateResponse(BaseModel):
     capacity_type: str
     capacity_reason: str
     warnings: list[str] = Field(default_factory=list)
+    modelled: bool = Field(
+        default=True,
+        description=(
+            "Whether this job is the shape our time and memory model was measured "
+            "on: one TRL DPO recipe, recognised by the request sending "
+            "`training.cap`, `training.pairs` or `training.row_tokens`. False means "
+            "this answer only PRICES -- `hours` is unknown by design, `gpu` is not "
+            "sized, and the cost is `expected_hours` times the rate when "
+            "`expected_hours` was given. HYPERUN-UNMODELLED-SHAPE."),
+    )
 
 
 class PriceView(BaseModel):

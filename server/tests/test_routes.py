@@ -885,6 +885,91 @@ def test_estimate_reproduces_a_job_we_actually_ran(client, cluster):
     assert cluster.created == []
 
 
+# ---------------------------------------------------------------- HYPERUN-UNMODELLED-SHAPE
+#
+# LIMITATIONS.md item 1 (2026-09-28). The time and memory model was measured on one
+# recipe, a TRL DPO run, and a nanoGPT estimate answered with that recipe's
+# vocabulary -- "Send `training.row_tokens`", "without --max-len", "logits peak
+# 0.0 GiB" -- so the agent reading it went looking for values the job does not have.
+
+# The request the agent sent: a card, a capacity type, its own hours, and no
+# `training` block at all.
+NANOGPT = {"name": "nanogpt-shakespeare", "image": "runpod/pytorch:1.1.0",
+           "gpu": {"name": "L40S", "count": 1}, "capacity_type": "on-demand",
+           "expected_hours": 0.5,
+           "script": "python train.py config/train_shakespeare_char.py"}
+DPO_WORDS = ("row_tokens", "--max-len", "logits")
+
+
+def _all_text(answer):
+    """Every sentence an estimate or validate answer puts in front of a person."""
+    parts = [answer.get("basis", ""), answer.get("capacity_reason", "")]
+    parts += answer.get("warnings", [])
+    gpu = answer.get("gpu") or {}
+    parts.append(gpu.get("reason", ""))
+    parts.append((answer.get("rate") or {}).get("basis", ""))
+    for finding in answer.get("findings", []):
+        parts += [finding.get("message", ""), finding.get("fix") or ""]
+    return "\n".join(parts)
+
+
+def test_a_nanogpt_estimate_says_nothing_only_a_dpo_run_has(client):
+    answer = as_alice(client, "POST", "/v1/estimate", json=NANOGPT).json()
+    text = _all_text(answer)
+    for word in DPO_WORDS:
+        assert word not in text, f"{word!r} reached a job that has no such thing"
+    assert answer["modelled"] is False
+    assert answer["hours"]["confidence"] == "unknown"
+    # It still PRICES, which is the part it can answer: the caller's hours times
+    # the published rate, and it says whose hours they are.
+    assert answer["cost_usd"]["basis"] == "user-supplied"
+    assert answer["cost_usd"]["low"] is not None
+    assert "`expected_hours`" in answer["basis"]
+    # No card is recommended, and the reason says why rather than looking like a
+    # finding that the job needs no memory.
+    assert answer["gpu"]["recommended"] is None
+    assert answer["gpu"]["reason"].startswith("not sized")
+
+
+def test_a_nanogpt_validate_says_nothing_only_a_dpo_run_has(client):
+    answer = as_alice(client, "POST", "/v1/validate", json=NANOGPT).json()
+    text = _all_text(answer)
+    for word in DPO_WORDS + ("TRL patch", "35 minutes", "aiops-exp1"):
+        assert word not in text, f"{word!r} reached a job that has no such thing"
+    codes = {f["code"] for f in answer["findings"]}
+    # The allocator warning is about PyTorch, not DPO, so it stays -- without the
+    # DPO incident as its evidence.
+    assert "alloc-conf-missing" in codes
+
+
+def test_the_dpo_answer_is_unchanged(client):
+    # The shape the model WAS measured on keeps every word it had: bank-exp2v2,
+    # 556 steps, 6.52 - 6.87 h measured. LIMITATIONS.md item 1's "확인" line.
+    answer = as_alice(client, "POST", "/v1/estimate",
+                      json=judgement_body(vendors=["runpod"])).json()
+    assert answer["modelled"] is True
+    assert answer["steps"] == 556
+    assert (answer["hours"]["low"], answer["hours"]["high"]) == (6.52, 6.87)
+    assert answer["hours"]["confidence"] == "measured"
+    assert "logits" in answer["gpu"]["reason"]
+
+
+def test_a_dpo_job_missing_row_tokens_is_still_told_which_field_is_missing(client):
+    # ANY ONE of the recipe's inputs makes it that recipe, so a DPO job that forgot
+    # one is told about it, as before.
+    body = judgement_body()
+    body["training"].pop("row_tokens")
+    answer = as_alice(client, "POST", "/v1/estimate", json=body).json()
+    assert answer["modelled"] is True
+    assert "`training.row_tokens`" in answer["basis"]
+
+
+def test_a_dpo_validate_still_quotes_the_incident_that_taught_it(client):
+    answer = as_alice(client, "POST", "/v1/validate", json=judgement_body()).json()
+    alloc = next(f for f in answer["findings"] if f["code"] == "alloc-conf-missing")
+    assert "aiops-exp1" in alloc["message"]
+
+
 def test_estimate_needs_a_token(client):
     assert client.post("/v1/estimate", json=judgement_body()).status_code == 401
 

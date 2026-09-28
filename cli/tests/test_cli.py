@@ -437,6 +437,69 @@ def test_an_unknown_estimate_says_so_instead_of_printing_a_blank(fake, capsys):
     assert "unknown" in printed
 
 
+# HYPERUN-UNMODELLED-SHAPE. THIS DICT IS THE SERVER'S OWN ANSWER, not one written
+# for the test: server/tests/test_routes.py's NANOGPT request, sent to the real
+# /v1/estimate on 2026-09-29 and pasted here. A fake written from what the CLI
+# expects agrees with whatever the CLI does wrong; one copied from the server
+# cannot (see the 48 tests that once passed against a broken unpack).
+NANOGPT_ESTIMATE = {
+    "steps": None,
+    "hours": {
+        "low": None,
+        "high": None,
+        "confidence": "unknown"
+    },
+    "cost_usd": {
+        "low": 0.44,
+        "high": 0.44,
+        "basis": "user-supplied"
+    },
+    "rate": {
+        "usd_per_hour_low": 0.88,
+        "usd_per_hour_high": 0.88,
+        "vendor": "shadeform",
+        "machines": 1,
+        "basis": "Shadeform 1 x one L40S on-demand at $0.8800 per machine-hour (massedcompute_L40S in desmoines-usa-1), the cheapest of 3 matching row(s) in the SkyPilot catalogue read on 2026-09-28. Shadeform sells no spot. Vendor prices move. The job compares Shadeform, RunPod, AWS and buys the cheapest that has a machine, which is this one; the others: RunPod 1 x one L40S on-demand at $1.0900/hour; AWS 1 x g6e.xlarge (1 x L40S) at $1.8610/hour."
+    },
+    "basis": "we do not model how long this job takes: our time model was measured on one recipe (a TRL DPO run), and this job sent none of its inputs. Give `expected_hours` and the cost is your hours times the published rate.",
+    "gpu": {
+        "recommended": None,
+        "recommended_vram_gb": None,
+        "peak_logits_gib": 0.0,
+        "reason": "not sized: GPU memory is modelled only for that same recipe, so no card is recommended and the one you named is the one priced."
+    },
+    "capacity_type": "on-demand",
+    "capacity_reason": "we could not estimate how long this will take, so we are not betting it on capacity that can be taken back. RunPod does not sell spot. PACSrun's decider refuses it before it reads the catalogue, and PACSrun's own default IS spot, so a job that does not say on-demand loses RunPod as a candidate entirely.",
+    "warnings": [
+        "the total below is YOUR 0.5 hours x $0.8800/hour, not our estimate: our time model cannot answer for this job and says so above. The rate is a published price; the hours are your figure.",
+        "$0.8800 per hour. Shadeform 1 x one L40S on-demand at $0.8800 per machine-hour (massedcompute_L40S in desmoines-usa-1), the cheapest of 3 matching row(s) in the SkyPilot catalogue read on 2026-09-28. Shadeform sells no spot. Vendor prices move. The job compares Shadeform, RunPod, AWS and buys the cheapest that has a machine, which is this one; the others: RunPod 1 x one L40S on-demand at $1.0900/hour; AWS 1 x g6e.xlarge (1 x L40S) at $1.8610/hour."
+    ],
+    "modelled": False
+}
+
+
+def test_a_nanogpt_estimate_prints_no_dpo_vocabulary(fake, capsys):
+    # LIMITATIONS.md item 1: the line "GPU none (None GB), logits peak 0.0 GiB"
+    # read as a finding that the job needs no memory.
+    fake.estimate_result = NANOGPT_ESTIMATE
+    assert run(["estimate", "--name", "x", "--image", "i"]) == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    for word in ("row_tokens", "--max-len", "logits", "None GB"):
+        assert word not in printed, f"{word!r} printed for a job that has no such thing"
+    # What it CAN answer is still there: the rate, and the caller's hours priced.
+    assert "$0.44" in printed
+    assert "not sized" in printed
+
+
+def test_an_older_server_without_modelled_still_gets_the_gpu_line(fake, capsys):
+    # A server from before this field sends no `modelled`; that has to mean what
+    # it always meant, so the line is printed exactly as before.
+    older = {k: v for k, v in NANOGPT_ESTIMATE.items() if k != "modelled"}
+    fake.estimate_result = older
+    run(["estimate", "--name", "x", "--image", "i"])
+    assert "logits peak" in capsys.readouterr().out
+
+
 def test_validate_exits_1_when_something_would_actually_stop_the_job(fake, capsys):
     # So a script can gate a submit on it.
     fake.validate_result = {
