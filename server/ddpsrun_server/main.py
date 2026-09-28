@@ -973,20 +973,23 @@ def estimate_route(body: JudgementRequest, principal: PrincipalDep) -> EstimateR
     )
 
 
-@app.post("/v1/validate", response_model=ValidateResponse)
-def validate_route(body: JudgementRequest, request: Request,
-                   principal: PrincipalDep) -> ValidateResponse:
-    """Check a job without running it.
+def _validation_for(body: JudgementRequest, request: Request,
+                    principal: Principal) -> validator.Validation:
+    """What `/v1/validate` says about this body. HYPERUN-SUBMIT-VALIDATES.
 
-    Args:
-        body: the same body you would submit. Attach the text of your run.sh as
-            `script` and four more checks become available.
+    ONE FUNCTION FOR BOTH ROUTES, and that is the point of it. `/v1/validate`
+    answers the question and `/v1/jobs` now refuses on the answer, and if the two
+    assembled their arguments separately they would drift: a check the submit
+    path fed a different `vendors` or `capacity_type` to would pass there and
+    fail here, and the person would be told two different things about one job.
 
-    Returns:
-        A `ValidateResponse`. `not_checked` lists what no check could look at,
-        so a clean result is not mistaken for a complete one.
+    The secret names are read once. They were read twice before -- once for
+    `known_secrets` and once for `secret_expiries` -- which was two cluster calls
+    for one answer.
     """
-    result = validator.validate(
+    own_secrets = (_own_secret_names(request, principal.namespace)
+                   if body.secrets else {})
+    return validator.validate(
         env=body.env,
         script=body.script,
         cap=cap_from(body),
@@ -1020,18 +1023,53 @@ def validate_route(body: JudgementRequest, request: Request,
         # names a secret, so validate stays a no-cluster-call route otherwise.
         known_secrets={
             **request.app.state.settings.secret_bindings,
-            **(_own_secret_names(request, principal.namespace)
-               if body.secrets else {}),
+            **own_secrets,
         },
         # DDPSRUN-SECRET-EXPIRY. Only the namespace's own registrations carry a
         # date; an operator binding points at a Secret whose lifetime is the
         # operator's business and this server is not told about it.
-        secret_expiries=(_own_secret_names(request, principal.namespace)
-                         if body.secrets else {}),
+        secret_expiries=own_secrets,
         # DDPSRUN-GROUP. Whether the pods need a rendezvous, and how big one is.
         group_size=(body.group.size if body.group else 1),
         group_mode=(body.group.mode if body.group else "independent"),
     )
+
+
+def _refusal_for(result: validator.Validation) -> str:
+    """The 400 a submit gets when `/v1/validate` would have said no.
+
+    Every ERROR with its fix, because the fix is the part the person acts on and
+    `FindingView` already carries it. Warnings and notes are left out: they do
+    not stop the job, and a refusal that listed them would bury the one line
+    that does.
+    """
+    errors = [f for f in result.findings if f.level == validator.ERROR]
+    lines = [f"validate found {len(errors)} error{'s' if len(errors) != 1 else ''} "
+             f"in this job, so it was not submitted:", ""]
+    for finding in errors:
+        lines.append(f"  [{finding.code}] {finding.message}")
+        if finding.fix:
+            lines.append(f"    fix: {finding.fix}")
+    lines += ["", "`hyperun validate` with the same arguments shows every finding, "
+                  "warnings included."]
+    return "\n".join(lines)
+
+
+@app.post("/v1/validate", response_model=ValidateResponse)
+def validate_route(body: JudgementRequest, request: Request,
+                   principal: PrincipalDep) -> ValidateResponse:
+    """Check a job without running it.
+
+    Args:
+        body: the same body you would submit. Attach the text of your run.sh as
+            `script` and four more checks become available.
+
+    Returns:
+        A `ValidateResponse`. `not_checked` lists what no check could look at,
+        so a clean result is not mistaken for a complete one. `/v1/jobs` refuses
+        any body this answers with an error (HYPERUN-SUBMIT-VALIDATES).
+    """
+    result = _validation_for(body, request, principal)
     return ValidateResponse(
         ok=result.ok,
         findings=[
@@ -1137,9 +1175,11 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
         The new job's id, its name, and where its output will land.
 
     Raises:
-        HTTPException: 400 when the body names an unknown secret or the CRD
-            refuses it; 404 when `continue_from` names a job that is not this
-            caller's; 502 when kube-apiserver could not be reached.
+        HTTPException: 400 when `/v1/validate` would answer the body with an
+            error (HYPERUN-SUBMIT-VALIDATES), when it names an unknown secret,
+            or when the CRD refuses it; 404 when `continue_from` names a job
+            that is not this caller's; 502 when kube-apiserver could not be
+            reached.
     """
     settings: Settings = request.app.state.settings
     cluster: Cluster = request.app.state.cluster
@@ -1200,6 +1240,32 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
             ),
         )
     capacity_type = body.capacity_type
+
+    # HYPERUN-SUBMIT-VALIDATES. A body `/v1/validate` answers with an ERROR is
+    # refused here, before any object exists.
+    #
+    # THIS IS NOT A NEW RULE, IT IS THE ONE NOBODY ENFORCED. The web UI has
+    # disabled its "See the cost" button on any error since the three-step form
+    # existed (ui/app.js, `$("s2-next").disabled = errors.length > 0`), and
+    # AGENTS.md tells every agent "제출 전에 hyperun validate 를 부르고, exit 1
+    # 이면 멈춰라". Only this route took the body regardless, so the CLI and
+    # anyone calling the API directly could create a job the other two paths
+    # would never let through.
+    #
+    # WHAT THAT COST, 2026-09-28. A submit of `--vendor runpod --capacity-type
+    # spot` was accepted, although validate calls it `spot-has-no-vendor`: RunPod
+    # does not sell spot, and pkg/decider/runpod/decider.go refuses it. The
+    # PacsJob sat Pending while the operator handed the runpod region to its
+    # built-in solver, which died fetching AWS spot prices from a host that no
+    # longer resolves. The person was shown that stack trace instead of the one
+    # sentence validate already had.
+    #
+    # AFTER the capacity_type check and not before, because `spot-has-no-vendor`
+    # reads it and an absent one would make that check silently pass.
+    verdict = _validation_for(body, request, principal)
+    if not verdict.ok:
+        raise HTTPException(status_code=400, detail=_refusal_for(verdict))
+
     try:
         # DDPSRUN-USER-SECRET. Looked up ONLY when the request names a secret,
         # so an ordinary submit costs no extra cluster call. `to_pacsjob` is

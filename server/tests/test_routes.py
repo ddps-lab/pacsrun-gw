@@ -921,10 +921,74 @@ def test_validate_always_says_what_it_could_not_look_at(client):
 
 def test_the_three_routes_take_the_same_body(client):
     # A caller must be able to check a job and then submit THAT job, unchanged.
-    body = judgement_body()
+    #
+    # THE BODY CARRIES BOTH MEMORY MITIGATIONS. It used to be plain
+    # `judgement_body()`, which validate answers with `gpu-too-small` -- it is the
+    # aiops-exp1 configuration that died on a 48 GB card -- and that only passed
+    # here because submit did not ask validate. Since HYPERUN-SUBMIT-VALIDATES it
+    # would be refused, which is right, and would stop this test saying what it
+    # is about: that one SHAPE of body is accepted by all three routes. These two
+    # lines are the fix `gpu-too-small` itself names.
+    body = judgement_body(
+        env={"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"},
+        script="python patch_trl_liger_slice.py && python train.py")
     assert as_alice(client, "POST", "/v1/estimate", json=body).status_code == 200
     assert as_alice(client, "POST", "/v1/validate", json=body).status_code == 200
     assert as_alice(client, "POST", "/v1/jobs", json=body).status_code == 201
+
+
+# ---------------------------------------------------------------- HYPERUN-SUBMIT-VALIDATES
+#
+# A body /v1/validate answers with an ERROR is refused by /v1/jobs before any object
+# exists. The web UI and AGENTS.md have always stopped at an error; until 2026-09-28
+# this route did not, and a `--vendor runpod --capacity-type spot` submit became a
+# PacsJob that sat Pending behind a solver stack trace.
+
+
+def test_runpod_on_spot_is_refused_before_a_job_exists(client, cluster):
+    # The exact request that reached the cluster on 2026-09-28. RunPod does not sell
+    # spot (pkg/decider/runpod/decider.go refuses it), so nothing can place it.
+    # The GPU IS PART OF IT: the vendor checks live in `check_gpu_is_buyable`, which
+    # returns at its first line when no GPU is named. The 2026-09-28 submit named L40S.
+    response = as_alice(client, "POST", "/v1/jobs", json=submit_body(
+        capacity_type="spot", vendors=["runpod"], gpu={"name": "L40S", "count": 1}))
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "[spot-has-no-vendor]" in detail
+    # The fix is the line the person acts on, so it has to arrive with the refusal.
+    assert "fix: Either add aws to vendors, or submit on-demand." in detail
+    assert cluster.created == []
+
+
+def test_the_refusal_is_what_validate_says_about_the_same_body(client, cluster):
+    # One computation behind both routes (_validation_for), so the codes cannot drift.
+    body = judgement_body()          # gpu-too-small: the aiops-exp1 configuration
+    verdict = as_alice(client, "POST", "/v1/validate", json=body).json()
+    errors = [f["code"] for f in verdict["findings"] if f["level"] == "error"]
+    assert verdict["ok"] is False and errors
+    detail = as_alice(client, "POST", "/v1/jobs", json=body).json()["detail"]
+    for code in errors:
+        assert f"[{code}]" in detail
+    assert cluster.created == []
+
+
+def test_warnings_alone_do_not_stop_a_submit(client, cluster):
+    # Over-blocking is the failure on the other side. Spot with no vendor named is an
+    # INFO (`spot-excludes-runpod`: AWS is left as the only vendor), not an error, and
+    # it has to go through exactly as before.
+    body = submit_body(capacity_type="spot", gpu={"name": "L40S", "count": 1})
+    verdict = as_alice(client, "POST", "/v1/validate", json=body).json()
+    assert verdict["ok"] is True
+    assert any(f["code"] == "spot-excludes-runpod" for f in verdict["findings"])
+    assert as_alice(client, "POST", "/v1/jobs", json=body).status_code == 201
+    assert len(cluster.created) == 1
+
+
+def test_the_refusal_leaves_out_warnings(client):
+    # A refusal that listed every warning would bury the one line that stops the job.
+    detail = as_alice(client, "POST", "/v1/jobs", json=judgement_body()).json()["detail"]
+    assert "alloc-conf-missing" not in detail
+    assert "`hyperun validate` with the same arguments shows every finding" in detail
 
 
 def test_the_schema_describes_what_the_routes_actually_accept(client):
