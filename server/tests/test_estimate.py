@@ -211,10 +211,15 @@ def test_a_job_we_have_run_before_is_priced_close_to_what_it_cost():
     # TODAY -- and an estimate exists to answer the second. So the assertion is
     # written as hours x the current rate rather than a hard-coded total, which
     # also means the next vendor price change does not turn this red.
+    #
+    # `vendors=["runpod"]` SINCE 2026-09-28, because that is where the job ran. An
+    # unrestricted ask is now priced at the cheapest of aws, runpod AND shadeform,
+    # and Shadeform lists an L40S at $0.88 -- which answers "what would it cost
+    # today at the cheapest vendor", not "what would the job we ran cost today".
     rate = m.runpod_cheapest("L40S", 1).usd_per_hour
     result = e.estimate(
         gpu_name="L40S", cap=12288, pairs=1110, epochs=4, row_tokens=4100,
-        mitigations_on=True,
+        mitigations_on=True, vendors=["runpod"],
     )
     assert result.steps == 556
     assert result.duration.confidence == e.Confidence.MEASURED
@@ -301,6 +306,7 @@ def test_the_cost_uses_the_gpu_the_job_asked_for_not_the_one_we_recommend():
     result = e.estimate(
         gpu_name="L40S", cap=12288, pairs=1110, epochs=4, row_tokens=4100,
         mitigations_on=False,   # so the recommendation is 80 GB, not the L40S
+        vendors=["runpod"],     # where bank-exp2v2 ran; see the test above
     )
     assert result.gpu.recommended == "A100-80GB"
     l40s = m.runpod_cheapest("L40S", 1).usd_per_hour

@@ -330,6 +330,9 @@ hyperun submit ... --capacity-type on-demand
 - `on-demand` 는 비싸고 뺏기지 않습니다.
 - `spot` 은 싸고 도중에 회수될 수 있습니다. **checkpoint 가 없는 긴 학습에서는 전부 잃습니다.**
 - RunPod 은 spot 을 팔지 않아서, `spot` 으로 내면 RunPod 이 후보에서 빠집니다.
+- Shadeform 도 catalogue 에 spot 가격이 없습니다. 그래서 `spot` 으로 내면 가격을 매길 수 있는
+  vendor 는 AWS 하나뿐입니다. 실행할 수 있는 vendor 는 aws, runpod, shadeform 셋이고
+  `hyperun estimate` 가 셋 모두에 값을 매깁니다(2026-09-28 부터).
 
 **agent 가 대신 고르지 마십시오.** 권고와 이유를 보여 주고 사용자가 답하게 하십시오.
 
@@ -499,7 +502,7 @@ driver 가 파일을 가져오는 길만 vendor 마다 다르고, **script 는 �
 | vendor | driver 가 어떻게 가져오나 |
 |---|---|
 | RunPod | 컨테이너 안의 작은 HTTP server 에 `<pod-id>-8888.proxy.runpod.net` 으로 GET (`PACSrun/driver/runpod/driver.py:233` `ARTIFACT_RE`, `:2012` `_fetch_one`) |
-| VM + k3s (AWS, GCP, 이후 Shadeform / Seeweb) | k3s API 의 exec 로 `stat -c %s` 로 크기를 받고 `cat` 으로 바이트를 받는다 (`PACSrun/driver/common/artifact_fetch.py`, grep `PACSRUN-K3S-FETCH`) |
+| VM + k3s (AWS, GCP, Shadeform. 이후 Seeweb) | k3s API 의 exec 로 `stat -c %s` 로 크기를 받고 `cat` 으로 바이트를 받는다 (`PACSrun/driver/common/artifact_fetch.py`, grep `PACSRUN-K3S-FETCH`) |
 
 **★ 2026-09-09 현재 상태: k3s 경로는 구현됐고 아직 배포되지 않았다.** 그래서 **AWS/GCP 에서는
 그동안 `aws s3 cp` 를 announce 와 함께 둔다** — 그러면 어느 경로에서도 산다(RunPod 에서는

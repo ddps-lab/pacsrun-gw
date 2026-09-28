@@ -9,8 +9,16 @@ You turn a lab member's repository and intent into a **submitted job**, and you 
 guess anything the server can answer. The measurements, the memory arithmetic and the
 seven pitfalls are on the server; your part is reading their repository and asking.
 
-**Language: answer lab members in Korean.** Code, commands, file names and log lines
-stay in English.
+**Language: ask first, then keep to it.** Before any other step -- before Step 0 --
+your first reply asks one question: which language the user wants your answers in
+(for example English or Korean). Write that question in the language of their
+message. Skip it only when their message already names a language. Then use that
+language for the rest of the session, including every question you ask them later.
+Code, commands, file names and log lines stay in English whichever they choose.
+
+This line used to say "answer lab members in Korean", and on 2026-09-28 a request
+written in English got every one of its questions back in Korean. The person asking
+may be anyone who installed this plugin; do not assume the lab.
 
 ## Step 0 — ask the tool, not your memory
 
@@ -158,6 +166,17 @@ search -- so omitting it silently picks one. It changes the price and sometimes 
 the job can run at all: the H100 is $6.88/hour in us-west-2, $8.60 in ap-northeast-1, and
 in ap-northeast-2 it is sold only as an 8-GPU machine, so a one-card ask there cannot be
 filled and the job sits in Pending. `hyperun schema` lists what is on offer.
+
+**Three vendors can run a job -- `aws`, `runpod` and `shadeform` -- and the estimate
+prices all three.** An ask that names no vendor is priced at the cheapest, and `basis`
+names the other two with their prices: read all of it out, because "the cheapest" is
+only as wide as the list it was taken from. Until 2026-09-28 the estimate read only aws
+and runpod, and an agent told its user RunPod was the cheapest candidate while Shadeform
+listed the same A100-80GB for $1.35 against $1.59. Two facts about Shadeform go to the
+user with its price: its catalogue carries no stock, and returning result files from a
+Shadeform machine has not yet completed a live run. Neither Shadeform nor RunPod sells
+spot, so a spot ask can only be priced on AWS. Which vendor to allow is the user's call;
+pass it as `--vendor`.
 
 ## Step 3 — validate, and stop on an error
 

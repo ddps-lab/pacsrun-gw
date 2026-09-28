@@ -46,7 +46,7 @@ import urllib.request
 
 AWS = os.path.expanduser("~/.sky/catalogs/v8/aws/vms.csv")
 GCP = os.path.expanduser("~/.sky/catalogs/v8/gcp/vms.csv")
-READ_ON = "2026-09-08"
+READ_ON = "2026-09-28"
 MIN_GIB = 16.0
 
 # ★ THE THIRD SOURCE IS NOT THE SkyPilot CATALOGUE. AWS and GCP come out of
@@ -67,7 +67,7 @@ MIN_GIB = 16.0
 # The response carries no credential, but it is a 20 KB vendor dump and this
 # repository is PUBLIC, so it stays out of git exactly as the two vms.csv do.
 RUNPOD = os.path.expanduser("~/.sky/catalogs/v8/runpod/catalog-gpus-secure.json")
-RUNPOD_READ_ON = "2026-09-09"
+RUNPOD_READ_ON = "2026-09-28"
 
 # ★ THE CLUSTER'S OWN REFUSALS, READ OFF THE RUNNING ConfigMap RATHER THAN
 # INVENTED, and a named-model ask does not escape them: decider.go:415-421 says
@@ -92,7 +92,7 @@ RUNPOD_MIN_MEMORY_GB = 16
 # table and the solve reading one source instead of two that can disagree.
 SHADEFORM = ("https://raw.githubusercontent.com/skypilot-org/skypilot-catalog/master/"
              "catalogs/v8/shadeform/vms.csv")
-SHADEFORM_READ_ON = "2026-09-10"
+SHADEFORM_READ_ON = "2026-09-28"
 
 # ★★ THE UNIT BUG IN THAT CSV, and it must be handled here or every Shadeform row is dropped.
 # Its GpuInfo writes GiB into the field named `SizeInMiB`: L4 = 24, H100 = 80, where aws writes

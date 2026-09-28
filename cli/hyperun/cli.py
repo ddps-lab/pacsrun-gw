@@ -116,9 +116,10 @@ def job_arguments() -> argparse.ArgumentParser:
         "--vendor", action="append", metavar="NAME",
         help="who the machine may be bought from. Repeat it to allow several; "
         "omit it entirely for no restriction, which is what every job did before "
-        "this flag existed. aws and runpod can actually run a job; gcp, azure, "
-        "lambda and nebius can only be PRICED, so name one of those only with "
-        "--placement-mode compare.",
+        "this flag existed. aws, runpod and shadeform can actually run a job, "
+        "and `hyperun estimate` prices all three and names the cheapest; gcp, "
+        "azure, lambda and nebius can only be PRICED, so name one of those only "
+        "with --placement-mode compare.",
     )
     # DDPSRUN-REGIONS. Missing until 2026-09-08, so every job this CLI submitted
     # ran in the operator's one default region and there was no way to say

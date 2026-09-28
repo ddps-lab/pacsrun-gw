@@ -47,9 +47,12 @@ from .measurements import (
     AWS_PRICED_ON,
     RUNPOD_CARDS,
     RUNPOD_PRICED_ON,
+    SHADEFORM_PRICED_ON,
     runpod_cheapest,
     runpod_counts,
     runpod_machines_for,
+    shadeform_cheapest,
+    shadeform_counts,
     DEFAULT_BATCH_SIZE,
     DEFAULT_GRAD_ACCUM,
     DPO_RESPONSES_PER_PAIR,
@@ -97,6 +100,14 @@ FETCH_MODE_HOURS = 11
 # spot: losing the machine near the end throws away everything.
 SPOT_SAFE_HOURS = 4
 
+# The vendors `hourly_rate` prices, in the order it tries them. MUST EQUAL
+# `models.RUNNABLE_VENDORS` -- a vendor that can rent but is never priced is
+# quoted another vendor's price, which is what happened to shadeform from
+# 2026-09-10 to 2026-09-28. Written out rather than imported because models.py
+# is the request layer and this module must not depend on it;
+# tests/test_prices.py holds the two equal.
+PRICED_VENDORS: tuple[str, ...] = ("aws", "runpod", "shadeform")
+
 
 class Confidence:
     """How much the hours figure is worth. Strings because they cross the API."""
@@ -136,7 +147,7 @@ class Rate:
         basis: the sentence naming the machine, the count, the vendor and the
             date. Always written even when the numbers are None, because "why
             we cannot price this" is the useful half of that answer.
-        vendor: "aws", "runpod", or "" when nothing could be priced.
+        vendor: "aws", "runpod", "shadeform", or "" when nothing could be priced.
         machines: how many machines the job would rent. 1 unless parallelism
             needs more than one machine's seats.
     """
@@ -539,12 +550,20 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
     and nothing in the answer said which vendor the price belonged to.
 
     HOW THE VENDOR IS CHOSEN. `placement.vendors` says which vendors may answer.
-    Only two of the six can actually rent (`models.RUNNABLE_VENDORS`), and they
-    are priced from different places: AWS from the catalogue table, RunPod from
-    what we were charged. When the ask names both, or names none, the cheaper is
-    used for the arithmetic and the other is named in `basis` -- we cannot know
-    which one PACSrun's ordered/cheapest solve will land on, and quoting only
-    one of two candidates without saying so is how the 47% happened.
+    Three of the seven can actually rent (`models.RUNNABLE_VENDORS`), and they
+    are priced from different places: AWS and Shadeform from the catalogue table,
+    RunPod from what we were charged or its own published price. When the ask
+    names several, or names none, the cheapest is used for the arithmetic and
+    every other one is named in `basis` -- we cannot know which one PACSrun's
+    ordered/cheapest solve will land on, and quoting one candidate without saying
+    so is how the 47% happened.
+
+    ★ UNTIL 2026-09-28 THIS READ ONLY aws AND runpod. Shadeform joined the
+    runnable list on 2026-09-10, but the filter below kept `("aws", "runpod")` and
+    fell back to those two when nothing else was left, so `vendors: ["shadeform"]`
+    was quoted RunPod's $1.59 for a one-card A100-80GB while Shadeform's rows
+    started at $1.35. An agent reading that answer told its user RunPod was the
+    cheapest candidate, which it was only among the two this function looked at.
 
     WHAT A RATE COVERS. All of the job's machines for one hour, not one card and
     not one pod. A job with 4 pods of 1 L40S rents four g6e.xlarge, so the rate
@@ -570,19 +589,23 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
             region and leaves the default in place.
 
     Returns:
-        A `Rate`. Its numbers are None only when NEITHER vendor can be priced
-        for this ask, and then `basis` says which of the two reasons applies.
+        A `Rate`. Its numbers are None only when NO asked vendor can be priced
+        for this ask, and then `basis` gives each vendor's reason.
     """
     per_pod = max(1, gpu_count)
     pods = max(1, parallelism)
-    asked = [v for v in (vendors or []) if v in ("aws", "runpod")]
+    asked = [v for v in (vendors or []) if v in PRICED_VENDORS]
     if not asked:
-        asked = ["aws", "runpod"]
+        asked = list(PRICED_VENDORS)
 
     # Only `aws/<region>` entries name a region. A bare "aws" means the
     # operator's default, which is what an empty list already means here.
     aws_regions = [entry.split("/", 1)[1] for entry in (regions or [])
                    if entry.startswith("aws/") and "/" in entry]
+    # `shadeform/<region>` narrows Shadeform the same way. A bare "shadeform", or
+    # nothing, means any region -- its driver buys wherever a row is in stock.
+    shadeform_regions = [entry.split("/", 1)[1] for entry in (regions or [])
+                         if entry.startswith("shadeform/") and "/" in entry]
 
     options: list[Rate] = []
     reasons: list[str] = []
@@ -758,6 +781,44 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
                         f"path matches a family name plus a variant, so the names "
                         f"it can answer are " + ", ".join(RUNPOD_CARDS))
 
+    if "shadeform" in asked:
+        # Spot first, for the reason the RunPod branch gives: it does not depend
+        # on the card. Every Shadeform row prices.csv holds is flagged no_spot.
+        if capacity == "spot":
+            reasons.append(
+                "Shadeform cannot be priced: its catalogue lists no spot price "
+                "on any row")
+        else:
+            found = shadeform_cheapest(gpu_name, per_pod, shadeform_regions)
+            if found is None:
+                counts = shadeform_counts(gpu_name)
+                where = (f" in {', '.join(shadeform_regions)}"
+                         if shadeform_regions else "")
+                reasons.append(
+                    f"Shadeform cannot be priced: "
+                    + (f"it lists the {gpu_name} in machines of "
+                       f"{', '.join(str(n) for n in counts)} cards and none of "
+                       f"them{where} carries exactly {per_pod}"
+                       if counts else
+                       f"its catalogue (read {SHADEFORM_PRICED_ON}) lists no "
+                       f"{gpu_name}"))
+            else:
+                row, matching = found
+                lo = hi = round(row.usd_per_hour * pods, 4)
+                shape = (f"{pods} x one {gpu_name}" if per_pod == 1 else
+                         f"{pods} machine(s) x {per_pod} x {gpu_name}")
+                options.append(Rate(
+                    lo, hi,
+                    f"Shadeform {shape} on-demand at ${row.usd_per_hour:.4f} per "
+                    f"machine-hour ({row.instance} in {row.region}), the cheapest "
+                    f"of {matching} matching row(s) in the SkyPilot catalogue read "
+                    f"on {SHADEFORM_PRICED_ON}. That catalogue carries no stock, so "
+                    f"this is a price rather than a promise of a machine, and "
+                    f"retrieving result files from a Shadeform machine has not yet "
+                    f"completed a live run (models.RUNNABLE_VENDORS). Shadeform "
+                    f"sells no spot. Vendor prices move.",
+                    "shadeform", pods))
+
     if not options:
         return Rate(None, None, " and ".join(reasons) + "." if reasons else
                     "no runnable vendor was asked for, so there is nothing to price.")
@@ -766,10 +827,13 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
     others = [r for r in options if r is not best]
     extra = ""
     if others:
-        o = others[0]
-        extra = (f" The other candidate is {o.basis.split(' at ')[0]} at "
-                 f"${o.usd_per_hour_low:.4f}/hour; the cheaper of the two is used "
-                 f"here because we cannot know which one the solve will land on.")
+        # EVERY other candidate is named, not the first. With two vendors the
+        # sentence could name "the other"; with three, naming one would hide the
+        # third exactly the way this function hid shadeform until 2026-09-28.
+        named = "; ".join(f"{o.basis.split(' at ')[0]} at "
+                          f"${o.usd_per_hour_low:.4f}/hour" for o in others)
+        extra = (f" Other candidates: {named}. The cheapest is used here because "
+                 f"we cannot know which one the solve will land on.")
     return Rate(best.usd_per_hour_low, best.usd_per_hour_high,
                 best.basis + extra, best.vendor, best.machines)
 

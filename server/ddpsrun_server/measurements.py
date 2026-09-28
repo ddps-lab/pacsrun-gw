@@ -283,8 +283,8 @@ def billed_pod_rate(gpu_name: str, cards: int) -> tuple[float, str] | None:
 # from a different source on a different day, so they carry their own date and
 # anything printing "priced on" has to name the one belonging to the rows shown.
 AWS_PRICES_FILE = "prices.csv"
-AWS_PRICED_ON = "2026-09-08"
-RUNPOD_PRICED_ON = "2026-09-09"
+AWS_PRICED_ON = "2026-09-28"
+RUNPOD_PRICED_ON = "2026-09-28"
 DEFAULT_AWS_REGION = "us-west-2"
 
 # Kept under the old name because `validate` and the tests read it, and it still
@@ -297,11 +297,12 @@ class PriceRow:
     """One (vendor, card, count, region) the catalogue prices.
 
     Attributes:
-        vendor: "aws", "gcp" or "runpod". AWS and RunPod rows are both used to
-            price a job, because those are the two vendors PACSrun can both
-            price and rent (`validate.py` calls them the two with an execution
-            path). GCP rows are here so `/v1/prices` can show them, and nothing
-            ranks them against the other two -- see `basis`.
+        vendor: "aws", "gcp", "runpod" or "shadeform". AWS, RunPod and Shadeform
+            rows are all used to price a job, because those are the three vendors
+            PACSrun can both price and rent (`models.RUNNABLE_VENDORS`; Shadeform
+            joined on 2026-09-10 and was priced from 2026-09-28). GCP rows are here
+            so `/v1/prices` can show them, and nothing ranks them against the
+            others -- see `basis`.
         basis: WHAT THE PRICE COVERS, and the two values are not comparable.
             "machine" (AWS, RunPod) is the whole unit that runs a pod, GPUs
             included, and `instance` names it -- an EC2 instance type on AWS, a
@@ -418,6 +419,14 @@ RUNPOD_MACHINES: tuple[PriceRow, ...] = tuple(
 # ["runpod"]` job cannot be filled for at any count, and naming them before
 # submitting is cheaper than a Pending that never resolves.
 RUNPOD_CARDS: tuple[str, ...] = tuple(sorted({row.card for row in RUNPOD_MACHINES}))
+
+# The Shadeform half. Its rows come from the SkyPilot catalogue on GitHub -- the same
+# URL PACSrun's decider reads (tools/gen_prices_all.py, SHADEFORM) -- on their own date.
+# They were in this file from 2026-09-10 and nothing priced a job from them until
+# 2026-09-28; see `shadeform_cheapest`.
+SHADEFORM_PRICED_ON = "2026-09-28"
+SHADEFORM_MACHINES: tuple[PriceRow, ...] = tuple(
+    row for row in PRICE_ROWS if row.vendor == "shadeform")
 
 
 # `AwsMachine` was the old name for a us-west-2-only row. Kept as an alias so a
@@ -683,6 +692,64 @@ def runpod_cheapest(card: str, gpus_per_pod: int) -> PriceRow | None:
     fits = [row for row in runpod_machines_for(card)
             if row.gpus == per_pod and row.usd_per_hour is not None]
     return min(fits, key=lambda row: row.usd_per_hour) if fits else None
+
+
+def shadeform_counts(card: str) -> tuple[int, ...]:
+    """How many of this card one Shadeform machine carries, across every region.
+
+    Args:
+        card: the catalogue's spelling.
+
+    Returns:
+        The distinct machine sizes, ascending. Empty when Shadeform lists no card
+        of that name at all.
+    """
+    key = (card or "").strip().lower()
+    return tuple(sorted({row.gpus for row in SHADEFORM_MACHINES
+                         if row.card.lower() == key}))
+
+
+def shadeform_cheapest(card: str, gpus_per_pod: int,
+                       regions: tuple[str, ...] | list[str] | None = None
+                       ) -> tuple[PriceRow, int] | None:
+    """The Shadeform machine this ask would be bought as, and how many rows offer it.
+
+    ADDED 2026-09-28, BECAUSE NOTHING PRICED THIS VENDOR. Shadeform joined
+    `models.RUNNABLE_VENDORS` on 2026-09-10 (5058721) and its rows have been in
+    prices.csv since, but `estimate.hourly_rate` read only aws and runpod: an ask
+    naming `vendors: ["shadeform"]` was answered with RunPod's $1.59 for a one-card
+    A100-80GB, while this file listed Shadeform rows from $1.35.
+
+    ONE MACHINE PER POD AND AN EXACT COUNT, as on RunPod. Whether PACSrun's Shadeform
+    path seats several pods on one larger machine, the way the AWS reader does, is not
+    modelled here -- so a multi-pod ask can be priced high, never low.
+
+    ANY REGION, CHEAPEST FIRST. The driver picks an in-stock row from the vendor's own
+    catalogue wherever it is (models.py, the RUNNABLE_VENDORS note), so an ask naming
+    no Shadeform region is priced at the cheapest region and the answer names it.
+    `shadeform/<region>` entries in `placement.regions` narrow that. The catalogue
+    carries no stock, so the row is a price, not a promise of a machine.
+
+    Args:
+        card: the catalogue's spelling.
+        gpus_per_pod: `resources.gpus.count`. Under 1 is treated as 1.
+        regions: Shadeform region names, e.g. "montreal-canada-2". None or empty
+            means any region.
+
+    Returns:
+        `(row, matching)` -- the cheapest row at that exact count and how many rows
+        matched -- or None when Shadeform lists no such card at that count.
+    """
+    key = (card or "").strip().lower()
+    per_pod = max(1, gpus_per_pod)
+    allowed = {r.strip() for r in (regions or []) if r.strip()}
+    fits = [row for row in SHADEFORM_MACHINES
+            if row.card.lower() == key and row.gpus == per_pod
+            and row.usd_per_hour is not None
+            and (not allowed or row.region in allowed)]
+    if not fits:
+        return None
+    return min(fits, key=lambda row: (row.usd_per_hour, row.region)), len(fits)
 
 
 def gpu_by_name(name: str) -> Gpu | None:

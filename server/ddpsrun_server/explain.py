@@ -126,12 +126,16 @@ BEFORE YOU SUBMIT
   twelve nobody has run yet. That figure and the runtime are separate answers
   that fail separately: how many hours needs a measurement of ours, one hour's
   price is published. So "cost_usd": null next to a real "rate" means we know
-  what an hour costs and not how many hours -- and the rate belongs to a vendor,
-  because eight cards are priced on both and RunPod is cheaper on every one of
-  them: an L40S is $1.09/pod-hour there against $1.8610/machine-hour on AWS, an
-  H100 $2.89 against $6.88. For the A100, H200, B200 and B300, AWS sells no
-  single-card machine at all and RunPod builds a one-card pod. Send "vendors" if
-  you care which, and read GET /v1/prices?vendor=runpod for that vendor's rows.
+  what an hour costs and not how many hours -- and the rate belongs to a vendor.
+  THREE VENDORS CAN RUN A JOB: aws, runpod and shadeform. An ask that names none
+  is priced at the cheapest of the three and the answer names the other two.
+  Read 2026-09-28, one card per pod: an L40S is $0.88/hour on Shadeform, $1.09 on
+  RunPod and $1.8610 on AWS; an H100 $2.50, $2.89 and $6.88; an A100-80GB $1.35
+  on Shadeform and $1.59 on RunPod, and AWS sells no single-card A100 machine at
+  all. Shadeform's rows come from a catalogue that carries no stock, and
+  returning result files from a Shadeform machine has not yet completed a live
+  run. Send "vendors" if you care which, and read GET /v1/prices?vendor=<name>
+  for that vendor's rows.
 
 WHAT IS NOT BUILT YET
   No upload endpoint, so your command must fetch its own code and data. What

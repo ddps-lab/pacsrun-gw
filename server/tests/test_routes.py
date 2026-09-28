@@ -871,7 +871,10 @@ def test_estimate_reproduces_a_job_we_actually_ran(client, cluster):
     # the same job prices about 10% higher now -- the hours are the measured
     # ones and only the rate moved. See the note on test_estimate.py's
     # test_a_job_we_have_run_before_is_priced_close_to_what_it_cost.
-    result = as_alice(client, "POST", "/v1/estimate", json=judgement_body()).json()
+    # `vendors: ["runpod"]` since 2026-09-28: an unrestricted ask now includes
+    # shadeform, whose $0.88 L40S is not the price of the job we ran.
+    result = as_alice(client, "POST", "/v1/estimate",
+                      json=judgement_body(vendors=["runpod"])).json()
     assert result["steps"] == 556
     assert result["hours"]["confidence"] == "measured"
     assert result["hours"]["low"] < 6.54 < result["hours"]["high"]
@@ -1514,8 +1517,11 @@ def test_the_price_table_answers_without_a_token(client):
     # catalogue moved or gen_prices_all.py did, and both are worth a human looking at the diff.
     # shadeform's 51 arrived 2026-09-10, ten of them a card that an exact-case membership test
     # had been dropping (it spells RTXPro6000, CHOOSABLE spells RTXPRO6000).
-    assert len(body["rows"]) == 766
+    # 879 = aws 323 + gcp 392 + runpod 105 + shadeform 59 after every source was re-read on
+    # 2026-09-28 (skypilot-catalog d85f1a0 for aws, gcp and shadeform; RunPod's catalog API).
+    assert len(body["rows"]) == 879
     assert len([r for r in body["rows"] if r["vendor"] == "runpod"]) == 105
+    assert len([r for r in body["rows"] if r["vendor"] == "shadeform"]) == 59
     # RunPod contributes no region: it publishes one price per GPU type with no
     # location dimension, so `regions` is still the 22 AWS ones.
     assert len(body["regions"]) == 22
@@ -1548,9 +1554,14 @@ def test_the_price_table_says_which_basis_each_row_is(client):
     assert bases == {("aws", "machine"), ("gcp", "accelerator"), ("shadeform", "machine"),
                      ("runpod", "machine")}
     assert "whole unit that runs a pod" in body["note"]
-    # And the note has to name BOTH read dates, because the runpod rows come
-    # from a different source on a different day.
-    assert "2026-09-08" in body["note"] and "2026-09-09" in body["note"]
+    # And the note has to name EVERY source's read date, because the rows come from
+    # three sources that are read separately. All three were re-read on 2026-09-28, so
+    # the check names each source next to its own constant rather than a fixed date.
+    m = main.measurements
+    note = body["note"]
+    assert f"SkyPilot catalogue on {m.AWS_PRICED_ON}" in note
+    assert f"catalog API on {m.RUNPOD_PRICED_ON}" in note
+    assert f"on GitHub on {m.SHADEFORM_PRICED_ON}" in note
 
 
 def test_regions_reach_the_estimate_through_the_route(client):

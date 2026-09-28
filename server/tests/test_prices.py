@@ -15,7 +15,7 @@ Grep anchor: DDPSRUN-AWS-PRICES
 """
 from __future__ import annotations
 
-from ddpsrun_server import catalogue, estimate as e, measurements as m
+from ddpsrun_server import catalogue, estimate as e, measurements as m, models
 
 
 def test_every_choosable_card_has_a_price():
@@ -56,24 +56,62 @@ def test_an_aws_job_is_no_longer_priced_at_runpods_rate():
     assert round(on_runpod.usd_per_hour_low / on_aws.usd_per_hour_low, 2) == 0.59
 
 
-def test_an_unrestricted_ask_takes_the_cheaper_and_names_the_other():
+def test_an_unrestricted_ask_takes_the_cheapest_and_names_every_other():
     """`vendors` empty means no restriction, and we cannot know which vendor the
-    solve lands on. Quoting one of two candidates silently is how the 47%
-    happened, so the other one is in the sentence."""
+    solve lands on. Quoting one candidate silently is how the 47% happened, so
+    every other one is in the sentence.
+
+    ★ THREE VENDORS SINCE 2026-09-28. Until then this read only aws and runpod and
+    answered RunPod's $1.09 for an L40S; Shadeform lists one at $0.88."""
     rate = e.hourly_rate("L40S", 1, 1, None, "on-demand")
-    assert rate.usd_per_hour_low == 1.09
-    assert "g6e.xlarge" in rate.basis
-    assert "1.8610" in rate.basis
+    assert rate.usd_per_hour_low == 0.88
+    assert rate.vendor == "shadeform"
+    assert "massedcompute_L40S" in rate.basis
+    # Both of the others are named, not just the first.
+    assert "g6e.xlarge" in rate.basis and "1.8610" in rate.basis
+    assert "RunPod" in rate.basis and "1.0900" in rate.basis
+
+
+def test_every_vendor_that_can_rent_is_priced():
+    """A vendor that can rent but is never priced is quoted another vendor's
+    price. That was shadeform from 2026-09-10 to 2026-09-28: `vendors:
+    ["shadeform"]` answered `$1.59 [runpod]` for a one-card A100-80GB."""
+    assert set(e.PRICED_VENDORS) == set(models.RUNNABLE_VENDORS)
+    only = e.hourly_rate("A100-80GB", 1, 1, ["shadeform"], "on-demand")
+    assert only.vendor == "shadeform"
+    assert only.usd_per_hour_low == 1.35
+    assert "hyperstack_A100-80GB" in only.basis and "montreal-canada-2" in only.basis
+    # The answer says what the catalogue cannot: stock, and the untested return path.
+    assert "no stock" in only.basis and "live run" in only.basis
+
+
+def test_a_shadeform_region_narrows_the_rows_it_is_priced_from():
+    anywhere = e.hourly_rate("A100-80GB", 1, 1, ["shadeform"], "on-demand")
+    houston = e.hourly_rate("A100-80GB", 1, 1, ["shadeform"], "on-demand",
+                            ["shadeform/houston-usa-1"])
+    assert anywhere.usd_per_hour_low == 1.35
+    assert houston.usd_per_hour_low == 1.5
+    assert "houston-usa-1" in houston.basis
+
+
+def test_shadeform_is_not_priced_for_spot_and_says_why():
+    rate = e.hourly_rate("L40S", 1, 1, ["shadeform"], "spot")
+    assert rate.usd_per_hour_low is None
+    assert "Shadeform cannot be priced" in rate.basis and "spot" in rate.basis
 
 
 def test_spot_is_a_range_and_on_demand_is_one_number():
     """On-demand is published per region. Spot is per availability zone and moves,
-    and both live spot measurements landed inside this range."""
+    and both live spot measurements landed inside this range.
+
+    Re-read 2026-09-28: the dearest zone's spot had risen to the on-demand price
+    itself ($1.6663-$1.8610 against $1.8610; it was $1.0555-$1.2863 on
+    2026-09-08), so the top of the range may EQUAL on-demand but not pass it."""
     od = e.hourly_rate("L40S", 1, 1, ["aws"], "on-demand")
     spot = e.hourly_rate("L40S", 1, 1, ["aws"], "spot")
     assert od.usd_per_hour_low == od.usd_per_hour_high
     assert spot.usd_per_hour_low < spot.usd_per_hour_high
-    assert spot.usd_per_hour_high < od.usd_per_hour_low
+    assert spot.usd_per_hour_high <= od.usd_per_hour_low
 
 
 def test_the_rate_covers_every_machine_the_job_rents():
@@ -212,8 +250,10 @@ def test_the_rate_prices_the_capacity_that_was_asked_for():
                             row_tokens=4100, mitigations_on=True, vendors=["aws"],
                             asked_capacity="spot")
     assert asked_spot.capacity_type == "on-demand"        # the recommendation
-    assert asked_spot.rate.usd_per_hour_low == 1.0555     # the price of what was asked
-    assert asked_spot.rate.usd_per_hour_high == 1.2863
+    # the price of what was asked. Spot moves: $1.0555-$1.2863 in the 2026-09-08
+    # catalogue, $1.6663-$1.8610 in the 2026-09-28 one.
+    assert asked_spot.rate.usd_per_hour_low == 1.6663
+    assert asked_spot.rate.usd_per_hour_high == 1.861
     assert any("asked" in w and "recommend" in w for w in asked_spot.warnings)
 
     undecided = e.estimate(gpu_name="L40S", cap=12288, pairs=5000, epochs=1,
@@ -256,8 +296,10 @@ def test_the_table_covers_every_region_the_catalogue_prices():
     aws = [r for r in m.PRICE_ROWS if r.vendor == "aws"]
     gcp = [r for r in m.PRICE_ROWS if r.vendor == "gcp"]
     assert len({r.region for r in aws}) == 22
-    assert len(aws) == 304
-    assert len(gcp) == 306
+    # 304 and 306 from the 2026-07-22 catalogue files; 323 and 392 after they were
+    # re-fetched from skypilot-catalog d85f1a0 on 2026-09-28.
+    assert len(aws) == 323
+    assert len(gcp) == 392
     # Every choosable card is priced somewhere, which was already true for
     # us-west-2 and must not regress as regions are added.
     assert {c.name for c in catalogue.CHOOSABLE} <= {r.card for r in aws}
@@ -335,10 +377,19 @@ def test_rows_whose_spot_beats_their_own_on_demand_are_flagged_not_dropped():
     and 1.7915 in both -a and -c. That is the catalogue's content, not a grouping
     mistake (an earlier generator DID have one, pairing a 1-card price with a
     16-card spot). They ship flagged so nothing ranks them and nobody has to
-    rediscover it."""
+    rediscover it.
+
+    Re-read 2026-09-28 (skypilot-catalog d85f1a0): ZERO rows do. That same row now
+    lists on-demand 3.1016 against spot 1.8563 -- the catalogue's on-demand figure
+    moved, not the spot. So the count is 0, and the rule the flag exists for is
+    what is asserted: every row whose spot passes its on-demand carries it."""
     flagged = [r for r in m.PRICE_ROWS if r.flags == "spot_above_ondemand"]
-    assert len(flagged) == 38
-    assert {r.vendor for r in flagged} == {"gcp"}
+    assert len(flagged) == 0
+    assert {r.vendor for r in flagged} <= {"gcp"}
+    for row in m.PRICE_ROWS:
+        if row.usd_per_hour is not None and row.spot_high is not None \
+                and row.spot_high > row.usd_per_hour:
+            assert row.flags == "spot_above_ondemand", row
     for row in m.PRICE_ROWS:
         if row.vendor != "aws" or row.usd_per_hour is None or row.spot_high is None:
             continue
