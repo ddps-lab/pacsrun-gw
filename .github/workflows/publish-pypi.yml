@@ -134,3 +134,33 @@ jobs:
       # and prints the project URL. No `user`, no `password`, no secret reference -- if this step
       # ever grows one, trusted publishing has been abandoned by accident.
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+      # HYPERUN-PYPI-VISIBLE. THE UPLOAD FINISHING IS NOT THE RELEASE BEING INSTALLABLE.
+      #
+      # Measured on 0.2.5 (2026-09-28): uploaded at 08:32:52Z, /pypi/hyperun/0.2.5/json
+      # answered 200 at once, and the simple index pip reads still listed 0.2.4 fourteen
+      # minutes later. 0.2.6 did the same. For those minutes `pip install -U hyperun` --
+      # which SKILL.md gives as the fix for an out-of-date CLI -- installed the OLD version
+      # without a word, so "the release is done" was not true of anybody installing it.
+      #
+      # So this job ends when a fresh pip can actually fetch the version it just uploaded:
+      # the same command a user runs, with no cache, polled until it works. The version is
+      # read off the wheel that was uploaded rather than off the tag, so the check is of
+      # exactly what went up. A lag longer than the timeout is a WARNING and not a failure:
+      # the upload has already succeeded, and failing here would read as though it had not.
+      - name: wait until pip can install the version just uploaded
+        run: |
+          set -u
+          WHEEL=$(ls dist/*.whl | head -1)
+          VERSION=$(basename "$WHEEL" | cut -d- -f2)
+          echo "waiting for hyperun==$VERSION on the index pip reads"
+          START=$(date +%s)
+          for i in $(seq 1 60); do
+            if python3 -m pip download --quiet --no-deps --no-cache-dir -d /tmp/probe \
+                 "hyperun==$VERSION" >/dev/null 2>&1; then
+              echo "installable after $(( $(date +%s) - START ))s"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::warning::hyperun==$VERSION was uploaded but pip still could not fetch it after 30 minutes; anyone running 'pip install -U hyperun' now gets the previous version"

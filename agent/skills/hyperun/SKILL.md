@@ -211,6 +211,10 @@ what says so. If you built the request as a JSON file, put the script text in it
 repository, so it can describe flags a published release does not have yet.
 That happened on 2026-09-08 with `--vendor`.
 
+If `hyperun --version` is still the old number after that, the release may not have
+reached the index pip reads yet -- that took over 14 minutes for 0.2.5 and 0.2.6. Say so
+to the user and try again a few minutes later; do not work around the missing flag.
+
 **Pass `--secret` and `--vendor` here too, not just at submit.** Both changed
 what validate can answer on 2026-09-08:
 
