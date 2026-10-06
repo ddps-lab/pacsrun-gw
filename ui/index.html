@@ -47,7 +47,7 @@
       its own.
 
   Status words are never translated: a badge says Running, Compared, Failed --
-  the same strings `kubectl get pacsjobs` prints -- so a user can match what is
+  the same strings `kubectl get hyperunjobs` prints -- so a user can match what is
   on screen against what the cluster says.
 -->
 
@@ -65,7 +65,7 @@
        sharing one r. The tab title (<title> at the top of this file) has said hyperun since the
        rename; this line and the sign-in heading below were the two places the old word survived,
        and they are the two a person actually looks at. The localStorage keys in app.js
-       (`ddpsrun.server`, `ddpsrun.token`) are NOT renamed with them: those are live state in
+       (`hyperun.server`, `hyperun.token`) are NOT renamed with them: those are live state in
        somebody's browser, and changing a key signs every token user out. -->
   <div class="brand">hype<span>run</span></div>
   <nav>
@@ -818,8 +818,8 @@
 <!-- HYPERUN-SCRIPTS. Every run.sh in one namespace, GROUPED BY OWNER, read back out of the
      jobs themselves. It said "this caller's own" and "already scoped to this caller" until
      2026-09-08; the namespace never gave that, since it may hold a whole team and here it holds
-     everyone. Each section is one person, from that job's ddpsrun.io/owner label.
-     Nothing is stored for this: the text is on the PacsJob for as long as the job exists,
+     everyone. Each section is one person, from that job's hyperun.io/owner label.
+     Nothing is stored for this: the text is on the HyperunJob for as long as the job exists,
      so it is already durable and already gone when the job is
      deleted. Before this screen existed the only way to find a run.sh again was to open jobs one
      at a time and read the Submitted spec panel. -->

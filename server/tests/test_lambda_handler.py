@@ -46,7 +46,7 @@ def handler_module(monkeypatch, tmp_path):
     )
     monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
     monkeypatch.setenv("DDPSRUN_TOKENS_SECRET_ID", "ddpsrun-gw/tokens")
-    monkeypatch.setenv("DDPSRUN_CLUSTER_NAME", "pacsrun")
+    monkeypatch.setenv("DDPSRUN_CLUSTER_NAME", "hyperun")
     monkeypatch.setenv("AWS_REGION", "us-west-2")
 
     # Import the source without executing the module-level cold-start calls.
@@ -116,7 +116,7 @@ def test_the_kubeconfig_names_the_cluster_and_mints_a_token_per_call(handler_mod
     import os
 
     handler_module._write_kubeconfig()
-    assert handler_module._calls["cluster"] == "pacsrun"
+    assert handler_module._calls["cluster"] == "hyperun"
     assert os.environ["KUBECONFIG"] == str(handler_module.KUBECONFIG_PATH)
 
     config = json.loads(handler_module.KUBECONFIG_PATH.read_text())
@@ -127,7 +127,7 @@ def test_the_kubeconfig_names_the_cluster_and_mints_a_token_per_call(handler_mod
     # EKS access entry. Without it a Lambda cannot authenticate at all.
     exec_stanza = config["users"][0]["user"]["exec"]
     assert exec_stanza["args"][:2] == ["-m", "ddpsrun_server.eks_token"]
-    assert "pacsrun" in exec_stanza["args"]
+    assert "hyperun" in exec_stanza["args"]
 
 
 def test_the_ca_is_decoded_rather_than_left_base64(handler_module):
@@ -199,7 +199,7 @@ def test_the_minted_token_has_the_shape_the_apiserver_expects(fake_aws_credentia
     # answered HTTP 200.
     from ddpsrun_server import eks_token
 
-    credential = eks_token.exec_credential("pacsrun", "us-west-2")
+    credential = eks_token.exec_credential("hyperun", "us-west-2")
     assert credential["kind"] == "ExecCredential"
     token = credential["status"]["token"]
     assert token.startswith("k8s-aws-v1.")
@@ -216,7 +216,7 @@ def test_the_cluster_name_is_signed_into_the_token(fake_aws_credentials):
 
     from ddpsrun_server import eks_token
 
-    token = eks_token.eks_token("pacsrun", "us-west-2")
+    token = eks_token.eks_token("hyperun", "us-west-2")
     payload = token.split(".", 1)[1]
     url = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode()
     query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))

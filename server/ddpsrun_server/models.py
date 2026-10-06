@@ -5,12 +5,12 @@ END-TO-END FLOW of this file:
   1. `SubmitRequest` is what `POST /v1/jobs` accepts. It holds only things a
      user can actually know: an image, a command, environment values, which GPU,
      roughly how long. It has no namespace, no ServiceAccount, no result path.
-  2. `to_pacsjob()` takes that request plus the caller's `Principal` and the
-     server `Settings` and returns the PacsJob object to POST to Kubernetes. The
+  2. `to_hyperunjob()` takes that request plus the caller's `Principal` and the
+     server `Settings` and returns the HyperunJob object to POST to Kubernetes. The
      fields the user did not send are filled in here from identity, never from
      the request — that is the whole point (`docs/03-api.md`, the table titled
      the "서버가 채우는 것" / what-the-server-fills table).
-  3. `JobView.from_pacsjob()` goes the other way: it takes the object Kubernetes
+  3. `JobView.from_hyperunjob()` goes the other way: it takes the object Kubernetes
      returns and produces the response, dropping every internal name on the way
      out (`docs/03-api.md`, first rule of the response-rules section).
 
@@ -19,7 +19,7 @@ WHAT THIS STAGE DELIBERATELY DOES NOT DO. `docs/08-plan.md` stage 1 says
 on-demand versus
 spot, turns fetch mode on, or estimates a duration. `placement` is left off the
 object entirely, which makes PACSrun apply its own defaults exactly as it does
-for a hand-written PacsJob today. Those decisions arrive in stage 3 with
+for a hand-written HyperunJob today. Those decisions arrive in stage 3 with
 `/validate` and `/estimate`.
 
 Grep anchors: HYPERUN-SERVER-FILLS, HYPERUN-NO-INTERNAL-NAMES
@@ -40,15 +40,15 @@ from .stats import job_cost, job_hours
 # HYPERUN-SCRIPT-SIZE. How long a `script` may be, and why there is a number at
 # all rather than "as long as you like".
 #
-# THE SCRIPT TRAVELS INSIDE THE JOB OBJECT: to_pacsjob puts it in
+# THE SCRIPT TRAVELS INSIDE THE JOB OBJECT: to_hyperunjob puts it in
 # spec.args as ["bash", "-lc", <text>], so it is stored in etcd with the
-# PacsJob and is subject to etcd's request limit — 1.5 MiB by default, for the
+# HyperunJob and is subject to etcd's request limit — 1.5 MiB by default, for the
 # WHOLE object. Without a limit here the failure arrives from the apiserver as
 # "etcdserver: request is too large", which names nothing the submitter can
 # act on.
 #
 # WHY 256 KiB. Measured 2026-09-08 on the live cluster: baseline-c's whole
-# PacsJob is 4,682 bytes and its args are 302 — the real training script is
+# HyperunJob is 4,682 bytes and its args are 302 — the real training script is
 # 19,655 bytes and lives in S3, fetched by those 302 bytes (see the section on
 # big scripts in agent/references/script-contract.md). So this cap is thirteen
 # times the largest script anybody here has written inline and a sixth of
@@ -58,14 +58,14 @@ from .stats import job_cost, job_hours
 SCRIPT_MAX_CHARS = 256 * 1024
 
 # Environment variable names a user may not set. PACSrun's controller already
-# refuses them (`internal/controller/pacsjob_controller.go`, HYPERUN-ENV-GUARD),
+# refuses them (`internal/controller/hyperunjob_controller.go`, HYPERUN-ENV-GUARD),
 # but rejecting here produces a message that names the offending variable
 # instead of a controller error the user never sees.
 RESERVED_ENV_PREFIX = "PACSRUN_"
 
 # Recorded on the object so that stage 3 can compare what `/estimate` predicted
 # with what the job actually took. Nothing reads it yet.
-EXPECTED_HOURS_ANNOTATION = "ddpsrun.io/expected-hours"
+EXPECTED_HOURS_ANNOTATION = "hyperun.io/expected-hours"
 
 
 class GroupRequest(BaseModel):
@@ -116,7 +116,7 @@ class GpuRequest(BaseModel):
     """Which GPU the job wants, in the two styles PACSrun's CRD accepts.
 
     The CRD enforces "exactly one of gpus.name or gpus.vramGB" with a CEL rule
-    (`config/crd/pacsrun.io_pacsjobs.yaml:197`). Repeating the rule here turns a
+    (`config/crd/hyperun.io_hyperunjobs.yaml:197`). Repeating the rule here turns a
     Kubernetes admission error into a 400 that says which field to fix.
     """
 
@@ -193,7 +193,7 @@ KNOWN_VENDORS: tuple[str, ...] = RUNNABLE_VENDORS + PRICE_ONLY_VENDORS
 # vendor", was shown Shadeform's price, and was bought on AWS: the operator log says `"answers":
 # 1, "notAsked": "none: every candidate was asked"`, because AWS was the only candidate.
 #
-# THE FIX LIVES HERE AND NOT IN PACSrun, because PACSrun's rule is pinned for every PacsJob that
+# THE FIX LIVES HERE AND NOT IN PACSrun, because PACSrun's rule is pinned for every HyperunJob that
 # already exists ("vendors empty -> unchanged, and it MUST stay unchanged"). The gateway instead
 # writes the three words, and PACSrun's own fill step turns each into a candidate in this order:
 # `shadeform` and `runpod` are placement words, `aws` becomes the default region.
@@ -442,7 +442,7 @@ class ScriptView(BaseModel):
     HYPERUN-SCRIPTS. WHY THIS IS READ BACK OUT OF THE JOBS AND NOT STORED ANYWHERE. The screen's
     Script box sends the same text twice -- as `args` (what runs) and as `script` (what validate
     reads) -- and the server throws `script` away, exactly as its own field description promises.
-    But `args` is on the PacsJob for as long as the job exists, so the script a job ran is
+    But `args` is on the HyperunJob for as long as the job exists, so the script a job ran is
     already durable, already scoped to the caller's namespace, and already deletable by deleting
     the job. Adding a bucket for scripts would create a second copy that can disagree with the
     first, need its own lifecycle, and need write permission this service does not have.
@@ -461,7 +461,7 @@ class ScriptView(BaseModel):
     )
     owner: str = Field(
         default="",
-        description="WHO submitted it, from the job's ddpsrun.io/owner label. "
+        description="WHO submitted it, from the job's hyperun.io/owner label. "
         "Empty when the job was not created through this gateway -- a job made "
         "with `kubectl apply` carries no owner, and saying 'unknown' would be a "
         "guess about a person.",
@@ -517,7 +517,7 @@ class ImageView(BaseModel):
     no per-request cost -- are narrated in registry.py.
     """
 
-    repository: str = Field(description='The repository name, e.g. "pacsrun/operator".')
+    repository: str = Field(description='The repository name, e.g. "hyperun/operator".')
     registry: str = Field(
         description="The host part, so the screen can build the pullable address without "
         "knowing this deployment's account id."
@@ -837,7 +837,7 @@ class JobView(BaseModel):
 
     Every field here is safe to show a user. Everything the object also carries
     that is not — namespace, ServiceAccount name, the excluded-offering list,
-    the blamed node names — is dropped in `from_pacsjob`.
+    the blamed node names — is dropped in `from_hyperunjob`.
     """
 
     job_id: str
@@ -849,7 +849,7 @@ class JobView(BaseModel):
     message: str = Field(default="", description="Detail, mostly on failure.")
     user: str = Field(
         default="",
-        description="Who submitted it. Read from the ddpsrun.io/owner label the "
+        description="Who submitted it. Read from the hyperun.io/owner label the "
         "server itself wrote at submit time, so it cannot be forged by editing "
         "the object: a caller can only ever see their own namespace anyway.",
     )
@@ -944,11 +944,11 @@ class JobView(BaseModel):
     )
 
     @staticmethod
-    def from_pacsjob(obj: dict[str, Any]) -> "JobView":
+    def from_hyperunjob(obj: dict[str, Any]) -> "JobView":
         """Build the response from the raw object the Kubernetes API returned.
 
         Args:
-            obj: the PacsJob as a plain dict (the dynamic client gives us JSON,
+            obj: the HyperunJob as a plain dict (the dynamic client gives us JSON,
                 not a typed object).
 
         Returns:
@@ -997,7 +997,7 @@ class JobView(BaseModel):
             job_id=job_id or "",
             # The annotation first: it holds the name the user typed, Korean and
             # all. The label is the ASCII remains of it, and the object name is
-            # the last resort for a PacsJob somebody applied by hand.
+            # the last resort for a HyperunJob somebody applied by hand.
             name=(
                 annotations.get(naming.DISPLAY_NAME_ANNOTATION)
                 or labels.get(naming.DISPLAY_NAME_LABEL)
@@ -1036,7 +1036,7 @@ def result_path_for(settings: Settings, principal: Principal, job_id: str, name:
     The namespace comes from the token, so a caller cannot aim this anywhere
     else. PACSrun's own guard checks the same prefix a second time on the
     cluster side (HYPERUN-RESULT-TENANCY), which is what makes a hand-applied
-    PacsJob obey the rule too.
+    HyperunJob obey the rule too.
 
     Args:
         settings: holds the bucket and the prefix.
@@ -1048,7 +1048,7 @@ def result_path_for(settings: Settings, principal: Principal, job_id: str, name:
         An `s3://` URI ending in a slash.
 
     Example:
-        s3://<RESULT_BUCKET>/pacsrun/lab-alice/bank-exp2-3f9a1c4e7b02/
+        s3://<RESULT_BUCKET>/hyperun/lab-alice/bank-exp2-3f9a1c4e7b02/
     """
     folder = naming.label_value(name) or "job"
     suffix = job_id[len(naming.JOB_ID_PREFIX):]
@@ -1058,7 +1058,7 @@ def result_path_for(settings: Settings, principal: Principal, job_id: str, name:
     )
 
 
-def to_pacsjob(
+def to_hyperunjob(
     request: SubmitRequest,
     principal: Principal,
     settings: Settings,
@@ -1067,7 +1067,7 @@ def to_pacsjob(
     own_secrets: set[str] | frozenset[str] | None = None,
     inherited_result_path: str | None = None,
 ) -> dict[str, Any]:
-    """Turn a submit request into the PacsJob object to create.
+    """Turn a submit request into the HyperunJob object to create.
 
     HYPERUN-SERVER-FILLS. Four things the user did not send are added here:
 
@@ -1175,12 +1175,12 @@ def to_pacsjob(
 
     spec: dict[str, Any] = {
         "image": request.image,
-        # THIS WAS HARDCODED TO 1 AND THAT WAS WRONG. PacsJob's parallelism is the number of
+        # THIS WAS HARDCODED TO 1 AND THAT WAS WRONG. HyperunJob's parallelism is the number of
         # independent worker PODS, and gpus.count is the number of GPUs each pod gets; the two
         # together are how a job fills a multi-GPU machine. Pinning it at 1 quietly removed
         # that, so a user asking for eight workers on two 4-GPU boxes got one worker. The
-        # ceiling of 256 is PacsJob's own: status.completedSlots is capped at 256 entries
-        # (config/crd/pacsrun.io_pacsjobs.yaml), and a job with more slots than that cannot
+        # ceiling of 256 is HyperunJob's own: status.completedSlots is capped at 256 entries
+        # (config/crd/hyperun.io_hyperunjobs.yaml), and a job with more slots than that cannot
         # record which of them finished.
         "parallelism": request.parallelism,
         "serviceAccountName": settings.service_account,
@@ -1197,7 +1197,7 @@ def to_pacsjob(
                                       or request.group.mode != "independent"):
         # HYPERUN-GROUP. Omitted when it says nothing -- size 1 and
         # `independent` is exactly what no group at all means, and writing it
-        # anyway would put a field on every PacsJob for no reason and make a
+        # anyway would put a field on every HyperunJob for no reason and make a
         # `kubectl get -o yaml` read as though the job were distributed.
         spec["group"] = {"size": request.group.size, "mode": request.group.mode}
     if request.command:
@@ -1277,7 +1277,7 @@ def to_pacsjob(
 
     return {
         "apiVersion": f"{PACSJOB_GROUP}/{PACSJOB_VERSION}",
-        "kind": "PacsJob",
+        "kind": "HyperunJob",
         "metadata": metadata,
         "spec": spec,
     }
@@ -1346,7 +1346,7 @@ class TrainingFacts(BaseModel):
         "checkpoint and continue -- agent/references/script-contract.md rule 17 "
         "is how. What does survive is the result path — the "
         "server writes `spec.resultPath` once from the job id and recovery "
-        "reuses the same PacsJob, so a script may rely on that path being the "
+        "reuses the same HyperunJob, so a script may rely on that path being the "
         "same after a restart. Setting this true only tells the advice that "
         "losing the machine does not cost the whole run.",
     )
@@ -1958,7 +1958,7 @@ class UsageResponse(BaseModel):
     missed card count. Calling a field `cost_usd` would invite a reader to
     reconcile against an invoice and lose an afternoon.
 
-    IT COVERS hyperun's OWN JOBS ONLY. Everything here is read from PacsJob
+    IT COVERS hyperun's OWN JOBS ONLY. Everything here is read from HyperunJob
     objects, so a pod somebody started by hand on the same RunPod account is not
     in it and cannot be -- which is also why the vendors' billing APIs are not
     folded in: RunPod's answers for the whole account.
@@ -2115,7 +2115,7 @@ class StatsResponse(BaseModel):
     unowned_jobs: int = Field(
         default=0,
         description="How many of `jobs` were applied straight to the cluster "
-        "with kubectl and so carry no ddpsrun.io/owner label. They are in every "
+        "with kubectl and so carry no hyperun.io/owner label. They are in every "
         "total here and in no row of `members`: that table's columns are facts "
         "about a person, and three non-people in a row (`default` the "
         "namespace, `admin` the role, `kubectl` the tool) were each read as a "
@@ -2177,14 +2177,14 @@ class JobSpecResponse(BaseModel):
        Secret's name and key ARE, and they are cluster internals a caller has no
        use for. The entry survives with its `name` only, so the screen can still
        say "GITHUB_PAT was set", and the name goes into `redacted`.
-    2. `serviceAccountName`, for the same reason `JobView.from_pacsjob` drops it:
+    2. `serviceAccountName`, for the same reason `JobView.from_hyperunjob` drops it:
        it names an identity inside our cluster.
     """
 
     job_id: str
     name: str
     spec: dict[str, Any] = Field(
-        description="The PacsJob spec with the two removals above applied."
+        description="The HyperunJob spec with the two removals above applied."
     )
     redacted: list[str] = Field(
         default_factory=list,
@@ -2194,11 +2194,11 @@ class JobSpecResponse(BaseModel):
     )
 
     @staticmethod
-    def from_pacsjob(obj: dict[str, Any]) -> "JobSpecResponse":
+    def from_hyperunjob(obj: dict[str, Any]) -> "JobSpecResponse":
         """Build the response from the raw object.
 
         Args:
-            obj: the PacsJob as the Kubernetes API returned it.
+            obj: the HyperunJob as the Kubernetes API returned it.
 
         Returns:
             A `JobSpecResponse`. A job with no env at all yields an empty

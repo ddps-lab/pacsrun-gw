@@ -435,7 +435,7 @@ DISTRIBUTED_LAUNCHERS = (
 )
 
 # What PACSrun tells a pod in a distributed group. Exact names, from
-# `internal/controller/pacsjob_controller.go` (HYPERUN-GROUP-COORDS) and
+# `internal/controller/hyperunjob_controller.go` (HYPERUN-GROUP-COORDS) and
 # `driver/aws/driver.py` (HYPERUN-GROUP-HOSTNET). A script that reads NONE of
 # these cannot know where its rendezvous is.
 GROUP_COORDS = (

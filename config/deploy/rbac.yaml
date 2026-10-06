@@ -6,23 +6,23 @@
 # namespace means adding a tenant is a deliberate act with a reviewable diff.
 #
 # WHAT IS DELIBERATELY ABSENT FROM THE ClusterRole: `secrets`. The submit path
-# writes a `secretKeyRef` into the PacsJob and lets kubelet resolve it, so it
+# writes a `secretKeyRef` into the HyperunJob and lets kubelet resolve it, so it
 # never holds a GitHub token or an API key.
 #
 # ★ AND `secrets` MUST STAY OUT OF THE ClusterRole EVEN NOW THAT ONE ROUTE
 # WRITES THEM. The live cluster binds this ClusterRole with a
 # ClusterRoleBinding, not the per-namespace RoleBindings this file describes
-# (checked 2026-09-08: `kubectl get clusterrolebinding ddpsrun-gw` exists and
-# names Group `ddpsrun-gw`). So a `secrets` verb added up there would be a
+# (checked 2026-09-08: `kubectl get clusterrolebinding hyperun-gw` exists and
+# names Group `hyperun-gw`). So a `secrets` verb added up there would be a
 # secrets verb in kube-system. The write path gets its own Role at the bottom
 # of this file, bound one namespace at a time -- see HYPERUN-USER-SECRET.
 # ★ THE ServiceAccount IS NOT HERE ANY MORE. It used to be declared in this file, in a
-# namespace called `ddpsrun-system` that no longer exists -- the gateway moved to a pod in
+# namespace called `hyperun-system` that no longer exists -- the gateway moved to a pod in
 # `hyperun-system` on 2026-09-15 and its ServiceAccount is declared beside it in
 # hyperun-gw.yaml. Leaving the old object here made `onboard.sh` FAIL HALFWAY on 2026-09-16:
 #
 #     Error from server (NotFound): error when creating "STDIN":
-#     namespaces "ddpsrun-system" not found
+#     namespaces "hyperun-system" not found
 #
 # by which point the namespace, the ServiceAccount and two Roles had already been created. A
 # manifest that describes objects in a namespace that was deleted is not stale documentation,
@@ -30,11 +30,11 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: ddpsrun-gw
+  name: hyperun-gw
 rules:
   # Submit, read back, and cancel the jobs it created.
   #
-  # `delete` is what HYPERUN-CANCEL needs. Deleting the PacsJob is the only stop
+  # `delete` is what HYPERUN-CANCEL needs. Deleting the HyperunJob is the only stop
   # the CRD offers, and PACSrun's controller watches for it to give back whatever
   # the job rented. Without this verb the cancel route reaches the apiserver and
   # comes back 403 — which is how it shipped on 2026-09-02: the route, the CLI
@@ -52,8 +52,8 @@ rules:
   # ones an operator or a newer controller may have changed since it read them. A merge
   # patch names the one field it means. So the narrow verb is granted and the wide one
   # is not.
-  - apiGroups: ["pacsrun.io"]
-    resources: ["pacsjobs"]
+  - apiGroups: ["hyperun.io"]
+    resources: ["hyperunjobs"]
     verbs: ["create", "get", "list", "patch", "delete"]
   # Find the pod behind a job, so `/v1/jobs/{id}/logs` knows whose stdout to read.
   # `list` and not `get`: the server looks a pod up by label, never by name.
@@ -85,7 +85,7 @@ rules:
   # nothing else — this server reads Prometheus and must never be able to POST to its
   # remote-write path, which is how a bug here could corrupt the series it exists to protect.
   #
-  # THE BINDING IS STILL PER TENANT NAMESPACE (below), and Prometheus is in pacsrun-system, so
+  # THE BINDING IS STILL PER TENANT NAMESPACE (below), and Prometheus is in hyperun-system, so
   # this verb needs its own RoleBinding there — see the second binding at the end of this file.
   # Listing the verb without that binding grants nothing, which is the failure mode to expect if
   # /v1/metrics/query answers 502 with a 403 underneath.
@@ -98,15 +98,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: ddpsrun-gw
+  name: hyperun-gw
   namespace: <TENANT_NAMESPACE>
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: ddpsrun-gw
+  name: hyperun-gw
 subjects:
   # ★★ THE SUBJECT IS THE POD'S OWN ServiceAccount, AND IT WAS POINTING AT A GHOST. Until
-  # 2026-09-16 this named `ddpsrun-gw` in `ddpsrun-system`, a namespace deleted with the
+  # 2026-09-16 this named `hyperun-gw` in `hyperun-system`, a namespace deleted with the
   # Lambda migration -- so the binding this file created in a new tenant namespace granted
   # nothing to anybody, and the gateway could not read a single job there. The working
   # namespaces had been fixed BY HAND during the migration, so nothing showed it until a new
@@ -118,17 +118,17 @@ subjects:
     namespace: hyperun-system
 ---
 # The binding that makes the services/proxy verb above reach anything. Prometheus lives in
-# pacsrun-system, which is NOT a tenant namespace, so the per-tenant bindings never covered it.
+# hyperun-system, which is NOT a tenant namespace, so the per-tenant bindings never covered it.
 #
 # A SECOND ROLE, NARROWED TO ONE VERB, rather than binding the whole ClusterRole here. Binding the
-# full role would also let this server create and delete PacsJobs in pacsrun-system and read the
+# full role would also let this server create and delete HyperunJobs in hyperun-system and read the
 # operator's own pods — neither of which it has any reason to do, and both of which would then be
 # one bug away from happening.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: ddpsrun-gw-prometheus
-  namespace: pacsrun-system
+  name: hyperun-gw-prometheus
+  namespace: hyperun-system
 rules:
   - apiGroups: [""]
     resources: ["services/proxy"]
@@ -137,29 +137,29 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: ddpsrun-gw-prometheus
-  namespace: pacsrun-system
+  name: hyperun-gw-prometheus
+  namespace: hyperun-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: ddpsrun-gw-prometheus
+  name: hyperun-gw-prometheus
 subjects:
   # A GROUP, NOT A ServiceAccount, and the first draft got this wrong. The gateway server does not
   # run in this cluster — it is a Lambda. It proves who it is with an EKS access entry, which maps
-  # the IAM role `ddpsrun-gw-lambda` to username
-  # `arn:aws:sts::<ACCOUNT_ID>:assumed-role/ddpsrun-gw-lambda/{{SessionName}}` and to the
-  # kubernetesGroup `ddpsrun-gw`. RBAC sees the GROUP; the ServiceAccount of the same name is what
+  # the IAM role `hyperun-gw-lambda` to username
+  # `arn:aws:sts::<ACCOUNT_ID>:assumed-role/hyperun-gw-lambda/{{SessionName}}` and to the
+  # kubernetesGroup `hyperun-gw`. RBAC sees the GROUP; the ServiceAccount of the same name is what
   # a pod running in the cluster would use, and there is no such pod.
   #
   # Binding a ServiceAccount instead grants nothing and says nothing: `kubectl apply` succeeds,
   # the binding exists, and every request is still refused. `aws eks describe-access-entry
   # --principal-arn <the lambda role>` is what settles which subject is real.
-  # ★ A ServiceAccount AND NOT A Group, SINCE 2026-09-16. `Group: ddpsrun-gw` was how the
+  # ★ A ServiceAccount AND NOT A Group, SINCE 2026-09-16. `Group: hyperun-gw` was how the
   # LAMBDA authenticated: an EKS access entry mapped its IAM role into that group. The gateway
   # is a pod now and presents its ServiceAccount, which is in no group at all -- so every
   # binding still naming the group granted nothing to the thing that is actually running.
   # Live proof, on the namespace that works because it was fixed by hand during the migration:
-  #     kubectl get rolebinding hyperun-gw-prometheus -n pacsrun-system -o jsonpath='{.subjects}'
+  #     kubectl get rolebinding hyperun-gw-prometheus -n hyperun-system -o jsonpath='{.subjects}'
   #     [{"kind":"ServiceAccount","name":"hyperun-gw","namespace":"hyperun-system"}]
   # A ServiceAccount subject takes NO apiGroup -- the core group is "" and naming
   # rbac.authorization.k8s.io here is refused outright:
@@ -188,9 +188,9 @@ subjects:
 #            and nothing else. It cannot overwrite `judge-bedrock` (create on an
 #            existing name is 409 AlreadyExists) and it cannot read anything.
 #            The server uses it exactly once: the first `secret set` in a
-#            namespace, when `ddpsrun-user-secrets` does not exist yet.
+#            namespace, when `hyperun-user-secrets` does not exist yet.
 #
-#   get      Restricted to `ddpsrun-user-secrets` by name. `GET /v1/secrets`
+#   get      Restricted to `hyperun-user-secrets` by name. `GET /v1/secrets`
 #            needs the KEY names and the Kubernetes API has no keys-only read,
 #            so this necessarily also permits reading those values. It does NOT
 #            permit reading any other Secret in the namespace: an operator
@@ -210,7 +210,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: ddpsrun-gw-secrets
+  name: hyperun-gw-secrets
   namespace: <TENANT_NAMESPACE>
 rules:
   - apiGroups: [""]
@@ -218,18 +218,18 @@ rules:
     verbs: ["create"]
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["ddpsrun-user-secrets"]
+    resourceNames: ["hyperun-user-secrets"]
     verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: ddpsrun-gw-secrets
+  name: hyperun-gw-secrets
   namespace: <TENANT_NAMESPACE>
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: ddpsrun-gw-secrets
+  name: hyperun-gw-secrets
 subjects:
   # A GROUP, for the reason spelled out at the prometheus binding above: the
   # gateway is a Lambda, it proves who it is with an EKS access entry, and RBAC

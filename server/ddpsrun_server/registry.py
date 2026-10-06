@@ -71,7 +71,7 @@ class ImageView:
     """One repository, as the screen shows it.
 
     Attributes:
-        repository: the repository name, e.g. "pacsrun/operator".
+        repository: the repository name, e.g. "hyperun/operator".
         registry: the host part, e.g. "<account>.dkr.ecr.us-west-2.amazonaws.com".
         tags: the newest tags, newest first. Empty for a repository that holds only untagged
             images, which is a real state (a build that was overwritten) and is shown rather
@@ -90,7 +90,7 @@ class ImageView:
         """The pullable strings for this repository, one per tag.
 
         This is what the Image box needs: `registry/repository:tag`, ready to paste into a
-        PacsJob. A repository with no tags contributes nothing, because there is nothing anybody
+        HyperunJob. A repository with no tags contributes nothing, because there is nothing anybody
         could pull.
         """
         return [f"{self.registry}/{self.repository}:{tag}" for tag in self.tags]
@@ -123,9 +123,9 @@ def _registry_host(repository_uri: str, repository_name: str) -> str:
     """The host part of a repository URI.
 
     ECR reports `repositoryUri` as `<account>.dkr.ecr.<region>.amazonaws.com/<name>`, and the
-    name can itself contain slashes ("pacsrun/operator"). So the host is the URI with the name
+    name can itself contain slashes ("hyperun/operator"). So the host is the URI with the name
     and its separating slash removed from the end, which is exact -- splitting on the first
-    slash would keep "pacsrun/" in the host for every namespaced repository.
+    slash would keep "hyperun/" in the host for every namespaced repository.
 
     Args:
         repository_uri: what ECR reported.

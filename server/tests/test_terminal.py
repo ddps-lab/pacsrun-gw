@@ -240,7 +240,7 @@ class FakeCluster:
 def running_job(owner="alice"):
     return {
         "metadata": {"name": OBJECT_NAME,
-                     "labels": {"ddpsrun.io/owner": owner}},
+                     "labels": {"hyperun.io/owner": owner}},
         "status": {"phase": "Running"},
     }
 

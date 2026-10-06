@@ -17,9 +17,9 @@ NOW = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 def job(*, phase="Succeeded", started=None, hours=None, instance="L40S",
         parallelism=1, owner=None):
-    """Build a PacsJob the way the cluster would return it.
+    """Build a HyperunJob the way the cluster would return it.
 
-    `owner` fills the ddpsrun.io/owner label the server writes at submit time;
+    `owner` fills the hyperun.io/owner label the server writes at submit time;
     None builds a kubectl-shaped job, which carries no such label.
     """
     status = {"phase": phase}

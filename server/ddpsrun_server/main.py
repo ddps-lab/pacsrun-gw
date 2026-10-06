@@ -9,7 +9,7 @@ END-TO-END FLOW of one submission, which is what this whole stage exists to do:
   2. `POST /v1/jobs` arrives with `Authorization: Bearer <token>`.
      `require_principal` hashes the token and gets back a user and a namespace.
   3. `new_job_id()` mints `job-<12 hex>`.
-  4. `to_pacsjob()` fills in namespace, ServiceAccount, resultPath and
+  4. `to_hyperunjob()` fills in namespace, ServiceAccount, resultPath and
      parallelism from identity and settings, never from the body.
   5. `Cluster.create_job()` POSTs it. PACSrun's controller takes over from
      there: it solves for an offering, creates a driver pod, and the driver
@@ -125,11 +125,11 @@ from .models import (
     ValidateResponse,
     cap_from,
     gpu_name_for,
-    to_pacsjob,
+    to_hyperunjob,
     vram_gb_for,
 )
 
-logger = logging.getLogger("ddpsrun")
+logger = logging.getLogger("hyperun")
 
 
 def build_state(app: FastAPI, force: bool = False) -> None:
@@ -501,13 +501,13 @@ NAMESPACE_QUERY = Query(
 )
 
 # A legal Kubernetes object name (DNS-1123 subdomain): what kubectl accepts as
-# a PacsJob's metadata.name, and therefore what a by-name lookup may carry.
+# a HyperunJob's metadata.name, and therefore what a by-name lookup may carry.
 K8S_NAME = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")
 
 
 
 def owned_by_caller(obj: dict[str, Any], principal: Principal) -> bool:
-    """Does this PacsJob belong to the caller.
+    """Does this HyperunJob belong to the caller.
 
     ★ HYPERUN-OWNER-GATE. WHY THIS EXISTS AT ALL, given every route already scopes
     to a namespace. Because the namespace is a TENANCY boundary and not a person,
@@ -538,7 +538,7 @@ def owned_by_caller(obj: dict[str, Any], principal: Principal) -> bool:
                              namespace with ?namespace=, so gating them here would
                              remove the only way to help somebody with a stuck job
                              while changing nothing about what they can reach.
-      an unowned job         no `ddpsrun.io/owner` label at all. Every one of the
+      an unowned job         no `hyperun.io/owner` label at all. Every one of the
                              35 jobs on this cluster is in that state -- they were
                              applied with kubectl, before the label existed -- and
                              nobody owns them, so locking everyone out of them
@@ -546,7 +546,7 @@ def owned_by_caller(obj: dict[str, Any], principal: Principal) -> bool:
       the caller's own       the ordinary case.
 
     Args:
-        obj: the PacsJob, as fetched.
+        obj: the HyperunJob, as fetched.
         principal: the caller.
 
     Returns:
@@ -566,7 +566,7 @@ def require_owner(obj: dict[str, Any], principal: Principal) -> dict[str, Any]:
     which is one bit more than the caller is entitled to.
 
     Args:
-        obj: the PacsJob, as fetched.
+        obj: the HyperunJob, as fetched.
         principal: the caller.
 
     Returns:
@@ -585,7 +585,7 @@ def resolve_object_name(job_id: str) -> str:
     HYPERUN-JOB-BY-NAME. An id this server issued ("job-<12 hex>") maps through
     naming.object_name, exactly as before. Anything else that is a legal
     Kubernetes object name is used AS the object name — which is what lets a
-    PacsJob applied with kubectl (no id, no label; on 2026-09-01 that was every
+    HyperunJob applied with kubectl (no id, no label; on 2026-09-01 that was every
     job on the cluster) be opened, read and cancelled from the screen. This
     widens nothing: every route that calls this still looks only inside the
     caller's own namespace (or the one an operator asked for), the same
@@ -1024,7 +1024,7 @@ def _validation_for(body: JudgementRequest, request: Request,
         # the mode. Both go in together.
         vendors=body.vendors,
         placement_mode=body.placement_mode,
-        # HYPERUN-SECRET-NAMES. `to_pacsjob` refuses a word the deployment does
+        # HYPERUN-SECRET-NAMES. `to_hyperunjob` refuses a word the deployment does
         # not hold, and until 2026-09-08 validate did not look at these at all
         # -- so the only way to learn a wrong name was a submit. Both go in
         # together: names without the bindings would make every name look wrong.
@@ -1097,7 +1097,7 @@ def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
 
     Aggregate only. A caller asking for their team's figures does not thereby get
     to read another member's job names or results: this route returns totals, and
-    the routes that return job detail check the job's `ddpsrun.io/owner` label
+    the routes that return job detail check the job's `hyperun.io/owner` label
     (HYPERUN-OWNER-GATE).
 
     THE OLD WORDING SAID THE ISOLATION LIVED IN "each member's own namespace",
@@ -1134,7 +1134,7 @@ def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
     )
     # ★ THE CALLER'S OWN FIGURE IS NOW ONLY THEIR OWN. It used to fold the
     # ownerless bucket in whenever the caller was an operator, on the reasoning
-    # that only an operator can apply a PacsJob with kubectl so those jobs are
+    # that only an operator can apply a HyperunJob with kubectl so those jobs are
     # theirs. The reasoning holds for who APPLIED them and not for whose spend
     # they are: this cluster's ownerless bucket is 35 jobs from the kubectl era
     # in the `default` namespace, and folding them in made an operator's "My
@@ -1199,7 +1199,7 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
 
     # HYPERUN-CONTINUE-FROM. Chain this job onto a previous one's result path.
     #
-    # WHY THE LOOKUP IS HERE AND NOT IN `to_pacsjob`. That function is pure --
+    # WHY THE LOOKUP IS HERE AND NOT IN `to_hyperunjob`. That function is pure --
     # no cluster calls -- and this needs one, because the only place the
     # previous job's `spec.resultPath` exists is the previous job. It also
     # needs the ownership check, and `require_owner` answers 404 rather than
@@ -1266,7 +1266,7 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
     # WHAT THAT COST, 2026-09-28. A submit of `--vendor runpod --capacity-type
     # spot` was accepted, although validate calls it `spot-has-no-vendor`: RunPod
     # does not sell spot, and pkg/decider/runpod/decider.go refuses it. The
-    # PacsJob sat Pending while the operator handed the runpod region to its
+    # HyperunJob sat Pending while the operator handed the runpod region to its
     # built-in solver, which died fetching AWS spot prices from a host that no
     # longer resolves. The person was shown that stack trace instead of the one
     # sentence validate already had.
@@ -1279,7 +1279,7 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
 
     try:
         # HYPERUN-USER-SECRET. Looked up ONLY when the request names a secret,
-        # so an ordinary submit costs no extra cluster call. `to_pacsjob` is
+        # so an ordinary submit costs no extra cluster call. `to_hyperunjob` is
         # pure and cannot read the cluster itself, so the names come in as an
         # argument; without them a name this namespace registered would be
         # refused as unknown.
@@ -1287,7 +1287,7 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
             frozenset(_own_secret_names(request, principal.namespace))
             if body.secrets else frozenset()
         )
-        obj = to_pacsjob(body, principal, settings, job_id, capacity_type,
+        obj = to_hyperunjob(body, principal, settings, job_id, capacity_type,
                          own_secrets=own,
                          inherited_result_path=inherited_result_path)
     except ValueError as exc:
@@ -1314,13 +1314,13 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
 # (`sky/dashboard/src/components/jobs.jsx:97`), which splits the same way: the
 # default view is what is still moving, not everything ever submitted.
 #
-# PACSrun defines seven phases in `api/v1alpha1/pacsjob_types.go`: Pending,
+# PACSrun defines seven phases in `api/v1alpha1/hyperunjob_types.go`: Pending,
 # Starting, Running, Recovering (lines 64-69) and Compared (line 85). Three of
 # them end the job and never change again.
 #
 # Compared is the one that is easy to miss. It is not a failure: a mode=compare
 # job priced every candidate offering and deliberately bought nothing
-# (`pacsjob_types.go:85`). Leaving it out of this set was a real defect —
+# (`hyperunjob_types.go:85`). Leaving it out of this set was a real defect —
 # measured 2026-09-01 against the live cluster, 12 of 24 jobs were Compared and
 # every one of them showed up under the "still running" tab.
 #
@@ -1349,7 +1349,7 @@ def secrets_route(
     nothing more: which Kubernetes Secret holds it is an internal name, and
     `docs/03-api.md` keeps those inside (the same rule strips them from
     `GET /v1/jobs/{id}/spec`, HYPERUN-SPEC-REDACT). The value stays in the Kubernetes
-    Secret: the server writes a `secretKeyRef` into the PacsJob and kubelet
+    Secret: the server writes a `secretKeyRef` into the HyperunJob and kubelet
     resolves it, so this process never holds the string at all
     (`config/deploy/rbac.yaml` grants no `secrets` verb — deliberately).
 
@@ -1399,7 +1399,7 @@ def _own_secret_names(request: Request, namespace: str) -> dict[str, str | None]
     """What this namespace registered, name -> expiry, or empty when it cannot say.
 
     WHY A 403 IS SWALLOWED HERE AND NOWHERE ELSE. Registering values is opt-in
-    per namespace: the `ddpsrun-gw-secrets` RoleBinding is a separate onboarding
+    per namespace: the `hyperun-gw-secrets` RoleBinding is a separate onboarding
     step (`config/deploy/rbac.yaml`), and a namespace without it must still get
     an answer from this route — the operator's bindings are perfectly usable
     there. Turning that into a 502 would make the LIST route fail for a
@@ -1466,7 +1466,7 @@ def put_secret(
             deployment already binds (the operator's would win at submit time,
             so storing yours would be storing something that never gets used);
             502 when the cluster refused -- a 403 underneath means this
-            namespace has no `ddpsrun-gw-secrets` RoleBinding yet.
+            namespace has no `hyperun-gw-secrets` RoleBinding yet.
     """
     settings: Settings = request.app.state.settings
     namespace = namespace_for(principal, namespace)
@@ -1645,7 +1645,7 @@ def list_jobs(
     # Filtering here is what makes that sentence true. `owned_by_caller` keeps an
     # operator seeing everything and keeps the unowned kubectl-era jobs visible.
     objects = [obj for obj in objects if owned_by_caller(obj, principal)]
-    views = [JobView.from_pacsjob(obj) for obj in objects]
+    views = [JobView.from_hyperunjob(obj) for obj in objects]
 
     if phase == "active":
         views = [v for v in views if v.phase not in FINISHED_PHASES]
@@ -1674,7 +1674,7 @@ def get_job(
     Args:
         job_id: an id this server issued.
         principal: the caller. The lookup is scoped to their namespace AND
-            checked against the job's own `ddpsrun.io/owner` label (an operator
+            checked against the job's own `hyperun.io/owner` label (an operator
             may name another namespace with ?namespace=), so a job belonging
             to someone else reads as 404, not 403 -- we do not confirm that
             another user's job exists. HYPERUN-OWNER-GATE: true since 2026-09-08 and not before,
@@ -1696,7 +1696,7 @@ def get_job(
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    return JobView.from_pacsjob(obj)
+    return JobView.from_hyperunjob(obj)
 
 
 @app.delete("/v1/jobs/{job_id}", status_code=204)
@@ -1708,7 +1708,7 @@ def cancel_job(
 ) -> Response:
     """Stop a job and take it off the list.
 
-    HYPERUN-CANCEL. Deleting the PacsJob is the only stop the CRD offers, and it
+    HYPERUN-CANCEL. Deleting the HyperunJob is the only stop the CRD offers, and it
     is what PACSrun's controller watches to give back whatever the job rented.
     This server never deletes a pod or a node itself: it does not know what a
     job took, and a partial cleanup would strand capacity nobody is tracking.
@@ -1836,7 +1836,7 @@ def stop_job(
         raise HTTPException(status_code=404, detail="no such job") from exc
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return JobView.from_pacsjob(patched)
+    return JobView.from_hyperunjob(patched)
 
 
 @app.get("/v1/jobs/{job_id}/spec", response_model=JobSpecResponse)
@@ -1877,7 +1877,7 @@ def get_job_spec(
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    return JobSpecResponse.from_pacsjob(obj)
+    return JobSpecResponse.from_hyperunjob(obj)
 
 
 @app.get("/v1/scripts", response_model=ScriptsResponse)
@@ -1928,7 +1928,7 @@ def scripts_route(
     # like per-person separation and is not: a namespace is a tenancy boundary
     # that may hold a whole team, and in this deployment it does -- all three
     # principals in the token file sit in `default`. The per-person fact was
-    # already on every job as `ddpsrun.io/owner` (models.to_pacsjob stamps it
+    # already on every job as `hyperun.io/owner` (models.to_hyperunjob stamps it
     # from principal.user) and this route was not reading it.
     #
     # dict keeps insertion order and the objects are walked newest first, so the
@@ -2536,7 +2536,7 @@ def query_metrics(
     namespace, and it belongs in the same change that starts pushing.
 
     Args:
-        expr: a PromQL expression, e.g. `up` or `pacsrun_gpu_utilization`.
+        expr: a PromQL expression, e.g. `up` or `hyperun_gpu_utilization`.
 
     Raises:
         HTTPException: 502 when the apiserver refuses or cannot reach Prometheus. A 403 underneath
@@ -2555,7 +2555,7 @@ def get_usage(
     principal: PrincipalDep,
     days: int = Query(
         default=30, ge=1, le=60,
-        description="How far back. Sixty is the cap because beyond that the PacsJob objects "
+        description="How far back. Sixty is the cap because beyond that the HyperunJob objects "
         "themselves have usually been deleted and the answer would be quietly short.",
     ),
 ) -> UsageResponse:

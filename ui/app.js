@@ -27,7 +27,7 @@
  * (one detail screen held open for an hour is about $0.005).
  *
  * Status words are printed verbatim — Running, Compared, Failed — because they
- * are the same strings `kubectl get pacsjobs` prints and the user has to be
+ * are the same strings `kubectl get hyperunjobs` prints and the user has to be
  * able to match one against the other.
  */
 
@@ -93,15 +93,15 @@ setInterval(pollDeployedVersion, 600000);
 /* ------------------------------------------------------------------ storage */
 
 const store = {
-  get server() { return localStorage.getItem("ddpsrun.server") || ""; },
-  get token() { return localStorage.getItem("ddpsrun.token") || ""; },
+  get server() { return localStorage.getItem("hyperun.server") || ""; },
+  get token() { return localStorage.getItem("hyperun.token") || ""; },
   set(server, token) {
-    localStorage.setItem("ddpsrun.server", server.replace(/\/+$/, ""));
-    localStorage.setItem("ddpsrun.token", token);
+    localStorage.setItem("hyperun.server", server.replace(/\/+$/, ""));
+    localStorage.setItem("hyperun.token", token);
   },
   clear() {
-    localStorage.removeItem("ddpsrun.server");
-    localStorage.removeItem("ddpsrun.token");
+    localStorage.removeItem("hyperun.server");
+    localStorage.removeItem("hyperun.token");
   },
 };
 
@@ -144,7 +144,7 @@ async function call(path, options = {}) {
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-/* PacsJob's seven phases (`api/v1alpha1/pacsjob_types.go:64-69` and `:85`).
+/* HyperunJob's seven phases (`api/v1alpha1/hyperunjob_types.go:64-69` and `:85`).
    Three of them end the job and never change again. Compared is the one that
    is easy to miss: a mode=compare job priced every candidate offering and
    deliberately bought nothing, so it is finished and it is not a failure. */
@@ -196,7 +196,7 @@ function span(fromISO, toISO) {
  *
  * Case 3 is real. The controller that stamps startedAt/finishedAt
  * (HYPERUN-JOB-CLOCK) started 2026-09-01T00:06:53Z and stamps once without
- * backfilling, while the newest PacsJob on the cluster was created
+ * backfilling, while the newest HyperunJob on the cluster was created
  * 2026-08-29T15:23:25Z. Without this branch, aiops-exp2 — which succeeded days
  * ago — read as "64h 42m queued". On 2026-09-01 all 24 jobs were this case.
  */
@@ -456,8 +456,8 @@ function jobsTable(jobs, columns) {
   };
   const CELL = {
     name: (j) => `<span class="name">${esc(j.name || "(unnamed)")}</span>`,
-    // Jobs with no id do exist: a PacsJob applied with kubectl does not follow
-    // the ddpsrun-<hex> naming rule, so no id can be read off it — on
+    // Jobs with no id do exist: a HyperunJob applied with kubectl does not follow
+    // the hyperun-<hex> naming rule, so no id can be read off it — on
     // 2026-09-01 that was all 24 jobs on the cluster. This cell says where the
     // job came from; the row still clicks through, because the server also
     // accepts the object NAME as the detail key (HYPERUN-JOB-BY-NAME).
@@ -1433,7 +1433,7 @@ function drawCompare(job) {
 
    THIS SAID "the scripts this caller has submitted" until 2026-09-08, and the namespace
    never guaranteed that: it is a tenancy boundary that may hold a whole team, and in this
-   deployment it holds everyone. The per-person fact is each job's own ddpsrun.io/owner
+   deployment it holds everyone. The per-person fact is each job's own hyperun.io/owner
    label, which the route ignored.
 
    WHY IT IS WORTH A SCREEN. The Script box takes a whole run.sh, and a run.sh that survived one
@@ -1471,7 +1471,7 @@ async function drawScripts() {
   // ★ THE NAMESPACE IS NOT THE PERSON, and saying "in default (yours)" was the
   // defect: all three principals in this deployment sit in `default`, so that
   // sentence separated nobody while looking as though it had. The per-person
-  // fact is `owner`, from the job's own ddpsrun.io/owner label.
+  // fact is `owner`, from the job's own hyperun.io/owner label.
   const people = answer.owners || [];
   const named = people.filter(Boolean).length;
   $("scripts-note").textContent = rows.length
@@ -1574,7 +1574,7 @@ async function drawScripts() {
    nothing is stored -- the script rides on the job inside `args`, which is what
    lets the Scripts screen hand it back afterwards.
 
-   A SIZE CEILING, because the script travels in the job object. A PacsJob lives
+   A SIZE CEILING, because the script travels in the job object. A HyperunJob lives
    in etcd and Kubernetes refuses an object over roughly 1.5 MB; a script that
    big is a data file somebody picked by mistake, and finding out at submit time
    would mean a 400 from the apiserver about object size. 256 KB is far above any
@@ -1900,7 +1900,7 @@ function renderImagePicker(filter) {
    Script box instead of on a screen the person has to leave the form to reach.
 
    Same source as the Scripts screen -- GET /v1/scripts, which reads each script back off the
-   PacsJob it rides on, so nothing is stored for this and a deleted job takes its script with it.
+   HyperunJob it rides on, so nothing is stored for this and a deleted job takes its script with it.
    Newest first, and the list is fetched once per page load: a script appears here when a job is
    submitted, which is not while this form is open.
 
@@ -2255,7 +2255,7 @@ async function drawTeam() {
     : empty(s.jobs ? "No job here was submitted by a person."
                    : "This team has no jobs yet.", "New job", "submit");
 
-  // A job applied with kubectl carries no ddpsrun.io/owner label, so there is
+  // A job applied with kubectl carries no hyperun.io/owner label, so there is
   // nobody to put in the Member column -- and the three names that column has
   // tried (`default`, `admin`, `kubectl`) were each read as a colleague. Its
   // spend is in the totals above, so saying nothing here would leave the table
@@ -2506,7 +2506,7 @@ document.querySelectorAll("#jobs-tabs button").forEach((b) => {
                  sends, so a job submitted from here came back with NO command
                  at all -- and the rerun would then run the image's entrypoint.
      gpus.vramGB the server writes EITHER `name` OR `vramGB`, never both
-                 (models.py, to_pacsjob). Reading `name` alone meant a job that
+                 (models.py, to_hyperunjob). Reading `name` alone meant a job that
                  asked for 48 GB came back with the GPU box empty.
      placement   vendors and mode were not in the object at all until
                  2026-09-08; now they are, so they come back too.
@@ -2562,7 +2562,7 @@ $("d-again").onclick = () => {
 
 /* HYPERUN-CANCEL. A job can sit in Pending forever with nothing to do about it,
    and until this existed the only way out was kubectl — the thing this service
-   exists so that nobody needs. Deleting the PacsJob is the only stop the CRD
+   exists so that nobody needs. Deleting the HyperunJob is the only stop the CRD
    offers, so the row goes away rather than staying with a "cancelled" state.
 
    THE BUTTON SAYS "Delete job" SINCE 2026-09-10, and it used to say "Cancel
@@ -2715,8 +2715,8 @@ $("d-log-copy").onclick = () => copyText(logText || "", $("d-log-copy"), $("d-lo
  * Whoever steals the code cannot complete step two without the original.
  */
 
-const LOGIN_KEY = "ddpsrun.pkce";      // the random number, while the round trip is in flight
-const REFRESH_KEY = "ddpsrun.refresh"; // survives a tab close, unlike the id_token's hour
+const LOGIN_KEY = "hyperun.pkce";      // the random number, while the round trip is in flight
+const REFRESH_KEY = "hyperun.refresh"; // survives a tab close, unlike the id_token's hour
 
 let loginConfig = null;
 
@@ -2951,7 +2951,7 @@ async function refreshIfExpired() {
 
 /* Sign out for real: this browser forgets us, and so does Cognito.
 
-   REMOVING EVERY ddpsrun.* KEY, not the three we happen to name. A key left
+   REMOVING EVERY hyperun.* KEY, not the three we happen to name. A key left
    behind starts the next visit half signed in, and the list has grown twice
    already (refresh token, then the PKCE verifier).
 
@@ -2965,7 +2965,7 @@ function signOut() {
   poll.stop();
   $("newcomer").hidden = true;
   Object.keys(localStorage)
-    .filter((k) => k.startsWith("ddpsrun."))
+    .filter((k) => k.startsWith("hyperun."))
     .forEach((k) => localStorage.removeItem(k));
   sessionStorage.removeItem(LOGIN_KEY);
   // The namespace picker belongs to the person, not the browser: the next

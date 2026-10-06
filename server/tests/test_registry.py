@@ -2,7 +2,7 @@
 
 WHAT IT GUARDS. The Image field on the New job screen was a free-text box whose placeholder was a
 70-character ECR URL. A typo in the account id, the region or the repository path is caught by
-nothing here: the request is valid, the PacsJob is created, the machine is rented, and the answer
+nothing here: the request is valid, the HyperunJob is created, the machine is rented, and the answer
 arrives as an ImagePullBackOff. So the one thing the field could not do -- offer the addresses
 that exist -- was also the thing that would have made it safe.
 
@@ -56,13 +56,13 @@ def with_fake(monkeypatch, fake):
 def test_a_repository_becomes_pullable_addresses(monkeypatch):
     """The one thing the Image box needs: strings ready to paste, not parts to assemble."""
     fake = FakeECR(
-        repositories=[repo("pacsrun/operator")],
-        images={"pacsrun/operator": [image(["fd7c9b1c84e1"], "2026-09-06T11:00:00Z")]},
+        repositories=[repo("hyperun/operator")],
+        images={"hyperun/operator": [image(["fd7c9b1c84e1"], "2026-09-06T11:00:00Z")]},
     )
     answer = with_fake(monkeypatch, fake)
-    assert [i.repository for i in answer.images] == ["pacsrun/operator"]
+    assert [i.repository for i in answer.images] == ["hyperun/operator"]
     assert answer.images[0].addresses() == [
-        f"{ACCOUNT_HOST}/pacsrun/operator:fd7c9b1c84e1"
+        f"{ACCOUNT_HOST}/hyperun/operator:fd7c9b1c84e1"
     ]
 
 
@@ -70,9 +70,9 @@ def test_the_host_survives_a_namespaced_repository(monkeypatch):
     """A repository name can hold slashes, and splitting the URI on the first one gets it wrong.
 
     ECR reports `repositoryUri` as `<host>/<name>` and the name of every repository this lab
-    builds under a project prefix -- pacsrun/operator, criu-kubevirt-test/criu-agent -- contains
+    builds under a project prefix -- hyperun/operator, criu-kubevirt-test/criu-agent -- contains
     a slash of its own. A host taken as "everything before the first slash" would be right, but
-    a host taken by splitting the REST off would leave "pacsrun/" glued to it. This pins the
+    a host taken by splitting the REST off would leave "hyperun/" glued to it. This pins the
     subtraction: the host is the URI with the name and its separator removed from the END.
     """
     fake = FakeECR(

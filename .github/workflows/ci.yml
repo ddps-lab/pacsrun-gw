@@ -40,7 +40,7 @@ jobs:
           # still fails, which a `grep -v job-` would have let through. The token
           # is only ever `job-` plus twelve hex, so nothing else can match it -- and
           # a REAL account number after a dash, which is how our bucket name carries
-          # one (`pacsrun-results-<account>-us-west-2`), is untouched.
+          # one (`hyperun-results-<account>-us-west-2`), is untouched.
           strip_our_own_ids() { sed -E 's/job-[0-9a-f]{12}//g'; }
 
           check() {
@@ -213,7 +213,7 @@ jobs:
       # 이미지는 로컬 docker daemon 으로 절대 굽지 않는다 — CI 가 유일한 빌더다.
       - name: docker build
         working-directory: server
-        run: docker build -t ddpsrun-gw:${{ github.sha }} .
+        run: docker build -t hyperun-gw:${{ github.sha }} .
 
       # ★ 빌드되는 것과 도는 것은 다르다. 2026-09-15 에 image 가 깨끗이 빌드되고
       # 첫 `kubectl apply` 에서 죽었다 — `pip install .` 이 `prices.csv` 를 빼먹었고
@@ -247,7 +247,7 @@ jobs:
             -e KUBECONFIG=/tmp/kubeconfig \
             -v /tmp/tok.json:/tmp/tok.json:ro \
             -v /tmp/kubeconfig:/tmp/kubeconfig:ro \
-            ddpsrun-gw:${{ github.sha }}
+            hyperun-gw:${{ github.sha }}
           for i in $(seq 1 30); do
             if curl -sf -m 2 http://127.0.0.1:18080/healthz > /dev/null; then
               echo "  /healthz 응답 확인"

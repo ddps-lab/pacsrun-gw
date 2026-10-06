@@ -30,7 +30,7 @@ class FakeClient:
         self.submit_result = {
             "job_id": "job-a8acdef80a07",
             "name": "bank-exp2",
-            "result_path": "s3://bucket/pacsrun/lab-alice/bank-exp2-a8acdef80a07/",
+            "result_path": "s3://bucket/hyperun/lab-alice/bank-exp2-a8acdef80a07/",
         }
         self.status_result = {"job_id": "job-a8acdef80a07", "name": "bank-exp2", "phase": "Running"}
         self.log_lines = ["2026-09-01T00:00:01.000Z line one",
@@ -243,7 +243,7 @@ def test_submit_prints_the_id_the_results_and_how_to_follow(fake, capsys):
     assert run(["submit", "--name", "bank-exp2", "--image", "img"]) == cli.EXIT_OK
     printed = capsys.readouterr().out
     assert "job-a8acdef80a07" in printed
-    assert "s3://bucket/pacsrun/lab-alice/" in printed
+    assert "s3://bucket/hyperun/lab-alice/" in printed
     assert "hyperun logs job-a8acdef80a07 --follow" in printed
 
 

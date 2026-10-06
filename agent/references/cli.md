@@ -42,7 +42,7 @@ hyperun <command> [options]
 
 ## hyperun delete
 
-Deletes the PacsJob. That is the only stop the CRD offers: PACSrun watches for the object going away and gives back whatever the job had rented. There is no cancelled state to look at afterwards, because there is no object left to carry one. Files already written to the job's result path are NOT deleted.
+Deletes the HyperunJob. That is the only stop the CRD offers: PACSrun watches for the object going away and gives back whatever the job had rented. There is no cancelled state to look at afterwards, because there is no object left to carry one. Files already written to the job's result path are NOT deleted.
 
 | argument | required | what it does |
 |---|---|---|
@@ -51,7 +51,7 @@ Deletes the PacsJob. That is the only stop the CRD offers: PACSrun watches for t
 
 ## hyperun cancel
 
-Deletes the PacsJob. That is the only stop the CRD offers: PACSrun watches for the object going away and gives back whatever the job had rented. There is no cancelled state to look at afterwards, because there is no object left to carry one. Files already written to the job's result path are NOT deleted.
+Deletes the HyperunJob. That is the only stop the CRD offers: PACSrun watches for the object going away and gives back whatever the job had rented. There is no cancelled state to look at afterwards, because there is no object left to carry one. Files already written to the job's result path are NOT deleted.
 
 | argument | required | what it does |
 |---|---|---|
@@ -223,7 +223,7 @@ Each line is one HTTPS round trip: the server relays it through the job's driver
 
 | argument | required | what it does |
 |---|---|---|
-| `job` | yes | the job id, or the PacsJob's Kubernetes name |
+| `job` | yes | the job id, or the HyperunJob's Kubernetes name |
 | `--slot SLOT` |  | which pod of a parallel job |
 | `-- COMMAND` | yes | one shell line to run and exit; leave it off for a prompt |
 

@@ -37,7 +37,7 @@ how to not run two of them at once (`concurrencyPolicy: Forbid`).
 
 WHAT THIS DOES NOT DO, and the omission is deliberate. **It does not stop
 anything.** Stopping a job today means deleting it, which returns the rented
-machine and loses the run; there is no pause. Until `PacsJob` grows a `Stopped`
+machine and loses the run; there is no pause. Until `HyperunJob` grows a `Stopped`
 phase and a resume path, a monitor that could stop would be a monitor that can
 only destroy. It tells a person, and the person decides.
 
@@ -790,15 +790,15 @@ def run_once() -> int:
             if not findings:
                 continue
 
-            owner = labels.get("ddpsrun.io/owner", "")
-            display = labels.get("ddpsrun.io/name", name)
+            owner = labels.get("hyperun.io/owner", "")
+            display = labels.get("hyperun.io/name", name)
             logger.warning("%s/%s (%s): %s", namespace, name, owner,
                            "; ".join(f["detail"] for f in findings))
 
             lines = cluster.job_log_window(namespace, name, WINDOW_SECONDS, 10000)
             series = metrics.scan(lines, WINDOW_SECONDS).metric_series
             explanation = explain(findings, series, upstage)
-            job_id = labels.get("ddpsrun.io/job-id", name)
+            job_id = labels.get("hyperun.io/job-id", name)
             text = message_for(job_id, display, findings, explanation, None, None)
             blocks = blocks_for(job_id, display, findings, explanation, None, None)
             if notify(slack_id_for(owner), text, slack, blocks=blocks):

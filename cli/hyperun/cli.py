@@ -230,8 +230,8 @@ def build_parser() -> argparse.ArgumentParser:
     # `shell` subparser has its own positional called `command` -- the shell line
     # to run -- and argparse writes both into the SAME namespace. With both named
     # `command` the subparser's REMAINDER overwrote the subcommand name, so
-    # `ddpsrun shell job-x` set args.command to [] and main() printed the
-    # top-level help, while `ddpsrun shell job-x -- nvidia-smi` set it to
+    # `hyperun shell job-x` set args.command to [] and main() printed the
+    # top-level help, while `hyperun shell job-x -- nvidia-smi` set it to
     # ['nvidia-smi'] and main() died on `COMMANDS[['nvidia-smi']]` with
     # "TypeError: unhashable type: 'list'". Both forms, every version: `shell`
     # had never once dispatched. Found 2026-09-10 from a user's paste of the
@@ -262,8 +262,8 @@ def build_parser() -> argparse.ArgumentParser:
     # ★ THE COMMAND IS `delete` AND `cancel` IS THE OLD SPELLING. It was called
     # cancel and that name described an intention rather than the action: there
     # is no cancelled state to move a job into, because the CRD's only stop is
-    # deleting the PacsJob (config/deploy/rbac.yaml, and the phase enum in
-    # api/v1alpha1/pacsjob_types.go carries Pending / Starting / Running /
+    # deleting the HyperunJob (config/deploy/rbac.yaml, and the phase enum in
+    # api/v1alpha1/hyperunjob_types.go carries Pending / Starting / Running /
     # Recovering / Succeeded / Failed / Compared and nothing else). A person
     # who reads "cancel" expects the job to still be listed afterwards, and on
     # 2026-09-09 one asked why a cancelled job showed no cancelled state. The
@@ -272,7 +272,7 @@ def build_parser() -> argparse.ArgumentParser:
     cancel = sub.add_parser(
         "delete", aliases=["cancel"],
         help="delete a job -- it stops and disappears from the list",
-        description="Deletes the PacsJob. That is the only stop the CRD offers: "
+        description="Deletes the HyperunJob. That is the only stop the CRD offers: "
         "PACSrun watches for the object going away and gives back whatever the "
         "job had rented. There is no cancelled state to look at afterwards, "
         "because there is no object left to carry one. Files already written to "
@@ -402,7 +402,7 @@ def build_parser() -> argparse.ArgumentParser:
         "`shell job-x --slot 2` asks pod 0 and passes `--slot 2` to the shell. "
         "That is refused rather than obeyed.",
     )
-    shell.add_argument("job", help="the job id, or the PacsJob's Kubernetes name")
+    shell.add_argument("job", help="the job id, or the HyperunJob's Kubernetes name")
     shell.add_argument("--slot", type=int, default=0, help="which pod of a parallel job")
     shell.add_argument(
         "command", nargs=argparse.REMAINDER, metavar="-- COMMAND",
@@ -1185,7 +1185,7 @@ def bar(percent: float, width: int = 20) -> str:
 
 
 # HYPERUN-WATCH-TERMINAL. The three phases a job never leaves. They are the
-# controller's own words: the phase enum in api/v1alpha1/pacsjob_types.go
+# controller's own words: the phase enum in api/v1alpha1/hyperunjob_types.go
 # carries Pending / Starting / Running / Recovering / Succeeded / Failed /
 # Compared and nothing else, and the screen keeps the same three in
 # `const TERMINAL` (ui/app.js). Recovering is NOT here -- the machine was

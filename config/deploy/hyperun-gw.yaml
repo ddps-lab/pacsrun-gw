@@ -21,7 +21,7 @@
 # starting or restarting, no Service can be created at all.
 #
 # EVERYTHING NEW IS ADDITIVE. Not one object the Lambda depends on is modified.
-# The existing `ClusterRole ddpsrun-gw`, its ClusterRoleBinding to the Kubernetes
+# The existing `ClusterRole hyperun-gw`, its ClusterRoleBinding to the Kubernetes
 # group of the same name, and the per-namespace Roles are all left exactly as
 # they are, so the Lambda keeps working for the whole migration and rolling back
 # is `kubectl delete` of what is here.
@@ -76,11 +76,11 @@ metadata:
   name: hyperun-gw
 rules:
   # Submit, read back, and cancel. `delete` is the cancel path -- deleting the
-  # PacsJob is the only stop the CRD offers, and PACSrun's controller watches for
+  # HyperunJob is the only stop the CRD offers, and PACSrun's controller watches for
   # it to give back whatever the job rented. No `update` or `patch`: a submitted
   # job is not edited, it is cancelled and submitted again.
-  - apiGroups: ["pacsrun.io"]
-    resources: ["pacsjobs"]
+  - apiGroups: ["hyperun.io"]
+    resources: ["hyperunjobs"]
     verbs: ["create", "get", "list", "delete"]
   # Find the pod behind a job. `list` and not `get`, because the server looks a
   # pod up by label and never by name.
@@ -156,7 +156,7 @@ rules:
     verbs: ["create"]
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["ddpsrun-user-secrets"]
+    resourceNames: ["hyperun-user-secrets"]
     verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -173,16 +173,16 @@ subjects:
     name: hyperun-gw
     namespace: hyperun-system
 ---
-# Prometheus is in `pacsrun-system`, which is not a tenant namespace, so the
+# Prometheus is in `hyperun-system`, which is not a tenant namespace, so the
 # per-tenant bindings above never cover it. Without this, `/v1/metrics/query`
 # answers 502 with a 403 underneath. A Role narrowed to the single verb rather
-# than the whole ClusterRole: the gateway has no reason to create PacsJobs or
+# than the whole ClusterRole: the gateway has no reason to create HyperunJobs or
 # read the operator's own pods in there, and both would otherwise be one bug away.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: hyperun-gw-prometheus
-  namespace: pacsrun-system
+  namespace: hyperun-system
 rules:
   - apiGroups: [""]
     resources: ["services/proxy"]
@@ -192,7 +192,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: hyperun-gw-prometheus
-  namespace: pacsrun-system
+  namespace: hyperun-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -200,7 +200,7 @@ roleRef:
 subjects:
   # A ServiceAccount, and the older file's equivalent binding names a GROUP
   # instead. Both are right for their own subject: the Lambda proves who it is
-  # with an EKS access entry that maps its IAM role to the group `ddpsrun-gw`,
+  # with an EKS access entry that maps its IAM role to the group `hyperun-gw`,
   # and RBAC sees that group. A pod presents its ServiceAccount token. Binding
   # the wrong one applies cleanly, grants nothing, and says nothing.
   - kind: ServiceAccount
@@ -242,7 +242,7 @@ spec:
             - name: HYPERUN_RESULT_BUCKET
               value: <RESULT_BUCKET>
             - name: HYPERUN_RESULT_PREFIX
-              value: pacsrun/
+              value: hyperun/
             # Must match PACSrun's PACSRUN_RESULT_PREFIX_TEMPLATE, which checks
             # the same prefix again on the cluster side. If the two disagree,
             # every job is refused at admission.
@@ -252,7 +252,7 @@ spec:
             # trusts exactly one namespace/ServiceAccount pair. Naming anything
             # else is exit 10 before a machine is rented.
             - name: HYPERUN_SERVICE_ACCOUNT
-              value: pacsjob-writer
+              value: hyperunjob-writer
             # ── The directory of registered people.
             # SECRETS MANAGER AND NOT A MOUNTED SECRET, and this is the whole
             # reason the pod needs an AWS identity. The Lambda reads this same
@@ -345,13 +345,13 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
             # ★ THE UID IS SPELLED OUT AND `runAsNonRoot` ALONE IS NOT ENOUGH.
-            # The image says `USER ddpsrun`, which is a NAME, and kubelet cannot
+            # The image says `USER hyperun`, which is a NAME, and kubelet cannot
             # resolve a name to a number without running the image -- so it
             # cannot prove the user is not root and refuses to start the
             # container at all:
             #
             #   Error: container has runAsNonRoot and image has non-numeric
-            #   user (ddpsrun), cannot verify user is non-root
+            #   user (hyperun), cannot verify user is non-root
             #
             # Measured on the first apply, 2026-09-15. 10001 is the uid
             # `server/Dockerfile` creates. Stating it here also means the yaml

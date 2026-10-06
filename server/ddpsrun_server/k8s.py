@@ -5,11 +5,11 @@ END-TO-END FLOW of this file:
   1. `Cluster.connect()` loads credentials. Inside the cluster that is the
      projected ServiceAccount token the pod already has; on a laptop it falls
      back to the developer's kubeconfig so the server can be run locally.
-  2. `create_job()` POSTs a PacsJob into the caller's namespace. PACSrun's
+  2. `create_job()` POSTs a HyperunJob into the caller's namespace. PACSrun's
      controller picks it up from there; this server never speaks to a vendor.
   3. `get_job()` fetches one back by name.
-  4. `job_log_window()` is the awkward one. A PacsJob has no logs — a *pod*
-     does. So it lists pods carrying `pacsrun.io/job=<name>` (the label the
+  4. `job_log_window()` is the awkward one. A HyperunJob has no logs — a *pod*
+     does. So it lists pods carrying `hyperun.io/job=<name>` (the label the
      controller writes at `internal/controller/vendorpod.go:1222`), picks slot
      0, and reads a time window of that pod's stdout. It returns a window rather
      than a stream because a Lambda execution cannot outlive 15 minutes.
@@ -20,13 +20,13 @@ END-TO-END FLOW of this file:
      metrics endpoint, whose whole purpose is to read one of the lines the relay
      masks. See its docstring for why the redaction lives at the point of use.
 
-WHY THE DYNAMIC CLIENT AND NOT GENERATED TYPES. PacsJob is a CRD, so the Python
+WHY THE DYNAMIC CLIENT AND NOT GENERATED TYPES. HyperunJob is a CRD, so the Python
 client has no model for it. `CustomObjectsApi` takes and returns plain dicts,
 which is all `models.py` produces and consumes. Nothing to generate, nothing to
 regenerate when the CRD gains a field.
 
 WHAT THIS SERVER NEEDS PERMISSION TO DO. Its ServiceAccount needs `create`,
-`get` and `list` on `pacsjobs`, plus `list` on `pods` and `get` on `pods/log`,
+`get` and `list` on `hyperunjobs`, plus `list` on `pods` and `get` on `pods/log`,
 in every tenant namespace. It does NOT need `get` on `secrets`: it writes a
 `secretKeyRef` and lets kubelet do the reading, so a compromise of this server
 does not hand over the GitHub token.
@@ -56,7 +56,7 @@ from .config import (
 
 # HYPERUN-SECRET-EXPIRY. Where a registered value's expiry date is kept: an
 # annotation on the namespace's own Secret, one per name.
-EXPIRY_ANNOTATION_PREFIX = "ddpsrun.io/expires-"
+EXPIRY_ANNOTATION_PREFIX = "hyperun.io/expires-"
 
 # The driver prints its own bookkeeping on the same stdout as the workload.
 # `PACSRUN_KEEPALIVE` is emitted every 30 seconds for the whole life of the job
@@ -153,11 +153,11 @@ class Cluster:
         return Cluster(client.CustomObjectsApi(), client.CoreV1Api())
 
     def create_job(self, namespace: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Create one PacsJob.
+        """Create one HyperunJob.
 
         Args:
             namespace: the caller's namespace, from their token.
-            body: what `models.to_pacsjob` produced.
+            body: what `models.to_hyperunjob` produced.
 
         Returns:
             The object as the API server stored it, with defaults filled in.
@@ -179,7 +179,7 @@ class Cluster:
             raise ClusterError(_api_message(exc)) from exc
 
     def get_job(self, namespace: str, name: str) -> dict[str, Any]:
-        """Fetch one PacsJob by name.
+        """Fetch one HyperunJob by name.
 
         Raises:
             NotFound: no object of that name in that namespace. This is also
@@ -201,22 +201,22 @@ class Cluster:
             raise ClusterError(_api_message(exc)) from exc
 
     def delete_job(self, namespace: str, name: str) -> None:
-        """Delete one PacsJob.
+        """Delete one HyperunJob.
 
-        WHAT THIS ACTUALLY STOPS. Deleting the PacsJob is what PACSrun watches;
+        WHAT THIS ACTUALLY STOPS. Deleting the HyperunJob is what PACSrun watches;
         its controller owns the pods and the rented capacity, and removing the
         object is the signal to give them back. This server does not delete pods
         or nodes itself, and must not: it holds no knowledge of what a job
         rented, and a half-cleanup would leave capacity nobody is tracking.
 
-        WHY THERE IS NO SEPARATE "CANCEL". A PacsJob has no field meaning "stop
+        WHY THERE IS NO SEPARATE "CANCEL". A HyperunJob has no field meaning "stop
         but stay". Deleting it is the only stop the CRD offers, so a cancel that
         left the row on screen would be a lie about what happened.
 
         Args:
             namespace: the caller's namespace, from their token. A job in any
                 other namespace is not reachable from here at all.
-            name: the PacsJob's Kubernetes name.
+            name: the HyperunJob's Kubernetes name.
 
         Raises:
             NotFound: no object of that name in that namespace. Also what a
@@ -238,7 +238,7 @@ class Cluster:
             raise ClusterError(f"could not delete {name}: {exc.reason}") from exc
 
     def set_stopped(self, namespace: str, name: str, stopped: bool) -> dict[str, Any]:
-        """Ask for one PacsJob to be PAUSED, or to run again. HYPERUN-JOB-STOP.
+        """Ask for one HyperunJob to be PAUSED, or to run again. HYPERUN-JOB-STOP.
 
         WHAT IT DOES AND WHAT IT DELIBERATELY DOES NOT. It writes one boolean into
         `spec.stopped` and nothing else. The pause itself happens far from here:
@@ -259,7 +259,7 @@ class Cluster:
 
         Args:
             namespace: the caller's namespace, from their token.
-            name: the PacsJob's Kubernetes name.
+            name: the HyperunJob's Kubernetes name.
             stopped: True to ask for a pause, False to ask it to run again.
 
         Returns:
@@ -285,7 +285,7 @@ class Cluster:
                 f"could not {'pause' if stopped else 'resume'} {name}: {exc.reason}") from exc
 
     def list_jobs(self, namespace: str) -> list[dict[str, Any]]:
-        """Every PacsJob in one namespace.
+        """Every HyperunJob in one namespace.
 
         Used by /v1/stats, which calls it once per namespace of a team rather
         than listing the cluster: the server's ClusterRole is bound per tenant
@@ -322,7 +322,7 @@ class Cluster:
         """Ask the in-cluster Prometheus one instant query, through the apiserver.
 
         HYPERUN-PROMETHEUS-PROXY. The route is
-        `/api/v1/namespaces/pacsrun-system/services/prometheus:9090/proxy/...` — the apiserver's
+        `/api/v1/namespaces/hyperun-system/services/prometheus:9090/proxy/...` — the apiserver's
         own `services/proxy` subresource, which forwards to the Service and returns the reply.
 
         WHY THIS AND NOT AN ADDRESS OF ITS OWN. Prometheus holds one lab's GPU history, and a
@@ -390,7 +390,7 @@ class Cluster:
 
         Args:
             namespace: the caller's namespace.
-            job_name: the PacsJob's Kubernetes name.
+            job_name: the HyperunJob's Kubernetes name.
             slot: which pod of a parallel job. Stage 1 always submits
                 parallelism 1, so this is always 0 today.
 
@@ -422,7 +422,7 @@ class Cluster:
         logged, or put in an exception: the whole promise of the submit path is
         that a value goes from the Secret to kubelet without passing through
         this process, and the only reason this read exists at all is that
-        `GET /v1/secrets` has to answer "what may I write" and `to_pacsjob` has
+        `GET /v1/secrets` has to answer "what may I write" and `to_hyperunjob` has
         to know whether a name is registered before it writes a secretKeyRef
         for it.
 
@@ -436,7 +436,7 @@ class Cluster:
             error.
 
             HYPERUN-SECRET-EXPIRY. The date lives in an ANNOTATION on the same
-            Secret, `ddpsrun.io/expires-<NAME>`, so it costs no second read and
+            Secret, `hyperun.io/expires-<NAME>`, so it costs no second read and
             no second object. An annotation and not a second key because a key
             would show up in `GET /v1/secrets` as a name a job could ask for,
             and `JUDGE_EXPIRES` would then be injectable as an environment
@@ -444,7 +444,7 @@ class Cluster:
 
         Raises:
             ClusterError: the API server refused for any reason other than 404.
-                A 403 means the namespace has no `ddpsrun-gw-secrets`
+                A 403 means the namespace has no `hyperun-gw-secrets`
                 RoleBinding, which is an operator's onboarding step.
         """
         try:
@@ -529,11 +529,11 @@ class Cluster:
                         namespace=namespace,
                         # So a human reading `kubectl get secret` knows who made
                         # it and that deleting it deletes people's registrations.
-                        labels={"ddpsrun.io/managed-by": "ddpsrun-gw"},
+                        labels={"hyperun.io/managed-by": "hyperun-gw"},
                         annotations={
                             **({f"{EXPIRY_ANNOTATION_PREFIX}{name}": expires_at}
                                if expires_at else {}),
-                            "ddpsrun.io/what": (
+                            "hyperun.io/what": (
                                 "values registered through POST /v1/secrets by "
                                 "members of this namespace. One key per "
                                 "environment variable name."
@@ -774,7 +774,7 @@ class Cluster:
 
         Args:
             namespace: the caller's namespace.
-            job_name: the PacsJob's Kubernetes name.
+            job_name: the HyperunJob's Kubernetes name.
             since_seconds: how far back to read.
 
         Returns:
@@ -838,7 +838,7 @@ class Cluster:
 
         Args:
             namespace: the caller's namespace.
-            job_name: the PacsJob's Kubernetes name.
+            job_name: the HyperunJob's Kubernetes name.
             since_seconds: how far back to read. Make it several times the
                 polling interval: too narrow and a caller that pauses misses
                 lines, too wide and every request re-sends what it already sent.

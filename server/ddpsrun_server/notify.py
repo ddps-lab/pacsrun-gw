@@ -42,7 +42,7 @@ would have got 502, and the second press 202 with "An operator was already
 emailed about this address" -- which would have been false.
 
 So the send is wrapped and the marker deleted on failure. `s3:DeleteObject` is
-granted on `ddpsrun-register/*` and nowhere else, verified with
+granted on `hyperun-register/*` and nowhere else, verified with
 `simulate-principal-policy` after the apply: the same action on the results
 prefix and on the bucket root is implicitDeny.
 
@@ -67,13 +67,13 @@ import logging
 
 from . import config   # aws_region: HYPERUN-ENV-RENAME 와 같은 이유
 
-logger = logging.getLogger("ddpsrun.notify")
+logger = logging.getLogger("hyperun.notify")
 
 # Where the marker objects go. A prefix of its own, NOT under the results prefix,
 # because the IAM policy that lets this Lambda write is scoped to this path and
 # must not reach a job's output: `terraform/lambda/main.tf`'s register_write
-# statement names `<bucket>/ddpsrun-register/*` and nothing else.
-MARKER_PREFIX = "ddpsrun-register/"
+# statement names `<bucket>/hyperun-register/*` and nothing else.
+MARKER_PREFIX = "hyperun-register/"
 
 # The subject line. Fixed so the operator can filter on it.
 SUBJECT = "[hyperun] registration request"
@@ -257,7 +257,7 @@ def registration_body(email: str, subject_id: str, namespace_hint: str,
         roster = ("No team is named in the token file yet, so `" + DEFAULT_TEAM
                   + "` is used below. Pick the name you want; it only has to be "
                   + "consistent with itself.")
-    return f"""{email} signed in with Google and is not registered with ddpsrun.
+    return f"""{email} signed in with Google and is not registered with hyperun.
 
 Cognito verified them, so the sign-in itself worked. Every route still answers 403
 because nobody has given this address a namespace, and only an operator can.
@@ -290,7 +290,7 @@ first job can rent a machine; step 4 is what lets them in.
 
   2. create the workload ServiceAccount IN that namespace
 
-     kubectl -n {namespace_hint} create serviceaccount pacsjob-writer
+     kubectl -n {namespace_hint} create serviceaccount hyperunjob-writer
 
   3. ★ let that ServiceAccount assume the workload role. THIS STEP IS THE ONE
      THAT IS EASY TO MISS AND THE FAILURE IS LATE: without it the job is
@@ -304,8 +304,8 @@ first job can rent a machine; step 4 is what lets them in.
      this association, one per namespace/ServiceAccount:
 
      aws eks create-pod-identity-association --cluster-name <cluster> \\
-       --namespace {namespace_hint} --service-account pacsjob-writer \\
-       --role-arn <the pacsrun-workload role arn>
+       --namespace {namespace_hint} --service-account hyperunjob-writer \\
+       --role-arn <the hyperun-workload role arn>
 
      `aws eks list-pod-identity-associations --cluster-name <cluster>` shows what
      already exists. The gateway itself needs nothing: its own permissions come
@@ -391,7 +391,7 @@ def user_suggestion(email: str) -> str:
 
     ★ IT USED TO SUGGEST THE WHOLE ADDRESS, and that is what this fixes. The
     registration mail printed `{"user": "<the full email>"}` for the operator to
-    paste, and `user` is written into the `ddpsrun.io/owner` LABEL, where an `@`
+    paste, and `user` is written into the `hyperun.io/owner` LABEL, where an `@`
     is not a legal character. `naming.label_value` scrubs it rather than failing,
     so nothing crashed -- the job screen simply said "Submitted by
     hyundo-gmail.com". A mangled address is not a person's name.

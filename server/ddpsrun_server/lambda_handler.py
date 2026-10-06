@@ -46,9 +46,9 @@ import sys
 from ddpsrun_server import tokens_source
 
 TMP = pathlib.Path("/tmp")
-TOKENS_PATH = TMP / "ddpsrun-tokens.json"
-KUBECONFIG_PATH = TMP / "ddpsrun-kubeconfig.yaml"
-CA_PATH = TMP / "ddpsrun-cluster-ca.crt"
+TOKENS_PATH = TMP / "hyperun-tokens.json"
+KUBECONFIG_PATH = TMP / "hyperun-kubeconfig.yaml"
+CA_PATH = TMP / "hyperun-cluster-ca.crt"
 
 
 def _write_token_file() -> None:
