@@ -144,3 +144,9 @@ variable "ui_distribution_id" {
   default     = ""
 }
 
+
+variable "eks_cluster_name" {
+  description = "The EKS cluster the release rolls the gateway into, or \"\" to grant nothing."
+  type        = string
+  default     = ""
+}
