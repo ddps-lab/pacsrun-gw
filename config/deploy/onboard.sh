@@ -3,11 +3,11 @@
 #
 # WHY THIS EXISTS. Adding a person took five separate steps in four different
 # tools, and on 2026-09-10 two of them were found missing for a namespace that
-# had existed for days: one tenant namespace had no `hyperun-runpod` Secret at all
+# had existed for days: one tenant namespace had no `pacsrun-runpod` Secret at all
 # (so a job there could not rent from RunPod -- the driver pod reads that key
 # with a LocalObjectReference and only sees its own namespace) and its pod
-# identity association still pointed at the SHARED `hyperun-workload` role,
-# which allows Put/Get/DeleteObject on `hyperun/*` -- every other tenant's
+# identity association still pointed at the SHARED `pacsrun-workload` role,
+# which allows Put/Get/DeleteObject on `pacsrun/*` -- every other tenant's
 # results. Neither failure is visible until a job runs, and one of them is a
 # tenancy hole rather than an outage.
 #
@@ -42,8 +42,8 @@
 #                         request. Editing live auth from a shell script is not
 #                         a thing this repository does.
 #
-#   the `RoleBinding/hyperun-gw` in rbac.yaml is NOT applied and does not need
-#   to be: `ClusterRoleBinding/hyperun-gw -> Group:hyperun-gw` covers hyperunjobs
+#   the `RoleBinding/ddpsrun-gw` in rbac.yaml is NOT applied and does not need
+#   to be: `ClusterRoleBinding/ddpsrun-gw -> Group:ddpsrun-gw` covers pacsjobs
 #   cluster-wide (checked 2026-09-10). The namespaced one is left in rbac.yaml
 #   for a deployment that wants to narrow that, and applying both is harmless
 #   but pointless.
@@ -80,9 +80,9 @@ SA="hyperunjob-writer"
 # rent from a vendor needs that vendor's key sitting in it.
 #
 # Missing one is invisible until a job runs: the pod stops at
-# CreateContainerConfigError and kubelet says `secret "hyperun-gcp" not found`.
+# CreateContainerConfigError and kubelet says `secret "pacsrun-gcp" not found`.
 # Measured 2026-09-10 across the live cluster -- every tenant namespace had
-# hyperun-runpod and NONE had hyperun-gcp or hyperun-shadeform, so a GCP or
+# pacsrun-runpod and NONE had pacsrun-gcp or pacsrun-shadeform, so a GCP or
 # Shadeform job in a tenant namespace could not have started.
 #
 # AWS IS DELIBERATELY ABSENT. The AWS driver authenticates to its vendor with
@@ -91,7 +91,7 @@ SA="hyperunjob-writer"
 # (PACSrun internal/controller/awsdriverpod.go:472-480).
 #
 # ONE KEY PER VENDOR, SHARED BY EVERY TENANT. Verified 2026-09-10: the four
-# copies of hyperun-runpod on this cluster are byte-identical (same sha256).
+# copies of pacsrun-runpod on this cluster are byte-identical (same sha256).
 # S3 is split per tenant by IAM prefix; the VENDOR ACCOUNT is not split, so a
 # namespace holding this key can see and delete every pod on that account,
 # including another researcher's. That is a property of the account, not of

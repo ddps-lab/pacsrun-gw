@@ -40,7 +40,7 @@ jobs:
           # still fails, which a `grep -v job-` would have let through. The token
           # is only ever `job-` plus twelve hex, so nothing else can match it -- and
           # a REAL account number after a dash, which is how our bucket name carries
-          # one (`hyperun-results-<account>-us-west-2`), is untouched.
+          # one (`pacsrun-results-<account>-us-west-2`), is untouched.
           strip_our_own_ids() { sed -E 's/job-[0-9a-f]{12}//g'; }
 
           check() {

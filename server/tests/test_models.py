@@ -435,7 +435,7 @@ def test_the_default_service_account_is_the_one_the_role_trusts(monkeypatch):
         configuration error: PACSRUN_AWS_ZONE is unusable: ... AccessDenied ... Not authorized
         to perform sts:AssumeRoleWithWebIdentity
 
-    MEASURED 2026-09-08 on job hyperun-24547306294e, submitted from the New job screen. The
+    MEASURED 2026-09-08 on job ddpsrun-24547306294e, submitted from the New job screen. The
     solve was clean (`aws g6.xlarge usw2-az4`) and the driver died at +0.31s in its own
     configuration check. The same request with `hyperunjob-writer` reached Running and rented a
     gr6.4xlarge.

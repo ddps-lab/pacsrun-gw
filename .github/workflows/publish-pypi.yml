@@ -14,11 +14,11 @@
 #
 # ★ THE PROJECT NAME CHANGED ON 2026-09-10 AND THIS NEEDS A MANUAL STEP FIRST.
 # PyPI cannot rename a project, so `hyperun` is a NEW one: the trusted-publishing
-# entry below was reserved for `hyperun` and does NOT carry over. Until somebody
+# entry below was reserved for `ddpsrun` and does NOT carry over. Until somebody
 # adds a pending publisher for the name `hyperun` at
 # https://pypi.org/manage/account/publishing/ with the same repository, workflow
 # filename and environment as below, a tag will reach this job and fail at the
-# upload with "not authorized". The old `hyperun` project stays where it is,
+# upload with "not authorized". The old `ddpsrun` project stays where it is,
 # frozen at 0.1.3; nothing here publishes to it any more.
 #
 # WHAT HAS TO BE SET UP ONCE, ON pypi.org, BEFORE THE FIRST TAG. Trusted publishing is configured

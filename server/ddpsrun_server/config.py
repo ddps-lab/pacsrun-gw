@@ -117,7 +117,7 @@ class Settings:
         cognito_region: which region the pool is in. Half of the issuer URL, so
             a wrong value refuses every token rather than accepting a foreign one.
         cognito_login_domain: the Hosted UI, e.g.
-            https://hyperun-x.auth.us-west-2.amazoncognito.com. The server never
+            https://ddpsrun-x.auth.us-west-2.amazoncognito.com. The server never
             calls it; it hands the address to the screen and the CLI, which is
             why it is configuration and not something derived here.
         register_notify_to: HYPERUN-REGISTER. Where a "somebody signed in and has
@@ -170,7 +170,7 @@ class Settings:
         # `DDPSRUN_<NAME>` second.
         #
         # WHY BOTH, AND WHY NOT A FLAG DAY. The product is called hyperun -- the CLI
-        # and the PyPI package already are -- and `hyperun` is the name the
+        # and the PyPI package already are -- and `ddpsrun` is the name the
         # infrastructure kept. The names are being brought together, but the Lambda
         # that serves every request today is configured with the old ones, and
         # renaming its variables and moving it to a pod in one step would leave no
@@ -229,7 +229,7 @@ class Settings:
             result_prefix=prefix,
             # HYPERUN-WORKLOAD-SA. The default is the ServiceAccount PACSrun's own terraform
             # wired to the EC2/STS role, because that role's trust policy names exactly one
-            # namespace/ServiceAccount pair. It read "hyperun-workload" until 2026-09-08 --
+            # namespace/ServiceAccount pair. It read "pacsrun-workload" until 2026-09-08 --
             # which is the ROLE's name, not the ServiceAccount's -- and every AWS job then
             # died with "Not authorized to perform sts:AssumeRoleWithWebIdentity", exit 10,
             # before renting anything. See terraform/lambda/variables.tf for the measurement.
