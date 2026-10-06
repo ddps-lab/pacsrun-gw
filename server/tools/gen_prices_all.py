@@ -56,7 +56,7 @@ MIN_GIB = 16.0
 # what the cluster will be charged (pkg/decider/runpod/catalog.go:6). Refresh
 # the snapshot with the RunPod API key that is already in the cluster:
 #
-#   KEY=$(kubectl get secret pacsrun-runpod -n pacsrun-system \
+#   KEY=$(kubectl get secret hyperun-runpod -n hyperun-system \
 #           -o jsonpath='{.data.RUNPOD_API_KEY}' | base64 -d)
 #   mkdir -p ~/.sky/catalogs/v8/runpod
 #   curl -sS -H "Authorization: Bearer $KEY" -H "Accept: application/json" \
@@ -75,8 +75,8 @@ RUNPOD_READ_ON = "2026-09-28"
 # MI300X outright is a decline, not an override". A row for a card the cluster
 # refuses would therefore be a price for something no ask can buy.
 #
-# Read on 2026-09-09 from `kubectl get configmap pacsrun-catalog-policy -n
-# pacsrun-system`: vendorGpuDenySubstrings is the single fragment MIG (the rest
+# Read on 2026-09-09 from `kubectl get configmap hyperun-catalog-policy -n
+# hyperun-system`: vendorGpuDenySubstrings is the single fragment MIG (the rest
 # of that value is a commented-out Blackwell block, and parseSet drops "#"
 # lines -- internal/pacs/policy.go:492) and vendorMinGpuMemoryGB is 16. Both
 # equal PACSrun's shipped defaults (builtinDenySubstrings,

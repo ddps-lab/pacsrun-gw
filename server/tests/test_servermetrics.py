@@ -8,7 +8,7 @@ the replacement usable rather than harmful:
   * the label is the ROUTE TEMPLATE, so the number of time series is the number
     of routes and not the number of jobs anybody has ever run;
   * nothing identifying is in a label, because per-user and per-job questions
-    are answered by /v1/stats from the PacsJob objects themselves.
+    are answered by /v1/stats from the HyperunJob objects themselves.
 """
 
 from __future__ import annotations

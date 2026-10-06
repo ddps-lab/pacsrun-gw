@@ -48,7 +48,7 @@ import os
 import pathlib
 import threading
 
-logger = logging.getLogger("ddpsrun")
+logger = logging.getLogger("hyperun")
 
 # How often a long-lived process re-reads the directory. Sixty seconds is chosen
 # against the thing it is for: an operator registers somebody and then tells them

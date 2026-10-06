@@ -79,7 +79,7 @@ def looks_like_a_jwt(credential: str) -> bool:
     hash. Nothing is admitted by looking like something.
 
     Example:
-        >>> looks_like_a_jwt("ddpsrun-abc123")
+        >>> looks_like_a_jwt("hyperun-abc123")
         False
     """
     parts = credential.split(".")

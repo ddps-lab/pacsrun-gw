@@ -31,7 +31,7 @@ NOW = when("2026-09-16T00:00:00")
 
 def job(name, started, finished=None, owner="jglee", vendor="runpod",
         usd_per_hour=6.36, gpus=4):
-    """A PacsJob shaped the way the cluster actually returns one."""
+    """A HyperunJob shaped the way the cluster actually returns one."""
     status = {
         "phase": "Succeeded" if finished else "Running",
         "startedAt": started,
@@ -43,7 +43,7 @@ def job(name, started, finished=None, owner="jglee", vendor="runpod",
         status["finishedAt"] = finished
     return {
         "metadata": {"name": name,
-                     "labels": {"ddpsrun.io/owner": owner, "ddpsrun.io/name": name}},
+                     "labels": {"hyperun.io/owner": owner, "hyperun.io/name": name}},
         "spec": {"parallelism": 1},
         "status": status,
     }

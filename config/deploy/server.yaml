@@ -11,25 +11,25 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: ddpsrun-system
+  name: hyperun-system
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ddpsrun-gw
-  namespace: ddpsrun-system
+  name: hyperun-gw
+  namespace: hyperun-system
 spec:
   # One replica on purpose. The server holds no state between requests, so more
   # would work, but nothing yet needs the throughput and a second replica
   # doubles the surface reading the token Secret.
   replicas: 1
   selector:
-    matchLabels: { app: ddpsrun-gw }
+    matchLabels: { app: hyperun-gw }
   template:
     metadata:
-      labels: { app: ddpsrun-gw }
+      labels: { app: hyperun-gw }
     spec:
-      serviceAccountName: ddpsrun-gw
+      serviceAccountName: hyperun-gw
       containers:
         - name: server
           image: <IMAGE>
@@ -42,7 +42,7 @@ spec:
             - name: DDPSRUN_RESULT_BUCKET
               value: <RESULT_BUCKET>
             - name: DDPSRUN_RESULT_PREFIX
-              value: pacsrun/
+              value: hyperun/
             # Must match PACSrun's PACSRUN_RESULT_PREFIX_TEMPLATE, which checks
             # the same prefix a second time on the cluster side. If the two
             # disagree every job is refused at admission.
@@ -51,16 +51,16 @@ spec:
             # namespace/ServiceAccount pair. Naming anything else is exit 10 before a machine
             # is rented, not a smaller failure later. See terraform/lambda/variables.tf.
             - name: DDPSRUN_SERVICE_ACCOUNT
-              value: pacsjob-writer
+              value: hyperunjob-writer
             - name: DDPSRUN_TOKENS_PATH
-              value: /etc/ddpsrun/tokens.json
+              value: /etc/hyperun/tokens.json
             # Which stored secrets a user may ask for by name, and where each
             # one really lives. A name absent here cannot be requested at all.
             - name: DDPSRUN_SECRET_BINDINGS
               value: '{"GITHUB_PAT": {"name": "<SECRET_NAME>", "key": "token"}}'
           volumeMounts:
             - name: tokens
-              mountPath: /etc/ddpsrun
+              mountPath: /etc/hyperun
               readOnly: true
           livenessProbe:
             httpGet: { path: /healthz, port: 8080 }
@@ -79,15 +79,15 @@ spec:
         - name: tokens
           secret:
             # Created by hand today; see docs/09-server.md for the one command.
-            secretName: ddpsrun-tokens
+            secretName: hyperun-tokens
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: ddpsrun-gw
-  namespace: ddpsrun-system
+  name: hyperun-gw
+  namespace: hyperun-system
 spec:
-  selector: { app: ddpsrun-gw }
+  selector: { app: hyperun-gw }
   ports:
     - port: 80
       targetPort: 8080

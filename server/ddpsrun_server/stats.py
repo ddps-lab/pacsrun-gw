@@ -5,11 +5,11 @@ END-TO-END FLOW of one `/v1/stats`:
   1. The caller's token names a team. `TokenStore.namespaces_in_team` turns that
      into the list of namespaces belonging to it — from the server's own token
      file, so this costs no Kubernetes permission.
-  2. Every PacsJob in each of those namespaces is listed.
+  2. Every HyperunJob in each of those namespaces is listed.
   3. `summarise()` turns them into per-person and whole-team totals: how many
      jobs, how they ended, how many GPU-hours, and what that cost.
 
-WHY THIS IS POSSIBLE ONLY SINCE 2026-09-01. A PacsJob's status carried no
+WHY THIS IS POSSIBLE ONLY SINCE 2026-09-01. A HyperunJob's status carried no
 timestamps, so a finished job's own record said when it was accepted and nothing
 about when it ran. PACSrun now writes status.startedAt and status.finishedAt
 (HYPERUN-JOB-CLOCK), and those two are what make a duration, and a duration
@@ -104,7 +104,7 @@ class TeamTotals:
     gpu_hours: float = 0.0
     cost_usd: float = 0.0
     unpriced_jobs: int = 0
-    # How many of `jobs` carry no ddpsrun.io/owner label, and so appear in no
+    # How many of `jobs` carry no hyperun.io/owner label, and so appear in no
     # row of `members`. Their hours and dollars ARE in the totals above; only
     # the row is gone. See the rollup in `summarise`.
     unowned_jobs: int = 0
@@ -132,7 +132,7 @@ def job_hours(job: dict[str, Any], now: datetime) -> float | None:
     """How long this job has been computing, in hours.
 
     Args:
-        job: a PacsJob as a plain dict.
+        job: a HyperunJob as a plain dict.
         now: what to measure a still-running job against.
 
     Returns:
@@ -153,7 +153,7 @@ def job_cost(job: dict[str, Any], hours: float) -> float | None:
     """What those hours cost.
 
     Args:
-        job: a PacsJob as a plain dict.
+        job: a HyperunJob as a plain dict.
         hours: from `job_hours`.
 
     Returns:
@@ -215,7 +215,7 @@ def summarise(
     Args:
         team: the team name.
         namespaces: its namespaces, in the order to report them.
-        jobs_by_namespace: the PacsJobs found in each.
+        jobs_by_namespace: the HyperunJobs found in each.
         now: what to measure still-running jobs against. Defaults to the current
             time; tests pass a fixed one.
         known_vendors: every vendor this deployment can buy from, which the
@@ -231,7 +231,7 @@ def summarise(
     totals = TeamTotals(team=team, namespaces=list(namespaces))
 
     # A member is a PERSON, and the person is on the job itself: the
-    # ddpsrun.io/owner label the server writes at submit time — the same value
+    # hyperun.io/owner label the server writes at submit time — the same value
     # the jobs screen prints under "Submitted by". A job with no owner label was
     # applied straight to the cluster with kubectl, which only an operator can
     # do.

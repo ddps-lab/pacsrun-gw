@@ -2,7 +2,7 @@
 
 END-TO-END FLOW of one `GET /v1/jobs/{id}/artifacts`:
 
-  1. The route (main.py, HYPERUN-ARTIFACTS-ROUTE) fetches the PacsJob and reads
+  1. The route (main.py, HYPERUN-ARTIFACTS-ROUTE) fetches the HyperunJob and reads
      `spec.resultPath` — an address the SERVER built at submit time
      (`models.result_path_for`), never one the caller typed. That is the whole
      scoping story: a caller can only ever reach the prefix their own job was
@@ -16,9 +16,9 @@ END-TO-END FLOW of one `GET /v1/jobs/{id}/artifacts`:
      download the other's result files. The route now runs its fetch through
      `main.require_owner` (HYPERUN-OWNER-GATE); this module is unchanged and was
      never the place to fix it.
-  2. `split_result_path()` turns "s3://bucket/pacsrun/ns/job/" into
-     (bucket, "pacsrun/ns/job/"), and the route refuses anything outside this
-     deployment's own bucket and prefix (`is_ours()`), so a PacsJob written by
+  2. `split_result_path()` turns "s3://bucket/hyperun/ns/job/" into
+     (bucket, "hyperun/ns/job/"), and the route refuses anything outside this
+     deployment's own bucket and prefix (`is_ours()`), so a HyperunJob written by
      hand with kubectl cannot point this server at somebody else's bucket.
   3. `list_artifacts()` asks S3 once with ListObjectsV2 (one page, up to 1000
      keys) and, for each file, calls GeneratePresignedUrl. A presigned URL is
@@ -61,7 +61,7 @@ class ForeignResultPath(Exception):
     """The job's resultPath points outside this deployment's result bucket.
 
     Raised instead of listing, because listing it would make this server read
-    an arbitrary bucket named by whoever wrote the PacsJob. The route turns
+    an arbitrary bucket named by whoever wrote the HyperunJob. The route turns
     this into a note on an otherwise empty answer, not an error: the job is
     real, we simply refuse to follow its pointer.
     """
@@ -110,7 +110,7 @@ def is_ours(bucket: str, prefix: str, result_bucket: str, result_prefix: str) ->
 
     The same fence PACSrun's own controller puts around resultPath
     (HYPERUN-RESULT-TENANCY), checked again here because a kubectl-applied
-    PacsJob reaches this route without ever passing that controller check on
+    HyperunJob reaches this route without ever passing that controller check on
     the way in — and because the IAM policy (HYPERUN-ARTIFACTS-READ) is scoped
     the same way, so anything outside would only fail later and less clearly.
     """

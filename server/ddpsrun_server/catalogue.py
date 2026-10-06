@@ -3,7 +3,7 @@
 END-TO-END FLOW of this file:
 
   1. `CHOOSABLE` lists every card a request may name. It is the CATALOGUE's
-     spelling, because that name travels into a PacsJob and PACSrun compares it
+     spelling, because that name travels into a HyperunJob and PACSrun compares it
      to the CSV's `AcceleratorName` with an exact match
      (`pkg/decider/skycatalog/decider.go:607`).
   2. `/v1/schema` and the screen's dropdown are built from it, so there is one
@@ -48,7 +48,7 @@ class Choice:
     """One card a request may name.
 
     Attributes:
-        name: the catalogue's spelling. This is what goes into the PacsJob.
+        name: the catalogue's spelling. This is what goes into the HyperunJob.
         vram_gb: the number printed on the card. A spec figure, not a measured
             one; `measurements.Gpu.usable_gib` is the measured one and exists
             only for cards we have rented.
@@ -153,7 +153,7 @@ BY_NAME = {choice.name.lower(): choice for choice in CHOOSABLE}
 # Names this catalogue used to offer, and the name each one is read as now. HYPERUN-NAME-FLOOR.
 # A request that still sends the old name is not refused -- an older CLI, a saved job file or an
 # agent's memory can carry it -- but validate says it was renamed, and everything past the
-# request (the estimate, the PacsJob) sees the new name only.
+# request (the estimate, the HyperunJob) sees the new name only.
 RENAMED: dict[str, str] = {"a100": "A100-40GB"}
 
 

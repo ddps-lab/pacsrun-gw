@@ -1,6 +1,6 @@
 # The gateway server. Runs as a pod in the EKS cluster (docs/08-plan.md, 미결 항목 2).
 #
-# The CLI users install is a SEPARATE distribution, also named ddpsrun, built in
+# The CLI users install is a SEPARATE distribution, also named hyperun, built in
 # stage 2. It shares this repository but not this package: a user's laptop must
 # not need the kubernetes client, and this server must not need a browser
 # login flow.
@@ -9,9 +9,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ddpsrun-server"
+name = "hyperun-server"
 version = "0.1.0"
-description = "Gateway between researchers with no kubectl and PACSrun's PacsJob CRD"
+description = "Gateway between researchers with no kubectl and PACSrun's HyperunJob CRD"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",

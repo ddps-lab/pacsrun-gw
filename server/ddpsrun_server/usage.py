@@ -2,7 +2,7 @@
 
 END-TO-END FLOW of one `GET /v1/usage`:
 
-  1. Every PacsJob in every namespace the directory names is listed.
+  1. Every HyperunJob in every namespace the directory names is listed.
   2. `job_hours` and `job_cost` (stats.py, unchanged) say how long each ran and
      what that cost. This module does NOT re-price anything.
   3. `split_across_days` cuts each job's hours at midnight UTC, so a run that
@@ -45,7 +45,7 @@ from . import stats
 
 # How many days back a caller may ask for. Sixty because a month-to-date figure
 # needs the whole month and a comparison needs the one before it; beyond that the
-# PacsJob objects themselves have usually been deleted and the answer would be
+# HyperunJob objects themselves have usually been deleted and the answer would be
 # quietly short rather than wrong.
 MAX_DAYS = 60
 
@@ -145,7 +145,7 @@ def summarise(jobs_by_namespace: dict[str, list[dict[str, Any]]],
     """Roll every job up by day, team, person and vendor.
 
     Args:
-        jobs_by_namespace: namespace -> the PacsJobs in it.
+        jobs_by_namespace: namespace -> the HyperunJobs in it.
         team_of: namespace -> team name, from the token directory. A namespace
             missing from it lands under its own name, which is what an operator
             namespace with nobody registered in it should look like.
@@ -202,7 +202,7 @@ def summarise(jobs_by_namespace: dict[str, list[dict[str, Any]]],
                 continue
 
             labels = (job.get("metadata") or {}).get("labels") or {}
-            owner = str(labels.get("ddpsrun.io/owner") or "unknown")
+            owner = str(labels.get("hyperun.io/owner") or "unknown")
             vendor = _vendor_of(job)
             # The hourly rate, so each day's slice can be priced on its own
             # hours rather than on the whole job's.

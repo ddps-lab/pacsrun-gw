@@ -169,7 +169,7 @@ def test_a_token_signed_by_a_different_key_is_refused(verifier):
 
 
 def test_garbage_is_refused_without_raising_something_else(verifier):
-    for junk in ["", "not.a.jwt", "ddpsrun-abc123", "a.b.c"]:
+    for junk in ["", "not.a.jwt", "hyperun-abc123", "a.b.c"]:
         with pytest.raises(cognito.TokenError):
             verifier.claims(junk)
 
@@ -180,7 +180,7 @@ def test_garbage_is_refused_without_raising_something_else(verifier):
 def test_the_shape_test_tells_the_two_credentials_apart(keypair):
     """Not a security check. It only picks a branch; both branches then verify."""
     assert cognito.looks_like_a_jwt(mint(keypair)) is True
-    assert cognito.looks_like_a_jwt("ddpsrun-a1b2c3d4") is False
+    assert cognito.looks_like_a_jwt("hyperun-a1b2c3d4") is False
     assert cognito.looks_like_a_jwt("") is False
     assert cognito.looks_like_a_jwt("a.b.c") is False
 
@@ -433,7 +433,7 @@ def test_asking_twice_emails_once(register_client, keypair):
     assert second.status_code == 202 and second.json()["emailed"] is False
     assert len(ses.sent) == 1
     assert [p[2] for p in s3.puts] == ["*", "*"]
-    assert s3.puts[0][1] == "ddpsrun-register/newcomer@example.ac.kr"
+    assert s3.puts[0][1] == "hyperun-register/newcomer@example.ac.kr"
 
 
 def test_a_person_who_is_already_registered_is_told_so_instead(register_client, keypair):
@@ -521,7 +521,7 @@ def test_a_failed_send_gives_the_claim_back_so_the_person_can_retry(register_cli
     assert first.status_code == 502
     assert "verified" in first.json()["detail"]
     # The claim was taken and then given back, so nothing is left behind.
-    assert s3.deletes == [("<RESULT_BUCKET>", "ddpsrun-register/newcomer@example.ac.kr")]
+    assert s3.deletes == [("<RESULT_BUCKET>", "hyperun-register/newcomer@example.ac.kr")]
     assert s3.existing == set()
 
     # And the retry is a real retry: it sends, rather than reporting a success
@@ -566,7 +566,7 @@ def test_the_registration_email_names_every_step_a_new_person_needs(register_cli
     body = ses.sent[0]["Content"]["Simple"]["Body"]["Text"]["Data"]
 
     assert "kubectl create namespace lab-newcomer" in body
-    assert "create serviceaccount pacsjob-writer" in body
+    assert "create serviceaccount hyperunjob-writer" in body
     assert "aws eks create-pod-identity-association" in body
     assert "sts:AssumeRoleWithWebIdentity" in body
     # And why a namespace of their own at all, since it decides the result prefix.
@@ -704,7 +704,7 @@ def test_a_token_file_with_no_team_at_all_lists_none():
 
 def test_the_suggested_user_is_the_local_part_and_matches_the_namespace():
     """★ THE MAIL USED TO SUGGEST THE WHOLE ADDRESS AS `user`, and `user` is
-    written into the `ddpsrun.io/owner` LABEL, where `@` is not legal.
+    written into the `hyperun.io/owner` LABEL, where `@` is not legal.
     `naming.label_value` scrubs rather than fails, so nothing crashed and the
     job screen simply read "Submitted by newcomer-example.com".
 

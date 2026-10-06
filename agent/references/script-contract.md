@@ -459,7 +459,7 @@ its patterns. If the count is not 0, fix it.
 
 ## 12. When the script grows or is several files — do not put it into args as it is
 
-The body sent with `--script run.sh` **goes inside the job object.** `to_pacsjob` loads it as
+The body sent with `--script run.sh` **goes inside the job object.** `to_hyperunjob` loads it as
 `spec.args = ["bash", "-lc", <body>]`, and that object is stored in etcd. So there is a ceiling:
 `script` is up to **256 KiB** (`models.SCRIPT_MAX_CHARS`), and past it the submit is refused with
 422. It costs nothing, since no GPU has been rented yet, but it means this is not the place for
@@ -470,7 +470,7 @@ around 20 KiB it would be 8% of the ceiling put in as it is. But that job was al
 another method:
 
 ```
-whole PacsJob object   4,682 bytes
+whole HyperunJob object   4,682 bytes
 spec.args                302 bytes      <- the bootstrap below
 run.sh in S3          19,655 bytes      <- the actual training script
 ```
@@ -642,7 +642,7 @@ as the round ends, and even if the machine is reclaimed in the 15th hour, the ro
 remain.
 
 **A fact you can rely on:** the **result path stays the same** after a restart. The server makes it
-once from the job id and puts it in `spec.resultPath`, and recovery uses the same PacsJob, so that
+once from the job id and puts it in `spec.resultPath`, and recovery uses the same HyperunJob, so that
 field does not change.
 
 ---
@@ -842,14 +842,14 @@ the training venv as a `.pth` file, which Python runs at start-up, before the sc
 `sitecustomize.py`**: the `runpod/pytorch` image already ships one earlier on `sys.path`, and only
 one module of that name is ever imported -- measured live 2026-09-12, where the patch silently did
 nothing. The hook itself ran live the same day in the market64 wrapper
-(`experiments/real-job/pacsjob/trainer_resume_hook.py` in the lab's SkyPilot clone); a resumed run
+(`experiments/real-job/hyperunjob/trainer_resume_hook.py` in the lab's SkyPilot clone); a resumed run
 of it has not yet been seen.
 
 ```bash
 install_resume_hook() {                                   # $1: the python that runs training
   local sp
   sp=$("$1" -c 'import site; print(site.getsitepackages()[0])') || return 0
-  cat > "$sp/pacsrun_resume_hook.py" <<'HOOK'
+  cat > "$sp/hyperun_resume_hook.py" <<'HOOK'
 import os
 def _install():
     try:
@@ -858,7 +858,7 @@ def _install():
     except Exception:
         return                                            # a venv without transformers
     cls = transformers.Trainer
-    if getattr(cls, "_pacsrun_resume", False):
+    if getattr(cls, "_hyperun_resume", False):
         return
     original = cls.train
     def train(self, resume_from_checkpoint=None, *args, **kwargs):
@@ -871,15 +871,15 @@ def _install():
             resume_from_checkpoint = last
         return original(self, resume_from_checkpoint, *args, **kwargs)
     cls.train = train
-    cls._pacsrun_resume = True
+    cls._hyperun_resume = True
 try:
     _install()
 except Exception as exc:                                  # never break the venv over this
     print(f"[HYPERUN-TRAINER-RESUME] not installed: {exc}", flush=True)
 HOOK
-  echo "import pacsrun_resume_hook" > "$sp/zzz_pacsrun_resume_hook.pth"
+  echo "import hyperun_resume_hook" > "$sp/zzz_hyperun_resume_hook.pth"
   # say at the START whether it took, not six hours in
-  "$1" -c 'import transformers; print("resume hook:", getattr(transformers.Trainer, "_pacsrun_resume", False))'
+  "$1" -c 'import transformers; print("resume hook:", getattr(transformers.Trainer, "_hyperun_resume", False))'
 }
 ```
 

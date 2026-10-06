@@ -59,7 +59,7 @@ stringData:
   upstage-api-key: "<UPSTAGE_API_KEY>"
   slack-bot-token: "<SLACK_BOT_TOKEN>"
   # owner label -> Slack user id. The owner label is what PACSrun writes on every job as
-  # `ddpsrun.io/owner`. The same shape cloud-usage's IAM_SLACK_USER_MAP uses, so an operator
+  # `hyperun.io/owner`. The same shape cloud-usage's IAM_SLACK_USER_MAP uses, so an operator
   # who already has one can paste it across.
   slack-user-map: '{"<OWNER_LABEL>":"<SLACK_USER_ID>"}'
 ---
@@ -97,7 +97,7 @@ spec:
           restartPolicy: Never
           # The gateway's own ServiceAccount, deliberately. It already has the EKS Pod
           # Identity association that lets Secrets Manager answer, and the RoleBindings that
-          # let it list PacsJobs and read pod logs in each tenant namespace. This job needs
+          # let it list HyperunJobs and read pod logs in each tenant namespace. This job needs
           # exactly that and must not be able to do more.
           serviceAccountName: hyperun-gw
           securityContext:

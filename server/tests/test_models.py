@@ -1,4 +1,4 @@
-"""The translation from a submit request into a PacsJob, and back into a response.
+"""The translation from a submit request into a HyperunJob, and back into a response.
 
 This is where the isolation promise is actually kept, so most of these tests
 check that something a caller sent did NOT end up in the object.
@@ -17,16 +17,16 @@ from ddpsrun_server.models import (
     JobView,
     SubmitRequest,
     placement_note,
-    to_pacsjob,
+    to_hyperunjob,
 )
 
 ALICE = Principal(user="alice", namespace="lab-alice")
 
 SETTINGS = Settings(
     result_bucket="<RESULT_BUCKET>",
-    result_prefix="pacsrun/",
-    service_account="pacsrun-workload",
-    tokens_path="/etc/ddpsrun/tokens.json",
+    result_prefix="hyperun/",
+    service_account="hyperun-workload",
+    tokens_path="/etc/hyperun/tokens.json",
     secret_bindings={"GITHUB_PAT": SecretBinding("slm-rca-clone", "token")},
     log_tail_lines=2000,
 )
@@ -71,7 +71,7 @@ def test_a_hyperun_variable_is_read():
     assert s.result_bucket == "b" and s.tokens_path == "t"
 
 
-def test_a_ddpsrun_variable_still_works():
+def test_a_hyperun_variable_still_works():
     # The Lambda that serves every request today is configured with these, and it
     # is not being touched while the pod is proven beside it.
     s = Settings.from_env({"DDPSRUN_RESULT_BUCKET": "b", "DDPSRUN_TOKENS_PATH": "t"})
@@ -111,37 +111,37 @@ def test_the_missing_variable_message_names_the_new_prefix():
 
 
 def test_the_server_fills_the_four_fields_the_user_cannot_send():
-    obj = to_pacsjob(minimal(), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(), ALICE, SETTINGS, JOB_ID)
     assert obj["metadata"]["namespace"] == "lab-alice"
-    assert obj["spec"]["serviceAccountName"] == "pacsrun-workload"
+    assert obj["spec"]["serviceAccountName"] == "hyperun-workload"
     assert obj["spec"]["parallelism"] == 1
     assert obj["spec"]["resultPath"] == (
-        "s3://<RESULT_BUCKET>/pacsrun/lab-alice/bank-exp2-a8acdef80a07/"
+        "s3://<RESULT_BUCKET>/hyperun/lab-alice/bank-exp2-a8acdef80a07/"
     )
 
 
 def test_the_result_path_carries_the_namespace_from_the_token_only():
-    # PACSrun's own guard requires the prefix s3://<bucket>/pacsrun/<namespace>/
+    # PACSrun's own guard requires the prefix s3://<bucket>/hyperun/<namespace>/
     # (HYPERUN-RESULT-TENANCY). If this ever stops matching, every job a tenant
     # submits is refused on the cluster side.
     bob = Principal(user="bob", namespace="lab-bob")
-    obj = to_pacsjob(minimal(), bob, SETTINGS, JOB_ID)
-    assert obj["spec"]["resultPath"].startswith("s3://<RESULT_BUCKET>/pacsrun/lab-bob/")
+    obj = to_hyperunjob(minimal(), bob, SETTINGS, JOB_ID)
+    assert obj["spec"]["resultPath"].startswith("s3://<RESULT_BUCKET>/hyperun/lab-bob/")
 
 
 def test_two_jobs_with_the_same_name_do_not_share_a_folder():
-    first = to_pacsjob(minimal(), ALICE, SETTINGS, "job-aaaaaaaaaaaa")
-    second = to_pacsjob(minimal(), ALICE, SETTINGS, "job-bbbbbbbbbbbb")
+    first = to_hyperunjob(minimal(), ALICE, SETTINGS, "job-aaaaaaaaaaaa")
+    second = to_hyperunjob(minimal(), ALICE, SETTINGS, "job-bbbbbbbbbbbb")
     assert first["spec"]["resultPath"] != second["spec"]["resultPath"]
 
 
 def test_the_object_name_comes_from_the_job_id():
-    obj = to_pacsjob(minimal(), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(), ALICE, SETTINGS, JOB_ID)
     assert obj["metadata"]["name"] == naming.object_name(JOB_ID)
 
 
 def test_env_is_sorted_and_shaped_the_way_the_crd_wants():
-    obj = to_pacsjob(minimal(env={"ML": "12288", "EPOCHS": "4"}), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(env={"ML": "12288", "EPOCHS": "4"}), ALICE, SETTINGS, JOB_ID)
     assert obj["spec"]["env"] == [
         {"name": "EPOCHS", "value": "4"},
         {"name": "ML", "value": "12288"},
@@ -149,7 +149,7 @@ def test_env_is_sorted_and_shaped_the_way_the_crd_wants():
 
 
 def test_a_secret_becomes_a_reference_and_never_a_literal():
-    obj = to_pacsjob(minimal(secrets=["GITHUB_PAT"]), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(secrets=["GITHUB_PAT"]), ALICE, SETTINGS, JOB_ID)
     entry = [e for e in obj["spec"]["env"] if e["name"] == "GITHUB_PAT"][0]
     assert "value" not in entry
     assert entry["valueFrom"]["secretKeyRef"] == {"name": "slm-rca-clone", "key": "token"}
@@ -157,7 +157,7 @@ def test_a_secret_becomes_a_reference_and_never_a_literal():
 
 def test_an_unbound_secret_name_is_refused_and_the_message_lists_what_exists():
     with pytest.raises(ValueError, match="GITHUB_PAT"):
-        to_pacsjob(minimal(secrets=["NO_SUCH_SECRET"]), ALICE, SETTINGS, JOB_ID)
+        to_hyperunjob(minimal(secrets=["NO_SUCH_SECRET"]), ALICE, SETTINGS, JOB_ID)
 
 
 def test_a_reserved_env_name_is_refused_at_the_edge():
@@ -173,17 +173,17 @@ def test_the_same_name_in_env_and_secrets_is_refused():
 
 
 def test_a_gpu_ask_by_vram_matches_the_crd_shape():
-    obj = to_pacsjob(minimal(gpu={"vram_gb": 48, "count": 1}), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(gpu={"vram_gb": 48, "count": 1}), ALICE, SETTINGS, JOB_ID)
     assert obj["spec"]["resources"]["gpus"] == {"count": 1, "vramGB": 48}
 
 
 def test_a_gpu_ask_by_model_name_matches_the_crd_shape():
-    obj = to_pacsjob(minimal(gpu={"name": "L40S", "count": 2}), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(gpu={"name": "L40S", "count": 2}), ALICE, SETTINGS, JOB_ID)
     assert obj["spec"]["resources"]["gpus"] == {"count": 2, "name": "L40S"}
 
 
 def test_asking_both_ways_or_neither_is_refused():
-    # Mirrors the CRD's own CEL rule at config/crd/pacsrun.io_pacsjobs.yaml:197.
+    # Mirrors the CRD's own CEL rule at config/crd/hyperun.io_hyperunjobs.yaml:197.
     with pytest.raises(ValidationError, match="exactly one"):
         minimal(gpu={"vram_gb": 48, "name": "L40S"})
     with pytest.raises(ValidationError, match="exactly one"):
@@ -195,34 +195,34 @@ def test_no_capacity_type_writes_only_the_default_vendors():
     # carries no capacityType and PACSrun applies its own default for it. Since
     # 2026-09-28 (HYPERUN-DEFAULT-VENDORS) it does carry the three vendors, because
     # an empty placement meant AWS alone to PACSrun.
-    obj = to_pacsjob(minimal(gpu={"vram_gb": 48}), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(gpu={"vram_gb": 48}), ALICE, SETTINGS, JOB_ID)
     assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"], "mode": "cheapest"}
 
 
 def test_a_capacity_type_is_written_into_placement():
     # Why this matters: an empty capacityType means spot, and RunPod's decider
     # declines anything that is not on-demand before it reads the catalogue.
-    obj = to_pacsjob(minimal(gpu={"vram_gb": 48}), ALICE, SETTINGS, JOB_ID, "on-demand")
+    obj = to_hyperunjob(minimal(gpu={"vram_gb": 48}), ALICE, SETTINGS, JOB_ID, "on-demand")
     assert obj["spec"]["placement"] == {"capacityType": "on-demand",
                                         "vendors": ["shadeform", "runpod", "aws"], "mode": "cheapest"}
 
 
 def test_a_cpu_only_job_asks_for_no_gpu():
-    obj = to_pacsjob(minimal(cpus="4", memory="16Gi"), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(cpus="4", memory="16Gi"), ALICE, SETTINGS, JOB_ID)
     assert obj["spec"]["resources"] == {"cpus": "4", "memory": "16Gi"}
 
 
 def test_expected_hours_is_recorded_but_not_acted_on():
-    obj = to_pacsjob(minimal(expected_hours=8.0), ALICE, SETTINGS, JOB_ID)
-    assert obj["metadata"]["annotations"]["ddpsrun.io/expected-hours"] == "8.0"
+    obj = to_hyperunjob(minimal(expected_hours=8.0), ALICE, SETTINGS, JOB_ID)
+    assert obj["metadata"]["annotations"]["hyperun.io/expected-hours"] == "8.0"
     # The hours change nothing about placement: only the default vendors are there.
     assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"], "mode": "cheapest"}
 
 
 def test_a_job_the_controller_has_not_touched_yet_still_renders():
     # The first second of every job's life: metadata exists, status does not.
-    view = JobView.from_pacsjob(
-        {"metadata": {"name": "ddpsrun-a8acdef80a07", "labels": {}}, "spec": {}}
+    view = JobView.from_hyperunjob(
+        {"metadata": {"name": "hyperun-a8acdef80a07", "labels": {}}, "spec": {}}
     )
     assert view.job_id == JOB_ID
     assert view.phase == ""
@@ -230,16 +230,16 @@ def test_a_job_the_controller_has_not_touched_yet_still_renders():
 
 
 def test_the_response_drops_the_internal_fields():
-    view = JobView.from_pacsjob(
+    view = JobView.from_hyperunjob(
         {
             "metadata": {
-                "name": "ddpsrun-a8acdef80a07",
+                "name": "hyperun-a8acdef80a07",
                 "namespace": "lab-alice",
                 "labels": {naming.JOB_ID_LABEL: JOB_ID, naming.DISPLAY_NAME_LABEL: "bank-exp2"},
             },
             "spec": {
-                "serviceAccountName": "pacsrun-workload",
-                "resultPath": "s3://<RESULT_BUCKET>/pacsrun/lab-alice/bank-exp2-a8acdef80a07/",
+                "serviceAccountName": "hyperun-workload",
+                "resultPath": "s3://<RESULT_BUCKET>/hyperun/lab-alice/bank-exp2-a8acdef80a07/",
             },
             "status": {
                 "phase": "Running",
@@ -261,7 +261,7 @@ def test_the_response_drops_the_internal_fields():
     assert rendered["recovery_count"] == 2
     # Nothing that names our own infrastructure survives.
     flattened = str(rendered)
-    for internal in ("pacsrun-workload", "US-KS-2a", "blamedNodes", "ip-10-0", "g6.2xlarge"):
+    for internal in ("hyperun-workload", "US-KS-2a", "blamedNodes", "ip-10-0", "g6.2xlarge"):
         assert internal not in flattened
 
     # The ONE documented exception. result_path is the only way a stage-1 caller
@@ -277,33 +277,33 @@ def test_the_response_drops_the_internal_fields():
 def test_a_korean_job_name_survives_the_round_trip():
     # A label value may hold only [A-Za-z0-9._-], so "은행 실험2" sanitises to "2".
     # The annotation is what carries the real name back to the user.
-    obj = to_pacsjob(minimal(name="은행 실험2"), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(name="은행 실험2"), ALICE, SETTINGS, JOB_ID)
     assert obj["metadata"]["labels"][naming.DISPLAY_NAME_LABEL] == "2"
     assert obj["metadata"]["annotations"][naming.DISPLAY_NAME_ANNOTATION] == "은행 실험2"
-    assert JobView.from_pacsjob(obj).name == "은행 실험2"
+    assert JobView.from_hyperunjob(obj).name == "은행 실험2"
 
 
 def test_the_name_falls_back_to_the_label_then_to_the_object_name():
     # An object written by an older server has no annotation; one applied with
     # kubectl by hand has neither.
-    only_label = {"metadata": {"name": "ddpsrun-a8acdef80a07",
+    only_label = {"metadata": {"name": "hyperun-a8acdef80a07",
                                "labels": {naming.DISPLAY_NAME_LABEL: "bank-exp2"}}}
-    assert JobView.from_pacsjob(only_label).name == "bank-exp2"
+    assert JobView.from_hyperunjob(only_label).name == "bank-exp2"
     neither = {"metadata": {"name": "hand-written-job"}}
-    assert JobView.from_pacsjob(neither).name == "hand-written-job"
+    assert JobView.from_hyperunjob(neither).name == "hand-written-job"
 
 
 def test_parallelism_is_the_users_and_not_pinned_at_one():
     # It WAS pinned at 1, which silently removed the way a job fills a multi-GPU
     # machine: parallelism is independent worker pods, gpus.count is GPUs per
     # pod. A user asking for 8 workers got 1.
-    obj = to_pacsjob(minimal(parallelism=8, gpu={"vram_gb": 48, "count": 2}), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(parallelism=8, gpu={"vram_gb": 48, "count": 2}), ALICE, SETTINGS, JOB_ID)
     assert obj["spec"]["parallelism"] == 8
     assert obj["spec"]["resources"]["gpus"] == {"count": 2, "vramGB": 48}
 
 
 def test_parallelism_defaults_to_one():
-    assert to_pacsjob(minimal(), ALICE, SETTINGS, JOB_ID)["spec"]["parallelism"] == 1
+    assert to_hyperunjob(minimal(), ALICE, SETTINGS, JOB_ID)["spec"]["parallelism"] == 1
 
 
 def test_parallelism_is_capped_at_what_the_crd_can_record():
@@ -330,7 +330,7 @@ def test_the_caller_may_name_the_vendors_and_the_mode():
     request = SubmitRequest(
         name="n", image="img", vendors=["aws", "runpod"], placement_mode="cheapest"
     )
-    obj = to_pacsjob(request, ALICE, SETTINGS, JOB_ID, capacity_type="spot")
+    obj = to_hyperunjob(request, ALICE, SETTINGS, JOB_ID, capacity_type="spot")
     assert obj["spec"]["placement"] == {
         "capacityType": "spot",
         "vendors": ["aws", "runpod"],
@@ -342,10 +342,10 @@ def test_vendors_alone_still_produce_a_placement_block():
     """Before this change the block existed ONLY when a capacity type did.
 
     So the three fields cannot be three separate `if`s appending to a dict that may not have
-    been created -- which is why to_pacsjob builds one dict and writes it once.
+    been created -- which is why to_hyperunjob builds one dict and writes it once.
     """
     request = SubmitRequest(name="n", image="img", vendors=["runpod"])
-    obj = to_pacsjob(request, ALICE, SETTINGS, JOB_ID, capacity_type=None)
+    obj = to_hyperunjob(request, ALICE, SETTINGS, JOB_ID, capacity_type=None)
     assert obj["spec"]["placement"] == {"vendors": ["runpod"]}
 
 
@@ -356,18 +356,18 @@ def test_a_job_naming_no_vendor_and_no_region_is_sent_with_all_three():
     placement_mode cheapest too: the lab's rule is compare every vendor, buy the
     cheapest, and ask the user nothing about vendors."""
     request = SubmitRequest(name="n", image="img")
-    obj = to_pacsjob(request, ALICE, SETTINGS, JOB_ID, capacity_type=None)
+    obj = to_hyperunjob(request, ALICE, SETTINGS, JOB_ID, capacity_type=None)
     assert obj["spec"]["placement"] == {"vendors": ["shadeform", "runpod", "aws"], "mode": "cheapest"}
 
 
 def test_a_job_naming_regions_or_asking_for_spot_is_not_filled():
     """A job that named regions chose its places; a spot job can only be sold by AWS,
     which is what an empty vendor list already means."""
-    regions = to_pacsjob(SubmitRequest(name="n", image="img", regions=["aws/us-east-1"]),
+    regions = to_hyperunjob(SubmitRequest(name="n", image="img", regions=["aws/us-east-1"]),
                          ALICE, SETTINGS, JOB_ID, capacity_type="on-demand")
     assert "vendors" not in regions["spec"]["placement"]
     assert regions["spec"]["placement"]["regions"] == ["aws/us-east-1"]
-    spot = to_pacsjob(SubmitRequest(name="n", image="img"), ALICE, SETTINGS, JOB_ID,
+    spot = to_hyperunjob(SubmitRequest(name="n", image="img"), ALICE, SETTINGS, JOB_ID,
                       capacity_type="spot")
     assert spot["spec"]["placement"] == {"capacityType": "spot"}
 
@@ -379,7 +379,7 @@ def test_the_default_order_matches_what_the_estimate_prices():
 
 def test_a_mode_the_caller_named_is_kept():
     request = SubmitRequest(name="n", image="img", placement_mode="compare")
-    obj = to_pacsjob(request, ALICE, SETTINGS, JOB_ID, capacity_type="on-demand")
+    obj = to_hyperunjob(request, ALICE, SETTINGS, JOB_ID, capacity_type="on-demand")
     assert obj["spec"]["placement"]["mode"] == "compare"
 
 
@@ -432,23 +432,23 @@ def test_the_default_service_account_is_the_one_the_role_trusts(monkeypatch):
         configuration error: PACSRUN_AWS_ZONE is unusable: ... AccessDenied ... Not authorized
         to perform sts:AssumeRoleWithWebIdentity
 
-    MEASURED 2026-09-08 on job ddpsrun-24547306294e, submitted from the New job screen. The
+    MEASURED 2026-09-08 on job hyperun-24547306294e, submitted from the New job screen. The
     solve was clean (`aws g6.xlarge usw2-az4`) and the driver died at +0.31s in its own
-    configuration check. The same request with `pacsjob-writer` reached Running and rented a
+    configuration check. The same request with `hyperunjob-writer` reached Running and rented a
     gr6.4xlarge.
 
     WHY THE NAME CANNOT BE CHOSEN FREELY. The role is assumed through EKS Pod Identity and the
-    association is `default/pacsjob-writer -> role/pacsrun-workload`; the role's trust policy
+    association is `default/hyperunjob-writer -> role/hyperun-workload`; the role's trust policy
     names exactly one namespace/ServiceAccount pair. PACSrun's own config/deploy/README.md step
     3: "role의 trust policy가 그 namespace/ServiceAccount 조합 하나만 신뢰하므로, 다른 SA로
     돌리면 STS가 거절한다."
     """
     monkeypatch.setenv("DDPSRUN_RESULT_BUCKET", "b")
-    monkeypatch.setenv("DDPSRUN_TOKENS_PATH", "/etc/ddpsrun/tokens.json")
+    monkeypatch.setenv("DDPSRUN_TOKENS_PATH", "/etc/hyperun/tokens.json")
     monkeypatch.delenv("DDPSRUN_SERVICE_ACCOUNT", raising=False)
 
     settings = Settings.from_env()
-    assert settings.service_account == "pacsjob-writer", (
+    assert settings.service_account == "hyperunjob-writer", (
         "the default must be the ServiceAccount PACSrun's terraform wired to the role, not the "
         "role's own name"
     )
@@ -463,16 +463,16 @@ def test_the_default_service_account_is_the_one_the_role_trusts(monkeypatch):
 
 
 def _submitted(**kwargs):
-    """Turn a submit body into the PacsJob the server would create."""
+    """Turn a submit body into the HyperunJob the server would create."""
     from ddpsrun_server import naming
     from ddpsrun_server.auth import Principal
     from ddpsrun_server.config import Settings
-    from ddpsrun_server.models import JudgementRequest, to_pacsjob
+    from ddpsrun_server.models import JudgementRequest, to_hyperunjob
 
     settings = Settings.from_env({"DDPSRUN_RESULT_BUCKET": "b",
                                   "DDPSRUN_TOKENS_PATH": "t"})
     request = JudgementRequest(name="x", image="i", capacity_type="spot", **kwargs)
-    return to_pacsjob(request, Principal(user="u", namespace="default", team="d"),
+    return to_hyperunjob(request, Principal(user="u", namespace="default", team="d"),
                       settings, naming.new_job_id(), "spot")["spec"]
 
 
@@ -484,7 +484,7 @@ def test_a_script_with_nothing_else_is_what_runs():
     command and no args -- the operator then refuses to build the driver pod
     ("nothing to run") AFTER the job has been accepted.
 
-    agent/skills/ddpsrun/SKILL.md said: step 1 write a run.sh, step 3 validate it
+    agent/skills/hyperun/SKILL.md said: step 1 write a run.sh, step 3 validate it
     with --script, step 4 submit. Nothing said the script had to reach `submit`
     too. An agent following it wrote a script, checked it, submitted it, and the
     script never ran.
@@ -598,7 +598,7 @@ def test_the_memory_checks_run_for_a_named_gpu_too():
 
 def test_a_script_too_big_for_the_job_object_is_refused_before_anything_is_rented():
     # HYPERUN-SCRIPT-SIZE. The script travels inside spec.args, so it is stored
-    # in etcd with the PacsJob and shares etcd's 1.5 MiB request limit. Without
+    # in etcd with the HyperunJob and shares etcd's 1.5 MiB request limit. Without
     # a cap here the refusal arrives from the apiserver as "etcdserver: request
     # is too large", which names nothing the submitter can act on.
     import pydantic
@@ -642,7 +642,7 @@ def test_the_view_says_what_was_asked_next_to_what_was_bought():
                                   for z in ("usw2-az4", "usw2-az1", "usw2-az2")],
         },
     }
-    view = JobView.from_pacsjob(obj)
+    view = JobView.from_hyperunjob(obj)
     assert view.asked_vendors == [] and view.placement_mode == "cheapest"
     assert view.failed_offerings == 3
     assert "only candidate" in view.placement_note
@@ -680,21 +680,21 @@ def test_the_view_names_the_vendor_that_did_not_answer_and_why():
                    "currentOffering": {"vendor": "shadeform", "instanceType": "L40S"},
                    "notAnswering": [line]},
     }
-    view = JobView.from_pacsjob(obj)
+    view = JobView.from_hyperunjob(obj)
     assert view.not_answering == [line]
     assert view.placement_note.endswith(f"Did not answer: {line}.")
     # An operator older than the field sends nothing, and the note is what it was.
     del obj["status"]["notAnswering"]
-    older = JobView.from_pacsjob(obj)
+    older = JobView.from_hyperunjob(obj)
     assert older.not_answering == []
     assert "Did not answer" not in older.placement_note
 
 
-def test_the_old_a100_name_goes_to_pacsrun_as_the_new_one():
+def test_the_old_a100_name_goes_to_hyperun_as_the_new_one():
     """HYPERUN-NAME-FLOOR. PACSrun reads "A100-40GB" as an A100 with at least 40 GB on
     every vendor; the bare "A100" would still mean 40 GB on AWS and 80 GB on RunPod."""
-    obj = to_pacsjob(minimal(gpu={"name": "A100", "count": 8}), ALICE, SETTINGS, JOB_ID)
+    obj = to_hyperunjob(minimal(gpu={"name": "A100", "count": 8}), ALICE, SETTINGS, JOB_ID)
     assert obj["spec"]["resources"]["gpus"]["name"] == "A100-40GB"
-    other = to_pacsjob(minimal(gpu={"name": "L40S"}), ALICE, SETTINGS, JOB_ID)
+    other = to_hyperunjob(minimal(gpu={"name": "L40S"}), ALICE, SETTINGS, JOB_ID)
     assert other["spec"]["resources"]["gpus"]["name"] == "L40S"
 

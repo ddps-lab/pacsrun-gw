@@ -33,7 +33,7 @@ def test_ordinary_output_passes_through_unchanged():
 def test_a_word_that_merely_starts_with_the_prefix_in_prose_is_left_alone():
     # The pattern requires the uppercase form with a word boundary, so a user's
     # own lowercase variable is not touched.
-    assert redact("pacsrun_exit is not ours") == "pacsrun_exit is not ours"
+    assert redact("hyperun_exit is not ours") == "hyperun_exit is not ours"
 
 
 def test_the_gpu_telemetry_line_is_dropped_from_the_user_facing_log():

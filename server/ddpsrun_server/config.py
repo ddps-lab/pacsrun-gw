@@ -25,29 +25,29 @@ from dataclasses import dataclass
 
 
 # The Kubernetes API group/version/plural of the object this server creates.
-# Taken from PACSrun's own CRD: `config/crd/pacsrun.io_pacsjobs.yaml` says
-# `group: pacsrun.io`, `plural: pacsjobs`, and `api/v1alpha1/groupversion_info.go:21`
+# Taken from PACSrun's own CRD: `config/crd/hyperun.io_hyperunjobs.yaml` says
+# `group: hyperun.io`, `plural: hyperunjobs`, and `api/v1alpha1/groupversion_info.go:21`
 # says `version: v1alpha1`. If PACSrun ever bumps the version this is the one
 # place to change.
-PACSJOB_GROUP = "pacsrun.io"
+PACSJOB_GROUP = "hyperun.io"
 PACSJOB_VERSION = "v1alpha1"
-PACSJOB_PLURAL = "pacsjobs"
+PACSJOB_PLURAL = "hyperunjobs"
 
 # HYPERUN-USER-SECRET. The ONE Kubernetes Secret per namespace that holds every
 # value that namespace's members registered through `PUT /v1/secrets/{name}`,
 # one key per environment variable name. Lives here rather than in `k8s.py`
-# because `models.to_pacsjob` writes a secretKeyRef at it and must not have to
+# because `models.to_hyperunjob` writes a secretKeyRef at it and must not have to
 # import the Kubernetes SDK to know the name. Why one object and why this shape
 # is argued at the constant's other reader, `k8s.py`, and in
 # `config/deploy/rbac.yaml`.
-USER_SECRET_NAME = "ddpsrun-user-secrets"
+USER_SECRET_NAME = "hyperun-user-secrets"
 
 # The label PACSrun's controller puts on every pod it creates for a job, so we
 # can find the pod whose logs a user asked for.
-# Source: `internal/controller/pacsjob_controller.go:59` (`jobLabelKey`) and
+# Source: `internal/controller/hyperunjob_controller.go:59` (`jobLabelKey`) and
 # `:61` (`jobSlotLabelKey`).
-PACSRUN_JOB_LABEL = "pacsrun.io/job"
-PACSRUN_SLOT_LABEL = "pacsrun.io/slot"
+PACSRUN_JOB_LABEL = "hyperun.io/job"
+PACSRUN_SLOT_LABEL = "hyperun.io/slot"
 
 
 def aws_region() -> str:
@@ -100,7 +100,7 @@ class Settings:
         result_bucket: S3 bucket every job's output goes to. The server builds
             `resultPath` from it so a user cannot write into someone else's
             folder (`docs/03-api.md`, the "서버가 채우는 것" / what-the-server-fills table).
-        result_prefix: key prefix inside that bucket, e.g. `pacsrun/`. Always
+        result_prefix: key prefix inside that bucket, e.g. `hyperun/`. Always
             ends with a slash; `from_env` appends one if the operator forgot.
         service_account: the ServiceAccount name every job's pods run as. Fixed
             per cluster today; becomes per-namespace when multi-tenancy is on.
@@ -117,7 +117,7 @@ class Settings:
         cognito_region: which region the pool is in. Half of the issuer URL, so
             a wrong value refuses every token rather than accepting a foreign one.
         cognito_login_domain: the Hosted UI, e.g.
-            https://ddpsrun-x.auth.us-west-2.amazoncognito.com. The server never
+            https://hyperun-x.auth.us-west-2.amazoncognito.com. The server never
             calls it; it hands the address to the screen and the CLI, which is
             why it is configuration and not something derived here.
         register_notify_to: HYPERUN-REGISTER. Where a "somebody signed in and has
@@ -170,7 +170,7 @@ class Settings:
         # `DDPSRUN_<NAME>` second.
         #
         # WHY BOTH, AND WHY NOT A FLAG DAY. The product is called hyperun -- the CLI
-        # and the PyPI package already are -- and `ddpsrun` is the name the
+        # and the PyPI package already are -- and `hyperun` is the name the
         # infrastructure kept. The names are being brought together, but the Lambda
         # that serves every request today is configured with the old ones, and
         # renaming its variables and moving it to a pod in one step would leave no
@@ -195,10 +195,10 @@ class Settings:
                 )
             return value
 
-        prefix = setting("RESULT_PREFIX", "pacsrun/").strip()
+        prefix = setting("RESULT_PREFIX", "hyperun/").strip()
         # The trailing slash is load-bearing, exactly as it is in PACSrun's
-        # tenancy guard: without it the prefix `pacsrun/lab-a` also matches
-        # `pacsrun/lab-arthur/...`.
+        # tenancy guard: without it the prefix `hyperun/lab-a` also matches
+        # `hyperun/lab-arthur/...`.
         if prefix and not prefix.endswith("/"):
             prefix += "/"
 
@@ -229,11 +229,11 @@ class Settings:
             result_prefix=prefix,
             # HYPERUN-WORKLOAD-SA. The default is the ServiceAccount PACSrun's own terraform
             # wired to the EC2/STS role, because that role's trust policy names exactly one
-            # namespace/ServiceAccount pair. It read "pacsrun-workload" until 2026-09-08 --
+            # namespace/ServiceAccount pair. It read "hyperun-workload" until 2026-09-08 --
             # which is the ROLE's name, not the ServiceAccount's -- and every AWS job then
             # died with "Not authorized to perform sts:AssumeRoleWithWebIdentity", exit 10,
             # before renting anything. See terraform/lambda/variables.tf for the measurement.
-            service_account=setting("SERVICE_ACCOUNT", "pacsjob-writer").strip(),
+            service_account=setting("SERVICE_ACCOUNT", "hyperunjob-writer").strip(),
             tokens_path=required("TOKENS_PATH"),
             secret_bindings=bindings,
             log_tail_lines=tail,
@@ -262,5 +262,5 @@ class Settings:
 # second one would be a different design rather than a different value. The Service is ClusterIP
 # and stays that way — this server reaches it through the apiserver's `services/proxy`, so it
 # needs no address of its own and no ALB.
-PROMETHEUS_NAMESPACE = "pacsrun-system"
+PROMETHEUS_NAMESPACE = "hyperun-system"
 PROMETHEUS_SERVICE = "prometheus"

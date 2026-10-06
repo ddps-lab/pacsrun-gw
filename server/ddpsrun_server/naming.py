@@ -4,11 +4,11 @@ END-TO-END FLOW of this file:
 
   1. `POST /v1/jobs` calls `new_job_id()`, which returns something like
      `job-3f9a1c4e7b02`.
-  2. `object_name(job_id)` turns that into the PacsJob's Kubernetes name,
-     `ddpsrun-3f9a1c4e7b02`. The mapping is pure arithmetic on the string, so
+  2. `object_name(job_id)` turns that into the HyperunJob's Kubernetes name,
+     `hyperun-3f9a1c4e7b02`. The mapping is pure arithmetic on the string, so
      the server keeps no database.
   3. `labels(...)` attaches the job_id, the owner, and the user's display name
-     to the object, so a human running `kubectl get pacsjobs -l ddpsrun.io/owner=alice`
+     to the object, so a human running `kubectl get hyperunjobs -l hyperun.io/owner=alice`
      can see whose job is whose.
   4. `GET /v1/jobs/{job_id}` runs step 2 again and fetches that exact name in the
      caller's namespace. A job_id belonging to another namespace simply is not
@@ -36,19 +36,19 @@ import uuid
 
 # Public prefix, seen by users.
 JOB_ID_PREFIX = "job-"
-# Internal prefix, seen only in `kubectl get pacsjobs`.
-OBJECT_NAME_PREFIX = "ddpsrun-"
+# Internal prefix, seen only in `kubectl get hyperunjobs`.
+OBJECT_NAME_PREFIX = "hyperun-"
 # How many hex characters carry the randomness.
 ID_HEX_LENGTH = 12
 
 JOB_ID_PATTERN = re.compile(rf"^{JOB_ID_PREFIX}[0-9a-f]{{{ID_HEX_LENGTH}}}$")
 
-# Our own label keys. A separate group from `pacsrun.io/*` on purpose: those
+# Our own label keys. A separate group from `hyperun.io/*` on purpose: those
 # belong to the controller and it lists and indexes by them, so writing into
 # that group risks colliding with a meaning the controller already has.
-JOB_ID_LABEL = "ddpsrun.io/job-id"
-OWNER_LABEL = "ddpsrun.io/owner"
-DISPLAY_NAME_LABEL = "ddpsrun.io/name"
+JOB_ID_LABEL = "hyperun.io/job-id"
+OWNER_LABEL = "hyperun.io/owner"
+DISPLAY_NAME_LABEL = "hyperun.io/name"
 
 # The name the user actually typed, kept somewhere it survives intact.
 #
@@ -59,7 +59,7 @@ DISPLAY_NAME_LABEL = "ddpsrun.io/name"
 # An annotation has no character restriction (only a total size limit), so the
 # raw name goes here and the sanitised one stays in the label for `kubectl -l`.
 # Found 2026-08-31 by dry-running a Korean job name against the live CRD.
-DISPLAY_NAME_ANNOTATION = "ddpsrun.io/display-name"
+DISPLAY_NAME_ANNOTATION = "hyperun.io/display-name"
 
 # A Kubernetes label value must be at most 63 characters and must start and end
 # with an alphanumeric, with dashes, underscores and dots allowed in between.
@@ -88,7 +88,7 @@ def object_name(job_id: str) -> str:
         job_id: an id previously returned by `new_job_id`.
 
     Returns:
-        The PacsJob's `metadata.name`.
+        The HyperunJob's `metadata.name`.
 
     Raises:
         NamingError: the string is not a job_id this server could have issued.
@@ -105,11 +105,11 @@ def job_id_from_object_name(name: str) -> str | None:
     """Map back, for turning a listed object into an API response.
 
     Args:
-        name: a PacsJob's `metadata.name`.
+        name: a HyperunJob's `metadata.name`.
 
     Returns:
         The job_id, or None when the object was not created by this server —
-        somebody may have applied a PacsJob with kubectl by hand.
+        somebody may have applied a HyperunJob with kubectl by hand.
     """
     if not name.startswith(OBJECT_NAME_PREFIX):
         return None
@@ -138,7 +138,7 @@ def label_value(raw: str) -> str:
 
 
 def labels(job_id: str, owner: str, display_name: str) -> dict[str, str]:
-    """Build the label set every PacsJob this server creates carries.
+    """Build the label set every HyperunJob this server creates carries.
 
     Args:
         job_id: the public id.

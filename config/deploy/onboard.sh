@@ -3,11 +3,11 @@
 #
 # WHY THIS EXISTS. Adding a person took five separate steps in four different
 # tools, and on 2026-09-10 two of them were found missing for a namespace that
-# had existed for days: one tenant namespace had no `pacsrun-runpod` Secret at all
+# had existed for days: one tenant namespace had no `hyperun-runpod` Secret at all
 # (so a job there could not rent from RunPod -- the driver pod reads that key
 # with a LocalObjectReference and only sees its own namespace) and its pod
-# identity association still pointed at the SHARED `pacsrun-workload` role,
-# which allows Put/Get/DeleteObject on `pacsrun/*` -- every other tenant's
+# identity association still pointed at the SHARED `hyperun-workload` role,
+# which allows Put/Get/DeleteObject on `hyperun/*` -- every other tenant's
 # results. Neither failure is visible until a job runs, and one of them is a
 # tenancy hole rather than an outage.
 #
@@ -17,7 +17,7 @@
 #   2. namespace                                             kubectl create namespace
 #   3. the workload ServiceAccount                           kubectl create serviceaccount
 #   4. the gateway's namespaced Role for user secrets        rbac.yaml, substituted
-#   5. EVERY vendor credential, copied from pacsrun-system   kubectl get -o json | apply
+#   5. EVERY vendor credential, copied from hyperun-system   kubectl get -o json | apply
 #   6. PRINT what this script must not do: the terraform
 #      entry, the import command, and the token record       print_manual()
 #
@@ -28,7 +28,7 @@
 #
 # ★ WHAT IT DELIBERATELY DOES NOT DO, and why each is somebody else's job:
 #
-#   the terraform entry   `pacsrun_tenants` in PACSrun's tenants.auto.tfvars,
+#   the terraform entry   `hyperun_tenants` in PACSrun's tenants.auto.tfvars,
 #                         then `terraform apply`. terraform is the operator's
 #                         and it does not create Kubernetes objects on purpose
 #                         (variables.tf: "creating them here would make every
@@ -42,8 +42,8 @@
 #                         request. Editing live auth from a shell script is not
 #                         a thing this repository does.
 #
-#   the `RoleBinding/ddpsrun-gw` in rbac.yaml is NOT applied and does not need
-#   to be: `ClusterRoleBinding/ddpsrun-gw -> Group:ddpsrun-gw` covers pacsjobs
+#   the `RoleBinding/hyperun-gw` in rbac.yaml is NOT applied and does not need
+#   to be: `ClusterRoleBinding/hyperun-gw -> Group:hyperun-gw` covers hyperunjobs
 #   cluster-wide (checked 2026-09-10). The namespaced one is left in rbac.yaml
 #   for a deployment that wants to narrow that, and applying both is harmless
 #   but pointless.
@@ -69,8 +69,8 @@ fi
 # namespace rather than from `default`, because `default` is a tenant here too
 # and reading a credential out of a tenant's namespace to seed another tenant's
 # is a habit worth not starting.
-SOURCE_NS="pacsrun-system"
-SA="pacsjob-writer"
+SOURCE_NS="hyperun-system"
+SA="hyperunjob-writer"
 
 # ★ EVERY VENDOR CREDENTIAL A DRIVER POD MAY NEED, and why this is a list rather
 # than one name. A driver pod names its vendor key with a LocalObjectReference
@@ -80,9 +80,9 @@ SA="pacsjob-writer"
 # rent from a vendor needs that vendor's key sitting in it.
 #
 # Missing one is invisible until a job runs: the pod stops at
-# CreateContainerConfigError and kubelet says `secret "pacsrun-gcp" not found`.
+# CreateContainerConfigError and kubelet says `secret "hyperun-gcp" not found`.
 # Measured 2026-09-10 across the live cluster -- every tenant namespace had
-# pacsrun-runpod and NONE had pacsrun-gcp or pacsrun-shadeform, so a GCP or
+# hyperun-runpod and NONE had hyperun-gcp or hyperun-shadeform, so a GCP or
 # Shadeform job in a tenant namespace could not have started.
 #
 # AWS IS DELIBERATELY ABSENT. The AWS driver authenticates to its vendor with
@@ -91,14 +91,14 @@ SA="pacsjob-writer"
 # (PACSrun internal/controller/awsdriverpod.go:472-480).
 #
 # ONE KEY PER VENDOR, SHARED BY EVERY TENANT. Verified 2026-09-10: the four
-# copies of pacsrun-runpod on this cluster are byte-identical (same sha256).
+# copies of hyperun-runpod on this cluster are byte-identical (same sha256).
 # S3 is split per tenant by IAM prefix; the VENDOR ACCOUNT is not split, so a
 # namespace holding this key can see and delete every pod on that account,
 # including another researcher's. That is a property of the account, not of
 # this script, and it is why the copy is printed before it is made.
-VENDOR_SECRETS="pacsrun-runpod pacsrun-shadeform pacsrun-gcp"
+VENDOR_SECRETS="hyperun-runpod hyperun-shadeform hyperun-gcp"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-CLUSTER="${DDPSRUN_CLUSTER_NAME:-pacsrun}"
+CLUSTER="${DDPSRUN_CLUSTER_NAME:-hyperun}"
 
 say() { printf '%s\n' "$*"; }
 have() { kubectl get "$1" "$2" ${3:+-n} ${3:-} >/dev/null 2>&1; }
@@ -107,7 +107,7 @@ have() { kubectl get "$1" "$2" ${3:+-n} ${3:-} >/dev/null 2>&1; }
 say "== $NS =="
 NS_OK=no;  kubectl get namespace "$NS"            >/dev/null 2>&1 && NS_OK=yes
 SA_OK=no;  kubectl get sa "$SA" -n "$NS"          >/dev/null 2>&1 && SA_OK=yes
-ROLE_OK=no; kubectl get role ddpsrun-gw-secrets -n "$NS" >/dev/null 2>&1 && ROLE_OK=yes
+ROLE_OK=no; kubectl get role hyperun-gw-secrets -n "$NS" >/dev/null 2>&1 && ROLE_OK=yes
 # MISSING_SECRETS is what this namespace lacks AND the operator namespace has, so
 # it can be copied. NO_SOURCE is what neither has -- reported, never invented.
 MISSING_SECRETS=""
@@ -140,7 +140,7 @@ fi
 
 printf '  %-34s %s\n' "namespace"                    "$NS_OK"
 printf '  %-34s %s\n' "serviceaccount/$SA"           "$SA_OK"
-printf '  %-34s %s\n' "role/ddpsrun-gw-secrets"      "$ROLE_OK"
+printf '  %-34s %s\n' "role/hyperun-gw-secrets"      "$ROLE_OK"
 for vs in $VENDOR_SECRETS; do
   if kubectl get secret "$vs" -n "$NS" >/dev/null 2>&1; then
     printf '  %-34s %s\n' "secret/$vs" "yes"
@@ -151,8 +151,8 @@ for vs in $VENDOR_SECRETS; do
   fi
 done
 printf '  %-34s %s\n' "pod identity association"     "${ASSOC_ROLE:-none}"
-if [ "$ASSOC_ROLE" = "pacsrun-workload" ]; then
-  say "  ★ that is the SHARED role: it allows Put/Get/DeleteObject on pacsrun/*,"
+if [ "$ASSOC_ROLE" = "hyperun-workload" ]; then
+  say "  ★ that is the SHARED role: it allows Put/Get/DeleteObject on hyperun/*,"
   say "    which is every tenant's results. See print_manual below."
 fi
 say ""
@@ -175,7 +175,7 @@ if [ "$ROLE_OK" = no ]; then
   # `<TENANT_NAMESPACE>` placeholder that this namespace needs. sed substitutes
   # and `kubectl apply` is idempotent, so re-running is safe.
   if [ -n "$APPLY" ]; then
-    say "+ rbac.yaml (ddpsrun-gw-secrets) -> $NS"
+    say "+ rbac.yaml (hyperun-gw-secrets) -> $NS"
     # The whole file is applied with the placeholder substituted. It also carries
     # the ClusterRole and the operator-namespace objects, and apply is idempotent,
     # so re-sending them is a no-op rather than a second definition.
@@ -224,15 +224,15 @@ say "-- not this script's to do --"
 say ""
 say "1. PACSrun terraform/cluster/tenants.auto.tfvars:"
 say "     \"$NS\" = { team = \"<team>\", service_account = \"$SA\" }"
-if [ -n "$ASSOC_ID" ] && [ "$ASSOC_ROLE" = "pacsrun-workload" ]; then
+if [ -n "$ASSOC_ID" ] && [ "$ASSOC_ROLE" = "hyperun-workload" ]; then
   say ""
   say "2. import the association FIRST, or apply hits 409 ResourceInUseException:"
   say "     terraform import 'aws_eks_pod_identity_association.tenant[\"$NS\"]' \\"
   say "       $CLUSTER,$ASSOC_ID"
   say ""
   say "3. terraform plan   # WITHOUT -target, so nothing stays pending"
-  say "   terraform apply  # moves this namespace onto pacsrun-tenant-$NS,"
-  say "                    # which allows only pacsrun/$NS/* and has no DeleteObject"
+  say "   terraform apply  # moves this namespace onto hyperun-tenant-$NS,"
+  say "                    # which allows only hyperun/$NS/* and has no DeleteObject"
 else
   say ""
   say "2. terraform plan (WITHOUT -target) then apply"

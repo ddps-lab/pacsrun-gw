@@ -18,10 +18,10 @@ FROM python:3.12-slim
 
 # A non-root user. The server reads a mounted Secret and talks HTTPS; it needs
 # nothing a root process would have.
-RUN useradd --create-home --uid 10001 ddpsrun
+RUN useradd --create-home --uid 10001 hyperun
 COPY --from=builder /install /usr/local
-USER ddpsrun
-WORKDIR /home/ddpsrun
+USER hyperun
+WORKDIR /home/hyperun
 
 # uvicorn on 8080. TLS is terminated in front of this (an Ingress or a load
 # balancer), so the server itself speaks plain HTTP inside the cluster.

@@ -7,7 +7,7 @@ END-TO-END FLOW:
   2. The counts live in one dict in this process's memory.
   3. `render()` turns them into the Prometheus text format, and `GET /metrics`
      returns that.
-  4. Prometheus (already running as `pacsrun-system/prometheus`) scrapes it.
+  4. Prometheus (already running as `hyperun-system/prometheus`) scrapes it.
 
 ★ WHY THIS EXISTS AT ALL, AND WHY IT IS NEW. On Lambda these numbers arrived
 free: CloudWatch records Invocations, Errors, Duration and Throttles for every
@@ -33,7 +33,7 @@ and never comes back down.
 WHAT IS DELIBERATELY NOT COUNTED. Nothing per user, per namespace or per job.
 Those are the same cardinality problem wearing a different label, and the
 question they would answer -- who spent what -- is already answered exactly by
-`/v1/stats`, from the PacsJob objects themselves.
+`/v1/stats`, from the HyperunJob objects themselves.
 
 Grep anchor: HYPERUN-SERVER-METRICS
 """

@@ -300,8 +300,8 @@ def test_the_image_list_offers_what_this_lab_has_built(client, monkeypatch):
     class FakeECR:
         def describe_repositories(self, **_kwargs):
             return {"repositories": [{
-                "repositoryName": "pacsrun/operator",
-                "repositoryUri": "example.dkr.ecr.us-west-2.amazonaws.com/pacsrun/operator",
+                "repositoryName": "hyperun/operator",
+                "repositoryUri": "example.dkr.ecr.us-west-2.amazonaws.com/hyperun/operator",
             }]}
 
         def describe_images(self, repositoryName, **_kwargs):
@@ -312,7 +312,7 @@ def test_the_image_list_offers_what_this_lab_has_built(client, monkeypatch):
     monkeypatch.setattr(registry, "ecr_client", lambda region="": FakeECR())
     answer = as_alice(client, "GET", "/v1/images").json()
     assert answer["images"][0]["addresses"] == [
-        "example.dkr.ecr.us-west-2.amazonaws.com/pacsrun/operator:fd7c9b1c84e1"
+        "example.dkr.ecr.us-west-2.amazonaws.com/hyperun/operator:fd7c9b1c84e1"
     ]
     assert answer["truncated"] is False
     assert answer["note"] == ""
@@ -374,13 +374,13 @@ def test_artifacts_lists_files_with_download_links(client, cluster, monkeypatch)
 
     seed_job_with_result_path(
         cluster, "lab-alice", OBJECT_NAME,
-        "s3://<RESULT_BUCKET>/pacsrun/lab-alice/bank-exp2/",
+        "s3://<RESULT_BUCKET>/hyperun/lab-alice/bank-exp2/",
     )
     fake = FakeS3(contents=[
         # The prefix itself can exist as a zero-byte "folder" key; it is not a
         # file and must not appear in the answer.
-        {"Key": "pacsrun/lab-alice/bank-exp2/", "Size": 0},
-        {"Key": "pacsrun/lab-alice/bank-exp2/run.sh", "Size": 19655},
+        {"Key": "hyperun/lab-alice/bank-exp2/", "Size": 0},
+        {"Key": "hyperun/lab-alice/bank-exp2/run.sh", "Size": 19655},
     ])
     monkeypatch.setattr(artifacts, "s3_client", lambda: fake)
 
@@ -390,7 +390,7 @@ def test_artifacts_lists_files_with_download_links(client, cluster, monkeypatch)
     assert answer["files"][0]["size_bytes"] == 19655
     assert answer["files"][0]["url"].startswith("https://signed.example/")
     assert "ttl=600" in answer["files"][0]["url"]
-    assert fake.listed == [("<RESULT_BUCKET>", "pacsrun/lab-alice/bank-exp2/")]
+    assert fake.listed == [("<RESULT_BUCKET>", "hyperun/lab-alice/bank-exp2/")]
 
 
 def test_artifacts_with_no_result_path_is_a_note_not_an_error(client, cluster):
@@ -424,7 +424,7 @@ def test_artifacts_turns_an_s3_refusal_into_502(client, cluster, monkeypatch):
 
     seed_job_with_result_path(
         cluster, "lab-alice", OBJECT_NAME,
-        "s3://<RESULT_BUCKET>/pacsrun/lab-alice/bank-exp2/",
+        "s3://<RESULT_BUCKET>/hyperun/lab-alice/bank-exp2/",
     )
     monkeypatch.setattr(
         artifacts, "s3_client",
@@ -630,7 +630,7 @@ def test_a_submission_lands_in_the_namespace_the_token_names(client, cluster):
 def test_the_response_hands_back_an_id_and_a_result_path(client):
     payload = as_alice(client, "POST", "/v1/jobs", json=submit_body()).json()
     assert naming.JOB_ID_PATTERN.match(payload["job_id"])
-    assert payload["result_path"].startswith("s3://<RESULT_BUCKET>/pacsrun/lab-alice/")
+    assert payload["result_path"].startswith("s3://<RESULT_BUCKET>/hyperun/lab-alice/")
 
 
 def test_a_namespace_in_the_body_is_ignored(client, cluster):
@@ -686,7 +686,7 @@ def test_another_users_job_reads_as_absent_not_as_forbidden(client, cluster):
 def test_a_string_that_is_no_kind_of_name_never_reaches_the_cluster(
     client, cluster, bad, monkeypatch
 ):
-    # Only strings that are neither a ddpsrun id nor a legal Kubernetes object
+    # Only strings that are neither a hyperun id nor a legal Kubernetes object
     # name are refused before any lookup. A legal name that happens not to
     # exist ("job-zzzz") now DOES reach the cluster — that is the by-name
     # lookup working (HYPERUN-JOB-BY-NAME) — and 404s from the lookup itself,
@@ -1030,7 +1030,7 @@ def test_the_three_routes_take_the_same_body(client):
 # A body /v1/validate answers with an ERROR is refused by /v1/jobs before any object
 # exists. The web UI and AGENTS.md have always stopped at an error; until 2026-09-28
 # this route did not, and a `--vendor runpod --capacity-type spot` submit became a
-# PacsJob that sat Pending behind a solver stack trace.
+# HyperunJob that sat Pending behind a solver stack trace.
 
 
 def test_runpod_on_spot_is_refused_before_a_job_exists(client, cluster):
@@ -1308,9 +1308,9 @@ def test_the_job_list_shows_only_this_callers_jobs(client, cluster):
 def test_the_job_list_is_newest_first(client, cluster):
     for i, stamp in enumerate(["2026-09-01T03:00:00Z", "2026-09-01T01:00:00Z",
                                "2026-09-01T02:00:00Z"]):
-        obj = {"metadata": {"name": f"ddpsrun-00000000000{i}",
+        obj = {"metadata": {"name": f"hyperun-00000000000{i}",
                             "creationTimestamp": stamp,
-                            "annotations": {"ddpsrun.io/display-name": f"job-{i}"}},
+                            "annotations": {"hyperun.io/display-name": f"job-{i}"}},
                "spec": {}, "status": {}}
         cluster.objects[("lab-alice", obj["metadata"]["name"])] = obj
 
@@ -1319,8 +1319,8 @@ def test_the_job_list_is_newest_first(client, cluster):
 
 
 def test_a_job_with_no_timestamp_yet_does_not_break_the_sort(client, cluster):
-    cluster.objects[("lab-alice", "ddpsrun-0000000000f9")] = {
-        "metadata": {"name": "ddpsrun-0000000000f9"}, "spec": {}, "status": {}}
+    cluster.objects[("lab-alice", "hyperun-0000000000f9")] = {
+        "metadata": {"name": "hyperun-0000000000f9"}, "spec": {}, "status": {}}
     as_alice(client, "POST", "/v1/jobs", json=submit_body())
     assert as_alice(client, "GET", "/v1/jobs").status_code == 200
 
@@ -1336,7 +1336,7 @@ def test_the_job_list_needs_a_token(client):
 
 
 def _job(name, *, phase="", stamp="2026-09-01T00:00:00Z", **status):
-    """Build one raw PacsJob the way the apiserver would return it.
+    """Build one raw HyperunJob the way the apiserver would return it.
 
     Args:
         name: the object name, which also carries the job id.
@@ -1351,9 +1351,9 @@ def _job(name, *, phase="", stamp="2026-09-01T00:00:00Z", **status):
         "metadata": {
             "name": name,
             "creationTimestamp": stamp,
-            "labels": {"ddpsrun.io/job-id": name.replace("ddpsrun-", "job-"),
-                       "ddpsrun.io/owner": "alice"},
-            "annotations": {"ddpsrun.io/display-name": name},
+            "labels": {"hyperun.io/job-id": name.replace("hyperun-", "job-"),
+                       "hyperun.io/owner": "alice"},
+            "annotations": {"hyperun.io/display-name": name},
         },
         "spec": {},
         "status": {"phase": phase, **status},
@@ -1362,15 +1362,15 @@ def _job(name, *, phase="", stamp="2026-09-01T00:00:00Z", **status):
 
 def test_the_job_list_reports_who_submitted_each_job(client, cluster):
     """The jobs screen's 'submitted by' column (docs/15-screens.md 15.5)."""
-    cluster.objects[("lab-alice", "ddpsrun-0000000000a1")] = _job("ddpsrun-0000000000a1")
+    cluster.objects[("lab-alice", "hyperun-0000000000a1")] = _job("hyperun-0000000000a1")
     result = as_alice(client, "GET", "/v1/jobs").json()
     assert result["jobs"][0]["user"] == "alice"
 
 
 def test_a_job_carries_the_two_clock_stamps(client, cluster):
     """The elapsed column needs run time, not age (HYPERUN-JOB-CLOCK)."""
-    cluster.objects[("lab-alice", "ddpsrun-0000000000a2")] = _job(
-        "ddpsrun-0000000000a2", phase="Succeeded",
+    cluster.objects[("lab-alice", "hyperun-0000000000a2")] = _job(
+        "hyperun-0000000000a2", phase="Succeeded",
         startedAt="2026-09-01T00:01:00Z", finishedAt="2026-09-01T02:30:00Z")
     view = as_alice(client, "GET", "/v1/jobs/job-0000000000a2").json()
     assert view["started_at"] == "2026-09-01T00:01:00Z"
@@ -1379,8 +1379,8 @@ def test_a_job_carries_the_two_clock_stamps(client, cluster):
 
 def test_a_waiting_job_has_no_start_stamp(client, cluster):
     """Queue time is visible precisely because startedAt is absent until it runs."""
-    cluster.objects[("lab-alice", "ddpsrun-0000000000a3")] = _job(
-        "ddpsrun-0000000000a3", phase="Pending")
+    cluster.objects[("lab-alice", "hyperun-0000000000a3")] = _job(
+        "hyperun-0000000000a3", phase="Pending")
     view = as_alice(client, "GET", "/v1/jobs/job-0000000000a3").json()
     assert view["created_at"] == "2026-09-01T00:00:00Z"
     assert view["started_at"] is None
@@ -1390,7 +1390,7 @@ def test_a_waiting_job_has_no_start_stamp(client, cluster):
 def test_the_active_filter_drops_finished_jobs(client, cluster):
     """The jobs screen's default tab."""
     for i, phase in enumerate(["Running", "Succeeded", "Failed", "Pending"]):
-        name = f"ddpsrun-00000000001{i}"
+        name = f"hyperun-00000000001{i}"
         cluster.objects[("lab-alice", name)] = _job(name, phase=phase)
 
     active = as_alice(client, "GET", "/v1/jobs?phase=active").json()
@@ -1402,14 +1402,14 @@ def test_the_active_filter_drops_finished_jobs(client, cluster):
 
 def test_a_job_with_no_phase_yet_counts_as_active(client, cluster):
     """A job the controller has not looked at is still one to watch."""
-    cluster.objects[("lab-alice", "ddpsrun-0000000000b0")] = _job("ddpsrun-0000000000b0")
+    cluster.objects[("lab-alice", "hyperun-0000000000b0")] = _job("hyperun-0000000000b0")
     result = as_alice(client, "GET", "/v1/jobs?phase=active").json()
     assert len(result["jobs"]) == 1
 
 
 def test_an_exact_phase_can_be_asked_for(client, cluster):
     for i, phase in enumerate(["Failed", "Succeeded"]):
-        name = f"ddpsrun-00000000003{i}"
+        name = f"hyperun-00000000003{i}"
         cluster.objects[("lab-alice", name)] = _job(name, phase=phase)
     result = as_alice(client, "GET", "/v1/jobs?phase=Failed").json()
     assert [j["phase"] for j in result["jobs"]] == ["Failed"]
@@ -1418,7 +1418,7 @@ def test_an_exact_phase_can_be_asked_for(client, cluster):
 def test_the_limit_caps_the_list_but_total_still_counts_everything(client, cluster):
     """So the screen can say 'showing 2 of 5' rather than hiding three jobs."""
     for i in range(5):
-        name = f"ddpsrun-00000000004{i}"
+        name = f"hyperun-00000000004{i}"
         cluster.objects[("lab-alice", name)] = _job(
             name, stamp=f"2026-09-01T0{i}:00:00Z")
     result = as_alice(client, "GET", "/v1/jobs?limit=2").json()
@@ -1475,11 +1475,11 @@ def test_compared_counts_as_finished_not_as_still_running(client, cluster):
     the active tab showed every one of them.
 
     Compared means a mode=compare job priced every candidate offering and bought
-    nothing (`api/v1alpha1/pacsjob_types.go:85`). It is terminal and it is not a
+    nothing (`api/v1alpha1/hyperunjob_types.go:85`). It is terminal and it is not a
     failure, so it belongs under 'finished' with a label of its own.
     """
-    cluster.objects[("lab-alice", "ddpsrun-0000000000c5")] = _job(
-        "ddpsrun-0000000000c5", phase="Compared")
+    cluster.objects[("lab-alice", "hyperun-0000000000c5")] = _job(
+        "hyperun-0000000000c5", phase="Compared")
 
     assert as_alice(client, "GET", "/v1/jobs?phase=active").json()["jobs"] == []
     finished = as_alice(client, "GET", "/v1/jobs?phase=finished").json()["jobs"]
@@ -1512,8 +1512,8 @@ def test_a_cancelled_job_leaves_the_list(client, cluster):
 def test_a_finished_job_can_be_cancelled_too(client, cluster):
     """Nothing is stopped; the row goes away. That is the other thing the button
     is for, and refusing it would leave failed rows on screen forever."""
-    cluster.objects[("lab-alice", "ddpsrun-0000000000d1")] = _job(
-        "ddpsrun-0000000000d1", phase="Failed")
+    cluster.objects[("lab-alice", "hyperun-0000000000d1")] = _job(
+        "hyperun-0000000000d1", phase="Failed")
     assert as_alice(client, "DELETE", "/v1/jobs/job-0000000000d1").status_code == 204
 
 
@@ -1544,21 +1544,21 @@ def test_cancelling_needs_a_token(client):
 
 def seed_job_with_args(cluster, namespace, name, args, job_id="", display="", created="",
                        owner=""):
-    """A PacsJob shaped like the ones the screen creates, with the args it would carry.
+    """A HyperunJob shaped like the ones the screen creates, with the args it would carry.
 
     `owner` defaults to EMPTY so the old callers keep testing the shape they meant
     to -- a job with no submitter recorded, which is what `kubectl apply` makes.
-    Every job this gateway creates carries one (`models.to_pacsjob` stamps
-    `ddpsrun.io/owner` from principal.user), so a test about the normal path has
+    Every job this gateway creates carries one (`models.to_hyperunjob` stamps
+    `hyperun.io/owner` from principal.user), so a test about the normal path has
     to pass it.
     """
     labels = {}
     if job_id:
-        labels["ddpsrun.io/job-id"] = job_id
+        labels["hyperun.io/job-id"] = job_id
     if display:
-        labels["ddpsrun.io/name"] = display
+        labels["hyperun.io/name"] = display
     if owner:
-        labels["ddpsrun.io/owner"] = owner
+        labels["hyperun.io/owner"] = owner
     cluster.objects[(namespace, name)] = {
         "metadata": {"name": name, "namespace": namespace, "labels": labels,
                      "creationTimestamp": created},
@@ -1568,7 +1568,7 @@ def seed_job_with_args(cluster, namespace, name, args, job_id="", display="", cr
 
 
 def test_a_script_is_read_back_out_of_the_job_that_ran_it(client, cluster):
-    """HYPERUN-SCRIPTS. Nothing is stored; the text is on the PacsJob already.
+    """HYPERUN-SCRIPTS. Nothing is stored; the text is on the HyperunJob already.
 
     The Script box sends the same text twice -- as `args` (what runs) and as `script` (what
     validate reads) -- and the server throws `script` away, exactly as its field description
@@ -1577,7 +1577,7 @@ def test_a_script_is_read_back_out_of_the_job_that_ran_it(client, cluster):
     scripts would be a second copy that can disagree with the first.
     """
     seed_job_with_args(
-        cluster, "lab-alice", "ddpsrun-aaaaaaaaaaaa",
+        cluster, "lab-alice", "hyperun-aaaaaaaaaaaa",
         ["bash", "-lc", "set -euo pipefail\npython train.py"],
         job_id="job-aaaaaaaaaaaa", display="train", created="2026-09-08T01:00:00Z",
         owner="alice",
@@ -1602,7 +1602,7 @@ def test_the_same_script_five_times_is_one_entry(client, cluster):
     """
     for i, day in enumerate(("05", "06", "07")):
         seed_job_with_args(
-            cluster, "lab-alice", f"ddpsrun-bbbbbbbbbbb{i}",
+            cluster, "lab-alice", f"hyperun-bbbbbbbbbbb{i}",
             ["bash", "-lc", "python same.py"],
             job_id=f"job-bbbbbbbbbbb{i}", display=f"run-{day}",
             created=f"2026-09-{day}T01:00:00Z",
@@ -1622,10 +1622,10 @@ def test_a_job_whose_args_are_not_a_script_is_left_out_and_the_note_says_which_e
     recognises", and a kubectl job or an argv list is the second one. Guessing which part of an
     arbitrary argv is "the script" would put text in front of somebody as if we knew.
     """
-    seed_job_with_args(cluster, "lab-alice", "ddpsrun-cccccccccccc",
+    seed_job_with_args(cluster, "lab-alice", "hyperun-cccccccccccc",
                        ["python", "train.py", "--epochs", "4"])
-    seed_job_with_args(cluster, "lab-alice", "ddpsrun-dddddddddddd", [])
-    seed_job_with_args(cluster, "lab-alice", "ddpsrun-eeeeeeeeeeee",
+    seed_job_with_args(cluster, "lab-alice", "hyperun-dddddddddddd", [])
+    seed_job_with_args(cluster, "lab-alice", "hyperun-eeeeeeeeeeee",
                        ["bash", "-lc", "   "])
     answer = as_alice(client, "GET", "/v1/scripts").json()
     assert answer["scripts"] == []
@@ -1638,7 +1638,7 @@ def test_a_job_whose_args_are_not_a_script_is_left_out_and_the_note_says_which_e
 
 def test_scripts_are_the_callers_own_and_nobody_elses(client, cluster):
     """The same boundary every other route uses: read from the token's namespace and nowhere else."""
-    seed_job_with_args(cluster, "lab-bob", "ddpsrun-ffffffffffff",
+    seed_job_with_args(cluster, "lab-bob", "hyperun-ffffffffffff",
                        ["bash", "-lc", "bob's private thing"])
     assert as_alice(client, "GET", "/v1/scripts").json()["scripts"] == []
     mine = as_alice(client, "GET", "/v1/scripts")
@@ -1759,10 +1759,10 @@ def test_two_people_running_the_same_script_are_two_entries(client, cluster):
     counted the second, so the listing named one of them and silently dropped the
     other."""
     shared = "python train.py --config shared.yaml"
-    seed_job_with_args(cluster, "lab-alice", "ddpsrun-aaaaaaaaaaaa",
+    seed_job_with_args(cluster, "lab-alice", "hyperun-aaaaaaaaaaaa",
                        ["bash", "-lc", shared], job_id="job-aaaaaaaaaaaa",
                        display="alice-run", created="2026-09-08T01:00:00Z", owner="alice")
-    seed_job_with_args(cluster, "lab-alice", "ddpsrun-bbbbbbbbbbbb",
+    seed_job_with_args(cluster, "lab-alice", "hyperun-bbbbbbbbbbbb",
                        ["bash", "-lc", shared], job_id="job-bbbbbbbbbbbb",
                        display="bob-run", created="2026-09-08T02:00:00Z", owner="bob")
 
@@ -1782,7 +1782,7 @@ def test_one_person_running_it_five_times_is_still_one_entry(client, cluster):
     de-duplication that made the screen readable in the first place."""
     same = "python train.py"
     for n, stamp in enumerate(["01", "02", "03", "04", "05"]):
-        seed_job_with_args(cluster, "lab-alice", f"ddpsrun-cccccccccc{n}0",
+        seed_job_with_args(cluster, "lab-alice", f"hyperun-cccccccccc{n}0",
                            ["bash", "-lc", same], job_id=f"job-cccccccccc{n}0",
                            display=f"run-{n}", created=f"2026-09-08T{stamp}:00:00Z",
                            owner="alice")
@@ -1800,13 +1800,13 @@ def test_a_job_with_no_owner_says_so_rather_than_guessing(client, cluster):
     which would sit in the owner column looking like somebody's username -- and
     the note explains the unnamed group, so it reads as jobs predating the
     labelling rather than as broken grouping."""
-    seed_job_with_args(cluster, "lab-alice", "ddpsrun-dddddddddddd",
+    seed_job_with_args(cluster, "lab-alice", "hyperun-dddddddddddd",
                        ["bash", "-lc", "python train.py"],
                        job_id="job-dddddddddddd", created="2026-09-08T01:00:00Z")
     answer = as_alice(client, "GET", "/v1/scripts").json()
     assert answer["scripts"][0]["owner"] == ""
     assert answer["owners"] == [""]
-    assert "ddpsrun.io/owner" in answer["note"]
+    assert "hyperun.io/owner" in answer["note"]
     assert "kubectl apply" in answer["note"]
 
 
@@ -1816,10 +1816,10 @@ def test_the_namespace_is_reported_as_a_namespace_and_not_as_a_person(client, cl
     all three principals in the deployed token file sit in `default`. So the
     answer reports the namespace it READ and the people it FOUND as two separate
     fields."""
-    seed_job_with_args(cluster, "lab-alice", "ddpsrun-eeeeeeeeeeee",
+    seed_job_with_args(cluster, "lab-alice", "hyperun-eeeeeeeeeeee",
                        ["bash", "-lc", "a"], job_id="job-eeeeeeeeeeee",
                        created="2026-09-08T01:00:00Z", owner="alice")
-    seed_job_with_args(cluster, "lab-alice", "ddpsrun-ffffffffffff",
+    seed_job_with_args(cluster, "lab-alice", "hyperun-ffffffffffff",
                        ["bash", "-lc", "b"], job_id="job-ffffffffffff",
                        created="2026-09-08T02:00:00Z", owner="bob")
     answer = as_alice(client, "GET", "/v1/scripts").json()
@@ -1873,14 +1873,14 @@ ALICE_SCRIPT = "python train.py --data /alice/private.jsonl"
 
 def _alice_job(cluster, phase="Running"):
     """One job of alice's, in the shared namespace, labelled as hers."""
-    cluster.objects[("shared", "ddpsrun-a11ce0000001")] = {
-        "metadata": {"name": "ddpsrun-a11ce0000001", "namespace": "shared",
-                     "labels": {"ddpsrun.io/job-id": "job-a11ce0000001",
-                                "ddpsrun.io/name": "alice-secret",
-                                "ddpsrun.io/owner": "alice"},
+    cluster.objects[("shared", "hyperun-a11ce0000001")] = {
+        "metadata": {"name": "hyperun-a11ce0000001", "namespace": "shared",
+                     "labels": {"hyperun.io/job-id": "job-a11ce0000001",
+                                "hyperun.io/name": "alice-secret",
+                                "hyperun.io/owner": "alice"},
                      "creationTimestamp": "2026-09-08T01:00:00Z"},
         "spec": {"image": "img", "args": ["bash", "-lc", ALICE_SCRIPT],
-                 "resultPath": "s3://b/pacsrun/shared/alice-secret-a11ce0000001/"},
+                 "resultPath": "s3://b/hyperun/shared/alice-secret-a11ce0000001/"},
         "status": {"phase": phase},
     }
     return "job-a11ce0000001"
@@ -1933,9 +1933,9 @@ def test_a_namespace_mate_cannot_cancel_the_job(shared_ns_client, cluster):
     it -- so this was unrecoverable loss of someone else's work."""
     job = _alice_job(cluster)
     assert as_bob(shared_ns_client, "DELETE", f"/v1/jobs/{job}").status_code == 404
-    assert ("shared", "ddpsrun-a11ce0000001") in cluster.objects
+    assert ("shared", "hyperun-a11ce0000001") in cluster.objects
     assert as_alice(shared_ns_client, "DELETE", f"/v1/jobs/{job}").status_code == 204
-    assert ("shared", "ddpsrun-a11ce0000001") not in cluster.objects
+    assert ("shared", "hyperun-a11ce0000001") not in cluster.objects
 
 
 def test_a_namespace_mate_cannot_read_the_logs(shared_ns_client, cluster):
@@ -1963,9 +1963,9 @@ def test_a_job_with_no_owner_stays_readable_by_anyone_in_the_namespace(
     this cluster carries no owner label -- they were applied with kubectl, before
     the label existed -- so nobody owns them, and gating them would empty the
     screen of the jobs it mostly shows. A job created through this service always
-    has an owner (`models.to_pacsjob` stamps it), so the exemption shrinks to
+    has an owner (`models.to_hyperunjob` stamps it), so the exemption shrinks to
     nothing as the old jobs age out."""
-    seed_job_with_args(cluster, "shared", "ddpsrun-0000000000ab",
+    seed_job_with_args(cluster, "shared", "hyperun-0000000000ab",
                        ["bash", "-lc", "echo legacy"], job_id="job-0000000000ab",
                        created="2026-09-01T00:00:00Z")          # no owner=
     assert as_bob(shared_ns_client, "GET", "/v1/jobs/job-0000000000ab").status_code == 200
@@ -2007,7 +2007,7 @@ def test_a_registered_name_becomes_usable_and_lands_in_that_namespace(client, cl
     entry = [e for e in body["spec"]["env"] if e["name"] == "HF_TOKEN"][0]
     assert entry == {
         "name": "HF_TOKEN",
-        "valueFrom": {"secretKeyRef": {"name": "ddpsrun-user-secrets",
+        "valueFrom": {"secretKeyRef": {"name": "hyperun-user-secrets",
                                        "key": "HF_TOKEN"}},
     }
     assert "value" not in entry, "값이 job spec 에 들어가면 etcd 와 모든 백업에 남는다"
@@ -2171,7 +2171,7 @@ def test_continue_from_a_job_with_no_result_path_is_refused_not_inherited(client
     21시간을 돌린 결과가 갈 곳이 없고, 그것은 끝에서야 드러난다."""
     cluster.objects[("lab-alice", "hand-applied")] = {
         "metadata": {"name": "hand-applied",
-                     "labels": {"ddpsrun.io/owner": "alice"}},
+                     "labels": {"hyperun.io/owner": "alice"}},
         "spec": {}, "status": {},
     }
     refused = as_alice(client, "POST", "/v1/jobs",
@@ -2456,7 +2456,7 @@ def test_analysis_of_someone_elses_job_is_refused(client, cluster, monkeypatch):
     # Same owner gate as /metrics and /logs: the rules read another person's
     # training output, so the job has to be fetched to know whose it is.
     cluster.objects[("lab-bob", "bobs-run")] = {
-        "metadata": {"name": "bobs-run", "labels": {"ddpsrun.io/owner": "bob"}},
+        "metadata": {"name": "bobs-run", "labels": {"hyperun.io/owner": "bob"}},
         "spec": {"parallelism": 1},
         "status": {"phase": "Running"},
     }
@@ -2469,7 +2469,7 @@ def test_analysis_of_someone_elses_job_is_refused(client, cluster, monkeypatch):
 def _finished_job(name, started, finished, owner, vendor="runpod", usd=6.0):
     return {
         "metadata": {"name": name,
-                     "labels": {"ddpsrun.io/owner": owner, "ddpsrun.io/name": name}},
+                     "labels": {"hyperun.io/owner": owner, "hyperun.io/name": name}},
         "spec": {"parallelism": 1},
         "status": {"phase": "Succeeded", "startedAt": started, "finishedAt": finished,
                    "currentOffering": {"vendor": vendor, "usdPerHour": usd},
@@ -2558,7 +2558,7 @@ def test_the_window_cannot_be_asked_for_beyond_the_cap(client, cluster):
 def running_job_for_stop(owner="alice", phase="Running"):
     return {
         "metadata": {"name": OBJECT_NAME,
-                     "labels": {"ddpsrun.io/owner": owner, "ddpsrun.io/job-id": JOB_ID}},
+                     "labels": {"hyperun.io/owner": owner, "hyperun.io/job-id": JOB_ID}},
         "spec": {"parallelism": 1},
         "status": {"phase": phase},
     }

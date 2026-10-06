@@ -224,7 +224,7 @@ class Client:
         request — there is no held-open terminal behind a Lambda.
 
         Args:
-            job: the job id, or the PacsJob's Kubernetes name.
+            job: the job id, or the HyperunJob's Kubernetes name.
             command: one shell line, run as `sh -lc <command>`.
             slot: which pod of a parallel job.
             timeout_seconds: server-side wait, capped at 25 by the server.

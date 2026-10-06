@@ -110,7 +110,7 @@ class Gpu:
 #   RunPod       "A100 PCIe", "A100 SXM"                   RunPod's own names
 #
 # The catalogue spelling is the one that has to be right here, because this name
-# travels into a PacsJob and PACSrun compares it to the CSV's AcceleratorName with
+# travels into a HyperunJob and PACSrun compares it to the CSV's AcceleratorName with
 # an exact match (`pkg/decider/skycatalog/decider.go:607`). On 2026-09-02 a job
 # asked for "NVIDIA L40S" and sat in Pending forever: us-west-2 has 32 L40S rows,
 # and every one of them was refused on the name.

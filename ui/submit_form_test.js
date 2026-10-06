@@ -387,7 +387,7 @@ check(emailInToken(fakeToken({ sub: "x" })) === "",
       "a token with no email claim yields an empty string rather than undefined, so the label " +
       "falls back to its own wording instead of printing 'undefined'");
 
-check(emailInToken("ddpsrun-static-token-not-a-jwt") === "",
+check(emailInToken("hyperun-static-token-not-a-jwt") === "",
       "a static token is not a JWT and must not throw here -- it has no email to show and the " +
       "person holding one is registered anyway");
 
@@ -662,7 +662,7 @@ check(SRC.includes('$("f-mode").value = "cheapest"'),
   setForm({ image: IMAGE, mode: "cheapest" });
   check(readForm().placement_mode === "cheapest",
         "and a form left on that default submits placement_mode cheapest, which is the half of "
-        + "the default that reaches the PacsJob");
+        + "the default that reaches the HyperunJob");
 }
 
 // HYPERUN-IMAGES-NO-DATALIST. The Image box's dropdown listed full ECR addresses, every one of
@@ -680,14 +680,14 @@ check(/id="f-image-toggle"/.test(HTML) && /id="f-image-picker"/.test(HTML),
 // HYPERUN-BRAND. The product is called hyperun: the command is `pip install hyperun`, the plugin
 // is `/plugin install hyperun`, and the tab title has said hyperun since the rename. The two
 // places a person actually reads -- the bar across the top and the sign-in heading -- still said
-// ddpsrun, so the screen introduced itself by a name that appears nowhere else.
+// hyperun, so the screen introduced itself by a name that appears nowhere else.
 {
   const brands = [...HTML.matchAll(/class="brand"[^>]*>(.*?)<\/(?:div|h1)>/g)]
     .map((m) => m[1].replace(/<[^>]*>/g, ""));
   check(brands.length === 2, "there are exactly two brand elements: the top bar and the sign-in heading");
   check(brands.every((b) => b === "hyperun"),
         "and both spell hyperun once the accent span is stripped, so no screen introduces itself "
-        + "as ddpsrun");
+        + "as hyperun");
 }
 
 check(/<title>hyperun<\/title>/.test(HTML),

@@ -23,7 +23,7 @@ name in that header before calling STS, and the signature then does not match.
 Run as a program, it prints the ExecCredential JSON the kubernetes client
 expects on stdout:
 
-    python3 -m ddpsrun_server.eks_token --cluster-name pacsrun --region us-west-2
+    python3 -m ddpsrun_server.eks_token --cluster-name hyperun --region us-west-2
 
 Verified 2026-09-01: a token built this way answered HTTP 200 against the live
 apiserver.

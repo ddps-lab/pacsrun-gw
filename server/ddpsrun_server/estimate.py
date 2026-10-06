@@ -804,7 +804,7 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
             #     now $6.36/hour, 0.44% under the $6.388 that was billed.
             #   * an L40S was quoted $0.99 from 2026-08-30 while RunPod's list
             #     price had moved to $1.09 -- read twice independently, at
-            #     2026-09-04 07:44Z (recorded in pacsjob-baseline-c.yaml's own
+            #     2026-09-04 07:44Z (recorded in hyperunjob-baseline-c.yaml's own
             #     comment) and 2026-09-09 by the catalog API. A ten-day-old
             #     price is a wrong number, which this module ranks below no
             #     number at all, so the fresher published one wins. `GPUS` keeps

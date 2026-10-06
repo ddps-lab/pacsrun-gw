@@ -43,7 +43,7 @@ def test_an_aws_job_is_no_longer_priced_at_runpods_rate():
     and `measurements.GPUS` still holds it, because `stats.job_cost` prices runs
     that already happened. This assertion is about what a job would cost NOW, so
     it reads the newer published price out of prices.csv -- read twice
-    independently at 2026-09-04 07:44Z (pacsjob-baseline-c.yaml's own comment)
+    independently at 2026-09-04 07:44Z (hyperunjob-baseline-c.yaml's own comment)
     and 2026-09-09 (the catalog API). The gap was 88% at 0.99.
     """
     on_aws = e.hourly_rate("L40S", 1, 1, ["aws"], "on-demand")

@@ -1,12 +1,12 @@
 # HYPERUN-WORKLOAD-SA
 #
 # ★ THIS FILE NO LONGER CREATES ANYTHING, AND THE PARAGRAPH IT USED TO CARRY WAS WRONG ABOUT
-# WHAT ITS ABSENCE COSTS. It created a ServiceAccount named `pacsrun-workload` with this note:
+# WHAT ITS ABSENCE COSTS. It created a ServiceAccount named `hyperun-workload` with this note:
 #
 #     NO IRSA ANNOTATION YET, ON PURPOSE. ... Until that is settled, a job can run and stream
 #     its logs but cannot upload anything.
 #
-# WHAT IS ACTUALLY TRUE. `spec.serviceAccountName` on a PacsJob is put on the job's DRIVER POD,
+# WHAT IS ACTUALLY TRUE. `spec.serviceAccountName` on a HyperunJob is put on the job's DRIVER POD,
 # and the driver pod's identity is what RENTS THE MACHINE. Without a usable one the job does not
 # "run without uploading" -- it does not run at all:
 #
@@ -15,49 +15,49 @@
 #     the AssumeRoleWithWebIdentity operation: Not authorized to perform
 #     sts:AssumeRoleWithWebIdentity
 #
-# exit 10, terminal, before anything is bought. Measured 2026-09-08 on job ddpsrun-24547306294e
+# exit 10, terminal, before anything is bought. Measured 2026-09-08 on job hyperun-24547306294e
 # submitted from the New job screen: the solve was clean (`aws g6.xlarge usw2-az4`) and the
 # driver died in its own configuration check at +0.31s.
 #
 # WHY CREATING AN SA HERE COULD NEVER HAVE HELPED. The role is assumed through EKS Pod Identity,
-# and only one namespace/ServiceAccount pair can assume it: `default/pacsjob-writer ->
-# role/pacsrun-workload`. So a second ServiceAccount, annotated or not, is an identity nothing
-# can assume with. And `pacsrun-workload` is the ROLE's name; this file put it in the
+# and only one namespace/ServiceAccount pair can assume it: `default/hyperunjob-writer ->
+# role/hyperun-workload`. So a second ServiceAccount, annotated or not, is an identity nothing
+# can assume with. And `hyperun-workload` is the ROLE's name; this file put it in the
 # ServiceAccount's slot.
 #
 # ★ WHICH OBJECT ENFORCES THAT, corrected 2026-09-08. This paragraph said "the role's trust
 # policy names exactly ONE namespace/ServiceAccount pair", quoting PACSrun's
 # config/deploy/README.md step 3. THE TRUST POLICY NAMES NO NAMESPACE AT ALL. Measured with
-# `aws iam get-role --role-name pacsrun-workload --query Role.AssumeRolePolicyDocument`:
+# `aws iam get-role --role-name hyperun-workload --query Role.AssumeRolePolicyDocument`:
 #
 #     Principal { "Service": "pods.eks.amazonaws.com" }
 #     Action    [ "sts:TagSession", "sts:AssumeRole" ]
 #
 # and no Condition block. What binds the pair is the ASSOCIATION, a separate EKS object, and
-# `aws eks list-pod-identity-associations --cluster-name pacsrun` shows exactly one for this
-# role: `default / pacsjob-writer`.
+# `aws eks list-pod-identity-associations --cluster-name hyperun` shows exactly one for this
+# role: `default / hyperunjob-writer`.
 #
 # THE EFFECT IS THE SAME AND THE COST OF EXTENDING IT IS NOT, which is why the distinction
 # matters. Running jobs in a SECOND namespace does NOT need the trust policy touched -- it needs
-# a `pacsjob-writer` ServiceAccount in that namespace and ONE more association:
+# a `hyperunjob-writer` ServiceAccount in that namespace and ONE more association:
 #
 #     kubectl create namespace lab-someone
-#     kubectl -n lab-someone create serviceaccount pacsjob-writer
-#     aws eks create-pod-identity-association --cluster-name pacsrun \
-#       --namespace lab-someone --service-account pacsjob-writer \
-#       --role-arn arn:aws:iam::<ACCOUNT_ID>:role/pacsrun-workload
+#     kubectl -n lab-someone create serviceaccount hyperunjob-writer
+#     aws eks create-pod-identity-association --cluster-name hyperun \
+#       --namespace lab-someone --service-account hyperunjob-writer \
+#       --role-arn arn:aws:iam::<ACCOUNT_ID>:role/hyperun-workload
 #
 # The gateway itself needs nothing: its permissions come from a ClusterRoleBinding
-# (`ClusterRole/ddpsrun-gw -> Group:ddpsrun-gw`) with create/get/list/delete on `pacsjobs`
+# (`ClusterRole/hyperun-gw -> Group:hyperun-gw`) with create/get/list/delete on `hyperunjobs`
 # cluster-wide, so it can already submit into a namespace that does not exist yet.
 #
-# WHAT REPLACES IT. Nothing to apply. DDPSRUN_SERVICE_ACCOUNT defaults to `pacsjob-writer`, the
+# WHAT REPLACES IT. Nothing to apply. DDPSRUN_SERVICE_ACCOUNT defaults to `hyperunjob-writer`, the
 # ServiceAccount PACSrun's terraform already creates and wires, and a deployment whose name
 # differs sets the variable to match its own `workload_service_account` output.
 #
-# THE ORPHAN IS LEFT ALONE. The `pacsrun-workload` ServiceAccount this file created is still in
+# THE ORPHAN IS LEFT ALONE. The `hyperun-workload` ServiceAccount this file created is still in
 # the cluster. It is harmless -- no role trusts it and nothing names it any more -- and deleting
-# a cluster object to tidy up is not worth the risk. `kubectl delete sa pacsrun-workload -n
+# a cluster object to tidy up is not worth the risk. `kubectl delete sa hyperun-workload -n
 # default` is the command if it is ever wanted.
 #
 # THE OPEN DESIGN QUESTION THE OLD NOTE RAISED IS STILL OPEN, and it is a DIFFERENT question:

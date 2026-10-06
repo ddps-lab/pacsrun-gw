@@ -246,7 +246,7 @@ One container repository this lab has built, as the Image box offers it.
 | `addresses` |  | `registry/repository:tag` for every tag above, ready to paste into the Image field. Built here rather than in the browser so one place decides the shape. |
 | `pushed_at` |  | When the newest image was pushed, or empty for a repository with none. |
 | `registry` | yes | The host part, so the screen can build the pullable address without knowing this deployment's account id. |
-| `repository` | yes | The repository name, e.g. "pacsrun/operator". |
+| `repository` | yes | The repository name, e.g. "hyperun/operator". |
 | `tags` |  | The newest tags, newest first, capped at a handful per repository. Empty for a repository holding only untagged images -- a real state, shown rather than hidden, because an empty row is the answer to "why can I not find my image". |
 
 ### ImagesResponse
@@ -277,7 +277,7 @@ What `GET /v1/jobs/{id}/spec` returns: the submission, as stored.
 | `job_id` | yes |  |
 | `name` | yes |  |
 | `redacted` |  | Names of the env entries whose source was removed. Shown to the user as 'set from a secret' rather than silently vanishing, because an env var that disappears from the screen reads as a bug. |
-| `spec` | yes | The PacsJob spec with the two removals above applied. |
+| `spec` | yes | The HyperunJob spec with the two removals above applied. |
 
 ### JobView
 
@@ -303,7 +303,7 @@ What `GET /v1/jobs/{id}` returns.
 | `started_at` |  | When the job's pod first ran, from status.startedAt (HYPERUN-JOB-CLOCK). Absent while the job is still waiting for a machine, which is exactly what makes queue time visible: started_at - created_at is the wait, finished_at - started_at is the run. |
 | `stopped` |  | Whether a pause has been ASKED FOR, from spec.stopped. ★ It is the request and not the outcome: the machine pauses seconds to a minute later, and on some vendors it cannot pause at all -- Shadeform has no stop API, a spot instance has no stopped state, a RunPod pod with no volume would lose everything. `phase == 'Stopped'` is the statement that it actually happened. A screen that read this one as 'paused' would tell somebody a $6/hour machine had stopped billing when it had not. |
 | `stopped_at` |  | When the machine was actually paused, from status.stoppedAt. The orphan sweep measures the 7-day protection from it: a job left paused longer than that stops being protected and its machine is swept. |
-| `user` |  | Who submitted it. Read from the ddpsrun.io/owner label the server itself wrote at submit time, so it cannot be forged by editing the object: a caller can only ever see their own namespace anyway. |
+| `user` |  | Who submitted it. Read from the hyperun.io/owner label the server itself wrote at submit time, so it cannot be forged by editing the object: a caller can only ever see their own namespace anyway. |
 | `vendor` |  | Who it was rented from, e.g. runpod, aws. |
 
 ### JudgementRequest
@@ -494,7 +494,7 @@ One script this caller has submitted before.
 | `job_id` |  | The most recent job that ran it. |
 | `lines` |  | How many lines it has, so the screen can say so. |
 | `name` |  | That job's display name. |
-| `owner` |  | WHO submitted it, from the job's ddpsrun.io/owner label. Empty when the job was not created through this gateway -- a job made with `kubectl apply` carries no owner, and saying 'unknown' would be a guess about a person. |
+| `owner` |  | WHO submitted it, from the job's hyperun.io/owner label. Empty when the job was not created through this gateway -- a job made with `kubectl apply` carries no owner, and saying 'unknown' would be a guess about a person. |
 | `script` | yes | The text, exactly as it was submitted. |
 | `used` |  | How many of this caller's jobs ran this exact text. The same run.sh submitted five times is one entry with used=5, not five entries -- a list where every retry is its own row is a list nobody scrolls. |
 
@@ -553,7 +553,7 @@ What /v1/stats returns.
 | `members` |  |  |
 | `note` |  | Why the figures are incomplete, in words. Empty when they are not. |
 | `team` | yes |  |
-| `unowned_jobs` |  | How many of `jobs` were applied straight to the cluster with kubectl and so carry no ddpsrun.io/owner label. They are in every total here and in no row of `members`: that table's columns are facts about a person, and three non-people in a row (`default` the namespace, `admin` the role, `kubectl` the tool) were each read as a colleague. The screen states this as a sentence instead. |
+| `unowned_jobs` |  | How many of `jobs` were applied straight to the cluster with kubectl and so carry no hyperun.io/owner label. They are in every total here and in no row of `members`: that table's columns are facts about a person, and three non-people in a row (`default` the namespace, `admin` the role, `kubectl` the tool) were each read as a colleague. The screen states this as a sentence instead. |
 | `unpriced_jobs` |  |  |
 | `vendors` |  | The same jobs added up by who sold the machines — computed in the same pass as members, so the two tables cannot disagree. |
 
@@ -578,7 +578,7 @@ What the server cannot read out of a container image.
 | `epochs` |  | How many passes over the dataset. |
 | `grad_accum` |  | gradient_accumulation_steps. Our script uses 8. |
 | `pairs` |  | How many training pairs the dataset holds. Without it there is no step count and therefore no runtime. |
-| `resumable` |  | A CLAIM ABOUT YOUR SCRIPT, not a feature the tool provides. Nothing here saves or restores anything: after a Recovering the container starts EMPTY and your script has to find its own checkpoint and continue -- agent/references/script-contract.md rule 17 is how. What does survive is the result path — the server writes `spec.resultPath` once from the job id and recovery reuses the same PacsJob, so a script may rely on that path being the same after a restart. Setting this true only tells the advice that losing the machine does not cost the whole run. |
+| `resumable` |  | A CLAIM ABOUT YOUR SCRIPT, not a feature the tool provides. Nothing here saves or restores anything: after a Recovering the container starts EMPTY and your script has to find its own checkpoint and continue -- agent/references/script-contract.md rule 17 is how. What does survive is the result path — the server writes `spec.resultPath` once from the job id and recovery reuses the same HyperunJob, so a script may rely on that path being the same after a restart. Setting this true only tells the advice that losing the machine does not cost the whole run. |
 | `row_tokens` |  | Average length of ONE response, in tokens. Without it there is no runtime. Read it off a previous run's log if you have one. |
 | `vocab` |  | The model's vocabulary size. 151,936 is Qwen3-4B. This term dominates the memory calculation, so a different model needs its own. |
 
