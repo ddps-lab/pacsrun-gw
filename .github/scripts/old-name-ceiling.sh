@@ -57,11 +57,14 @@ set -euo pipefail
 # fixture for the new pause route tests.
 # 2026-10-07: 693 -> 391. Every grep marker in the tree -- the gateway's own and the operator's --
 # became HYPERUN-: 375 markers in 57 files, and the lines they were on stopped counting.
-# 2026-10-07: 391 -> 189. The new hyperun cluster's code: ddpsrun.io labels, the ddpsrun-<id> job
-# objects and every other name the new cluster uses became hyperun. What is left is the package
-# directory, the DDPSRUN_ env names both prefixes still read, the CLI's legacy config path, the
-# live token secret both gateways read, and terraform/ (it manages live shared resources).
-BASELINE=189
+# 2026-10-07: 391 -> 237. The new hyperun cluster's code: ddpsrun.io labels, the ddpsrun-<id> job
+# objects and every other name the new cluster uses became hyperun. What is left: the package
+# directory; the DDPSRUN_ env names both prefixes still read; the CLI's legacy config directory and
+# PyPI history (cli/hyperun/config.py, cli/pyproject.toml, publish-pypi.yml); the UI's stored
+# login keys ddpsrun.server, ddpsrun.token and ddpsrun.pkce, which live in users' browsers; the
+# live token secret both gateways read; comments that record what an old name did on a date;
+# and terraform/ (it manages live shared resources).
+BASELINE=237
 
 # ★ `git ls-files` AND NOT `grep -r .`, and the difference is the whole check.
 # A recursive grep counts what is on the DISK: a virtualenv, a build directory,

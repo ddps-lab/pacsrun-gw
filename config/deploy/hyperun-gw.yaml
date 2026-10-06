@@ -21,7 +21,7 @@
 # starting or restarting, no Service can be created at all.
 #
 # EVERYTHING NEW IS ADDITIVE. Not one object the Lambda depends on is modified.
-# The existing `ClusterRole hyperun-gw`, its ClusterRoleBinding to the Kubernetes
+# The existing `ClusterRole ddpsrun-gw`, its ClusterRoleBinding to the Kubernetes
 # group of the same name, and the per-namespace Roles are all left exactly as
 # they are, so the Lambda keeps working for the whole migration and rolling back
 # is `kubectl delete` of what is here.
@@ -200,7 +200,7 @@ roleRef:
 subjects:
   # A ServiceAccount, and the older file's equivalent binding names a GROUP
   # instead. Both are right for their own subject: the Lambda proves who it is
-  # with an EKS access entry that maps its IAM role to the group `hyperun-gw`,
+  # with an EKS access entry that maps its IAM role to the group `ddpsrun-gw`,
   # and RBAC sees that group. A pod presents its ServiceAccount token. Binding
   # the wrong one applies cleanly, grants nothing, and says nothing.
   - kind: ServiceAccount
@@ -351,7 +351,7 @@ spec:
             # container at all:
             #
             #   Error: container has runAsNonRoot and image has non-numeric
-            #   user (hyperun), cannot verify user is non-root
+            #   user (ddpsrun), cannot verify user is non-root
             #
             # Measured on the first apply, 2026-09-15. 10001 is the uid
             # `server/Dockerfile` creates. Stating it here also means the yaml

@@ -19,7 +19,7 @@ WHY XDG AND NOT ~/.hyperun. `XDG_CONFIG_HOME` is what a Linux user's backup and
 dotfile tooling already knows about, and it falls back to `~/.config`, which is
 where macOS users' tools look too.
 
-★ THE COMMAND WAS `hyperun` UNTIL 2026-09-10, AND NOBODY IS LOGGED OUT BY THE
+★ THE COMMAND WAS `ddpsrun` UNTIL 2026-09-10, AND NOBODY IS LOGGED OUT BY THE
 RENAME. Two pieces of state carried the old name and both are user-visible, so
 both accept it still:
 
@@ -50,7 +50,7 @@ from pathlib import Path
 CONFIG_FILENAME = "config.json"
 CONFIG_DIRNAME = "hyperun"
 # The pre-2026-09-10 spelling of everything below. Read, never written.
-LEGACY_CONFIG_DIRNAME = "hyperun"
+LEGACY_CONFIG_DIRNAME = "ddpsrun"
 SERVER_ENV = "HYPERUN_SERVER"
 TOKEN_ENV = "HYPERUN_TOKEN"
 LEGACY_SERVER_ENV = "DDPSRUN_SERVER"
@@ -100,10 +100,10 @@ def config_dir() -> Path:
 
 
 def legacy_config_path() -> Path:
-    """The file the command wrote while it was called `hyperun`.
+    """The file the command wrote while it was called `ddpsrun`.
 
     Returns:
-        `<xdg base>/hyperun/config.json`. It may not exist, which is the normal
+        `<xdg base>/ddpsrun/config.json`. It may not exist, which is the normal
         case for anybody who first logged in after the rename.
     """
     return _xdg_base() / LEGACY_CONFIG_DIRNAME / CONFIG_FILENAME
@@ -114,7 +114,7 @@ def config_path() -> Path:
 
     Returns:
         `<xdg base>/hyperun/config.json` when it exists; otherwise the old
-        `hyperun` path when THAT exists; otherwise the new path, so a
+        `ddpsrun` path when THAT exists; otherwise the new path, so a
         "not logged in" message names the place a login will write.
     """
     current = config_dir() / CONFIG_FILENAME

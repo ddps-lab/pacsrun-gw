@@ -75,8 +75,8 @@ RUNPOD_READ_ON = "2026-09-28"
 # MI300X outright is a decline, not an override". A row for a card the cluster
 # refuses would therefore be a price for something no ask can buy.
 #
-# Read on 2026-09-09 from `kubectl get configmap hyperun-catalog-policy -n
-# hyperun-system`: vendorGpuDenySubstrings is the single fragment MIG (the rest
+# Read on 2026-09-09 from `kubectl get configmap pacsrun-catalog-policy -n
+# pacsrun-system`: vendorGpuDenySubstrings is the single fragment MIG (the rest
 # of that value is a commented-out Blackwell block, and parseSet drops "#"
 # lines -- internal/pacs/policy.go:492) and vendorMinGpuMemoryGB is 16. Both
 # equal PACSrun's shipped defaults (builtinDenySubstrings,

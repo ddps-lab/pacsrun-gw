@@ -1,6 +1,6 @@
 # The gateway server. Runs as a pod in the EKS cluster (docs/08-plan.md, 미결 항목 2).
 #
-# The CLI users install is a SEPARATE distribution, also named hyperun, built in
+# The CLI users install is a SEPARATE distribution, also named ddpsrun, built in
 # stage 2. It shares this repository but not this package: a user's laptop must
 # not need the kubernetes client, and this server must not need a browser
 # login flow.

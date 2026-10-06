@@ -93,15 +93,15 @@ setInterval(pollDeployedVersion, 600000);
 /* ------------------------------------------------------------------ storage */
 
 const store = {
-  get server() { return localStorage.getItem("hyperun.server") || ""; },
-  get token() { return localStorage.getItem("hyperun.token") || ""; },
+  get server() { return localStorage.getItem("ddpsrun.server") || ""; },
+  get token() { return localStorage.getItem("ddpsrun.token") || ""; },
   set(server, token) {
-    localStorage.setItem("hyperun.server", server.replace(/\/+$/, ""));
-    localStorage.setItem("hyperun.token", token);
+    localStorage.setItem("ddpsrun.server", server.replace(/\/+$/, ""));
+    localStorage.setItem("ddpsrun.token", token);
   },
   clear() {
-    localStorage.removeItem("hyperun.server");
-    localStorage.removeItem("hyperun.token");
+    localStorage.removeItem("ddpsrun.server");
+    localStorage.removeItem("ddpsrun.token");
   },
 };
 
@@ -2715,7 +2715,7 @@ $("d-log-copy").onclick = () => copyText(logText || "", $("d-log-copy"), $("d-lo
  * Whoever steals the code cannot complete step two without the original.
  */
 
-const LOGIN_KEY = "hyperun.pkce";      // the random number, while the round trip is in flight
+const LOGIN_KEY = "ddpsrun.pkce";      // the random number, while the round trip is in flight
 const REFRESH_KEY = "hyperun.refresh"; // survives a tab close, unlike the id_token's hour
 
 let loginConfig = null;

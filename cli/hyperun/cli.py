@@ -230,8 +230,8 @@ def build_parser() -> argparse.ArgumentParser:
     # `shell` subparser has its own positional called `command` -- the shell line
     # to run -- and argparse writes both into the SAME namespace. With both named
     # `command` the subparser's REMAINDER overwrote the subcommand name, so
-    # `hyperun shell job-x` set args.command to [] and main() printed the
-    # top-level help, while `hyperun shell job-x -- nvidia-smi` set it to
+    # `ddpsrun shell job-x` set args.command to [] and main() printed the
+    # top-level help, while `ddpsrun shell job-x -- nvidia-smi` set it to
     # ['nvidia-smi'] and main() died on `COMMANDS[['nvidia-smi']]` with
     # "TypeError: unhashable type: 'list'". Both forms, every version: `shell`
     # had never once dispatched. Found 2026-09-10 from a user's paste of the

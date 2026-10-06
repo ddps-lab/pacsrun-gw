@@ -12,17 +12,17 @@
 # ★ AND `secrets` MUST STAY OUT OF THE ClusterRole EVEN NOW THAT ONE ROUTE
 # WRITES THEM. The live cluster binds this ClusterRole with a
 # ClusterRoleBinding, not the per-namespace RoleBindings this file describes
-# (checked 2026-09-08: `kubectl get clusterrolebinding hyperun-gw` exists and
-# names Group `hyperun-gw`). So a `secrets` verb added up there would be a
+# (checked 2026-09-08: `kubectl get clusterrolebinding ddpsrun-gw` exists and
+# names Group `ddpsrun-gw`). So a `secrets` verb added up there would be a
 # secrets verb in kube-system. The write path gets its own Role at the bottom
 # of this file, bound one namespace at a time -- see HYPERUN-USER-SECRET.
 # ★ THE ServiceAccount IS NOT HERE ANY MORE. It used to be declared in this file, in a
-# namespace called `hyperun-system` that no longer exists -- the gateway moved to a pod in
+# namespace called `ddpsrun-system` that no longer exists -- the gateway moved to a pod in
 # `hyperun-system` on 2026-09-15 and its ServiceAccount is declared beside it in
 # hyperun-gw.yaml. Leaving the old object here made `onboard.sh` FAIL HALFWAY on 2026-09-16:
 #
 #     Error from server (NotFound): error when creating "STDIN":
-#     namespaces "hyperun-system" not found
+#     namespaces "ddpsrun-system" not found
 #
 # by which point the namespace, the ServiceAccount and two Roles had already been created. A
 # manifest that describes objects in a namespace that was deleted is not stale documentation,
@@ -106,7 +106,7 @@ roleRef:
   name: hyperun-gw
 subjects:
   # ★★ THE SUBJECT IS THE POD'S OWN ServiceAccount, AND IT WAS POINTING AT A GHOST. Until
-  # 2026-09-16 this named `hyperun-gw` in `hyperun-system`, a namespace deleted with the
+  # 2026-09-16 this named `ddpsrun-gw` in `ddpsrun-system`, a namespace deleted with the
   # Lambda migration -- so the binding this file created in a new tenant namespace granted
   # nothing to anybody, and the gateway could not read a single job there. The working
   # namespaces had been fixed BY HAND during the migration, so nothing showed it until a new
@@ -146,15 +146,15 @@ roleRef:
 subjects:
   # A GROUP, NOT A ServiceAccount, and the first draft got this wrong. The gateway server does not
   # run in this cluster — it is a Lambda. It proves who it is with an EKS access entry, which maps
-  # the IAM role `hyperun-gw-lambda` to username
-  # `arn:aws:sts::<ACCOUNT_ID>:assumed-role/hyperun-gw-lambda/{{SessionName}}` and to the
-  # kubernetesGroup `hyperun-gw`. RBAC sees the GROUP; the ServiceAccount of the same name is what
+  # the IAM role `ddpsrun-gw-lambda` to username
+  # `arn:aws:sts::<ACCOUNT_ID>:assumed-role/ddpsrun-gw-lambda/{{SessionName}}` and to the
+  # kubernetesGroup `ddpsrun-gw`. RBAC sees the GROUP; the ServiceAccount of the same name is what
   # a pod running in the cluster would use, and there is no such pod.
   #
   # Binding a ServiceAccount instead grants nothing and says nothing: `kubectl apply` succeeds,
   # the binding exists, and every request is still refused. `aws eks describe-access-entry
   # --principal-arn <the lambda role>` is what settles which subject is real.
-  # ★ A ServiceAccount AND NOT A Group, SINCE 2026-09-16. `Group: hyperun-gw` was how the
+  # ★ A ServiceAccount AND NOT A Group, SINCE 2026-09-16. `Group: ddpsrun-gw` was how the
   # LAMBDA authenticated: an EKS access entry mapped its IAM role into that group. The gateway
   # is a pod now and presents its ServiceAccount, which is in no group at all -- so every
   # binding still naming the group granted nothing to the thing that is actually running.

@@ -46,7 +46,7 @@ $ hyperun login <token>
 ```
 
 `login` writes them to `~/.config/hyperun/config.json` with mode 0600, or to
-`$XDG_CONFIG_HOME/hyperun` when that is set. A config left behind by the old `hyperun`
+`$XDG_CONFIG_HOME/hyperun` when that is set. A config left behind by the old `ddpsrun`
 command is still read, so a rename logs nobody out. For CI, where a file is the wrong shape, set
 `HYPERUN_TOKEN` in the environment and skip `login` entirely.
 

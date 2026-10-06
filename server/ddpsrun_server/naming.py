@@ -43,9 +43,13 @@ ID_HEX_LENGTH = 12
 
 JOB_ID_PATTERN = re.compile(rf"^{JOB_ID_PREFIX}[0-9a-f]{{{ID_HEX_LENGTH}}}$")
 
-# Our own label keys. A separate group from `hyperun.io/*` on purpose: those
-# belong to the controller and it lists and indexes by them, so writing into
-# that group risks colliding with a meaning the controller already has.
+# Our own label keys. Until the hyperun cluster they were a separate group
+# (`ddpsrun.io/*`) from the controller's (`pacsrun.io/*`) on purpose: the
+# controller lists and indexes by its keys, so writing into its group risked
+# colliding with a meaning it already has. Both are `hyperun.io/*` now, so the
+# separation is by KEY: none of these may reuse one of the controller's (job,
+# vendor, slot, nodeslot, gpu, service, stop-requested, replica, remote,
+# resuming-from-pause; PACSrun internal/provision and internal/controller).
 JOB_ID_LABEL = "hyperun.io/job-id"
 OWNER_LABEL = "hyperun.io/owner"
 DISPLAY_NAME_LABEL = "hyperun.io/name"

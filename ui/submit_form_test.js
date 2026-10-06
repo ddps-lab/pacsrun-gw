@@ -680,7 +680,7 @@ check(/id="f-image-toggle"/.test(HTML) && /id="f-image-picker"/.test(HTML),
 // HYPERUN-BRAND. The product is called hyperun: the command is `pip install hyperun`, the plugin
 // is `/plugin install hyperun`, and the tab title has said hyperun since the rename. The two
 // places a person actually reads -- the bar across the top and the sign-in heading -- still said
-// hyperun, so the screen introduced itself by a name that appears nowhere else.
+// ddpsrun, so the screen introduced itself by a name that appears nowhere else.
 {
   const brands = [...HTML.matchAll(/class="brand"[^>]*>(.*?)<\/(?:div|h1)>/g)]
     .map((m) => m[1].replace(/<[^>]*>/g, ""));
