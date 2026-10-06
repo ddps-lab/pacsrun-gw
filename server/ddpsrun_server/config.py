@@ -14,7 +14,7 @@ are account identifiers (a bucket name, a ServiceAccount name). Committing them
 would put them in a repository we intend to open later. `docs/00-overview.md`
 records that rule and CI enforces it.
 
-Grep anchor: DDPSRUN-CONFIG
+Grep anchor: HYPERUN-CONFIG
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ PACSJOB_GROUP = "pacsrun.io"
 PACSJOB_VERSION = "v1alpha1"
 PACSJOB_PLURAL = "pacsjobs"
 
-# DDPSRUN-USER-SECRET. The ONE Kubernetes Secret per namespace that holds every
+# HYPERUN-USER-SECRET. The ONE Kubernetes Secret per namespace that holds every
 # value that namespace's members registered through `PUT /v1/secrets/{name}`,
 # one key per environment variable name. Lives here rather than in `k8s.py`
 # because `models.to_pacsjob` writes a secretKeyRef at it and must not have to
@@ -120,7 +120,7 @@ class Settings:
             https://ddpsrun-x.auth.us-west-2.amazoncognito.com. The server never
             calls it; it hands the address to the screen and the CLI, which is
             why it is configuration and not something derived here.
-        register_notify_to: DDPSRUN-REGISTER. Where a "somebody signed in and has
+        register_notify_to: HYPERUN-REGISTER. Where a "somebody signed in and has
             no namespace" email goes. Empty turns the endpoint off and the screen
             then tells the person to contact an operator by other means -- which
             is the honest answer for a deployment that has not set this up, and
@@ -227,7 +227,7 @@ class Settings:
         return Settings(
             result_bucket=required("RESULT_BUCKET"),
             result_prefix=prefix,
-            # DDPSRUN-WORKLOAD-SA. The default is the ServiceAccount PACSrun's own terraform
+            # HYPERUN-WORKLOAD-SA. The default is the ServiceAccount PACSrun's own terraform
             # wired to the EC2/STS role, because that role's trust policy names exactly one
             # namespace/ServiceAccount pair. It read "pacsrun-workload" until 2026-09-08 --
             # which is the ROLE's name, not the ServiceAccount's -- and every AWS job then
@@ -237,7 +237,7 @@ class Settings:
             tokens_path=required("TOKENS_PATH"),
             secret_bindings=bindings,
             log_tail_lines=tail,
-            # DDPSRUN-REGISTER. From defaults to To rather than to a made-up
+            # HYPERUN-REGISTER. From defaults to To rather than to a made-up
             # no-reply address: an unverified sender is refused by SES in the
             # sandbox, so a default nobody verified would make the button fail
             # on every deployment that set only one of the two.
@@ -255,7 +255,7 @@ class Settings:
             cognito_login_domain=setting("COGNITO_LOGIN_DOMAIN").rstrip("/"),
         )
 
-# DDPSRUN-PROMETHEUS-PROXY. Where the Prometheus this server queries lives.
+# HYPERUN-PROMETHEUS-PROXY. Where the Prometheus this server queries lives.
 #
 # Named here rather than passed in because there is exactly ONE: it is deployed by
 # config/deploy/prometheus.yaml in the PACSrun repo, into the operator's own namespace, and a

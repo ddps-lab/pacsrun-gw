@@ -9,7 +9,7 @@ The refusal tests matter more than the acceptance test. A verifier that accepts
 a good token but also accepts a token from another pool is worse than no
 verifier, because it looks like it is working.
 
-Grep anchor: DDPSRUN-COGNITO-TESTS
+Grep anchor: HYPERUN-COGNITO-TESTS
 """
 
 from __future__ import annotations
@@ -279,7 +279,7 @@ def test_a_cognito_token_gets_through_the_real_dependency(app_client, keypair):
 
 
 def test_a_static_token_still_gets_through(app_client):
-    """The point of DDPSRUN-TWO-CREDENTIALS: CI and the agent skill keep working."""
+    """The point of HYPERUN-TWO-CREDENTIALS: CI and the agent skill keep working."""
     assert get(app_client, "/v1/jobs", "static-token").status_code == 200
 
 
@@ -309,7 +309,7 @@ def test_login_config_carries_no_secret(app_client):
         assert forbidden not in text.lower()
 
 
-# ------------------------------------- DDPSRUN-REGISTER: the first-time visitor
+# ------------------------------------- HYPERUN-REGISTER: the first-time visitor
 
 
 @pytest.fixture
@@ -588,7 +588,7 @@ def test_the_emailed_commands_are_not_folded_onto_one_line(register_client, keyp
     assert "--namespace" not in line, "the flags were folded onto the first line"
 
 
-# ------------------------------- DDPSRUN-REGISTER: one namespace naming rule
+# ------------------------------- HYPERUN-REGISTER: one namespace naming rule
 
 
 def test_the_namespace_rule_is_the_team_then_the_address():

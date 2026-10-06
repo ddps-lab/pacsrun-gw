@@ -1,4 +1,4 @@
-"""DDPSRUN-SECRET-EXPIRY: is a registered credential still good.
+"""HYPERUN-SECRET-EXPIRY: is a registered credential still good.
 
 WHY THIS IS A FILE AND NOT TWO LINES INLINE. On 2026-09-08 a judge credential
 expired at 14:27Z and the only way to find that out was to submit a job and watch
@@ -14,7 +14,7 @@ early still looks good, and a date that was wrong when it was stored is wrong
 here; both are the user's to get right. What this removes is the case where the
 date was known, written down, and nobody looked.
 
-Grep anchor: DDPSRUN-SECRET-EXPIRY
+Grep anchor: HYPERUN-SECRET-EXPIRY
 """
 from __future__ import annotations
 

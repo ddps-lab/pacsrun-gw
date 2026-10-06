@@ -24,7 +24,7 @@ WHAT THIS CANNOT SEE. The user's repository. Three of the seven problems in
 layout, and no check here can catch those without cloning. They are listed at
 the end of the findings as "not checked" rather than passed over in silence.
 
-Grep anchor: DDPSRUN-VALIDATE
+Grep anchor: HYPERUN-VALIDATE
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from . import catalogue
 from . import estimate as estimator
 from . import secret_expiry
-from . import models          # DDPSRUN-VENDOR-CHOICE: the two vendor lists live there
+from . import models          # HYPERUN-VENDOR-CHOICE: the two vendor lists live there
 from . import measurements
 from .measurements import INCIDENTS
 
@@ -48,7 +48,7 @@ INFO = "info"
 # ---------------------------------------------------------------------------
 # ★ TWO TIERS, AND WHICH TIER A CHECK IS IN IS A DECISION, NOT AN ACCIDENT.
 #
-# DDPSRUN-CHECK-TIERS. Decided 2026-09-09 after the user read the finding list
+# HYPERUN-CHECK-TIERS. Decided 2026-09-09 after the user read the finding list
 # and said it was biased: "학습을 dpo와 같은 걸로 진행하지 않아, 추론이 학습이
 # 쓴 경로와 같은 지 이런 거는 너무 그 실험에 한정된거야."
 #
@@ -99,7 +99,7 @@ TRAINER_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
 def trainer_in(script: str | None) -> str | None:
     """Which TRL trainer this script trains with, as far as the text shows.
 
-    DDPSRUN-TRAINER. This exists because of one wrong sentence. On 2026-09-08 a
+    HYPERUN-TRAINER. This exists because of one wrong sentence. On 2026-09-08 a
     PPO job was told to `python patch_trl_liger_slice.py $(python -c "import
     trl.trainer.dpo_trainer ...")` -- a patch that edits the DPO trainer, on a
     run that never imports it. Following that advice patches a file nobody
@@ -192,7 +192,7 @@ CALLS_ANOTHER_SCRIPT = re.compile(
 def defers_to_another_script(script: str | None) -> str | None:
     """The first line that hands the work to a script we were not sent, or None.
 
-    DDPSRUN-DEFERRED-SCRIPT. Decided 2026-09-09 after `alloc-conf-missing` fired
+    HYPERUN-DEFERRED-SCRIPT. Decided 2026-09-09 after `alloc-conf-missing` fired
     on a job whose `run_C_wrapper.sh` exported the setting three lines into the
     file it calls. The check was not wrong about what it could see -- the
     submitted text really has no `PYTORCH_CUDA_ALLOC_CONF` -- and it was wrong
@@ -233,7 +233,7 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
             file this script calls, and we were not sent that file.
         trainer: what `trainer_in` found, or None for unknown. The TRL patch
             edits `trl.trainer.dpo_trainer`, so telling a PPO run to apply it
-            is advice that cannot work -- see DDPSRUN-TRAINER.
+            is advice that cannot work -- see HYPERUN-TRAINER.
 
     Returns:
         Findings.
@@ -274,7 +274,7 @@ def check_memory(cap: int | None, vram_gb: int | None, alloc_on: bool, patch_on:
                 f"it.",
             )
         )
-    # DDPSRUN-DEFERRED-SCRIPT: when `deferred` is set the setting may be in the
+    # HYPERUN-DEFERRED-SCRIPT: when `deferred` is set the setting may be in the
     # file this script calls, and the caller gets a `not_checked` line instead.
 
     # ── RECIPE from here down. Everything below is the DPO logits arithmetic:
@@ -435,8 +435,8 @@ DISTRIBUTED_LAUNCHERS = (
 )
 
 # What PACSrun tells a pod in a distributed group. Exact names, from
-# `internal/controller/pacsjob_controller.go` (PACSRUN-GROUP-COORDS) and
-# `driver/aws/driver.py` (PACSRUN-GROUP-HOSTNET). A script that reads NONE of
+# `internal/controller/pacsjob_controller.go` (HYPERUN-GROUP-COORDS) and
+# `driver/aws/driver.py` (HYPERUN-GROUP-HOSTNET). A script that reads NONE of
 # these cannot know where its rendezvous is.
 GROUP_COORDS = (
     "PACSRUN_MASTER_ADDR", "PACSRUN_MASTER_PORT",
@@ -451,7 +451,7 @@ def check_distributed(script: str | None, group_size: int, group_mode: str,
                       parallelism: int, gpu_count: int) -> list[Finding]:
     """PLATFORM TIER. Can the pods of a group actually find each other.
 
-    DDPSRUN-GROUP. The failure this exists for is SILENT, which is why it is
+    HYPERUN-GROUP. The failure this exists for is SILENT, which is why it is
     worth a check rather than a paragraph. `driver/common/remotek8s.py` records
     it: "NEITHER RANK PRINTED ANYTHING. Both sat in dist.init_process_group with
     no error and no output." Every rank waits for a rendezvous nobody is
@@ -656,7 +656,7 @@ def check_runtime(job_estimate: estimator.Estimate) -> list[Finding]:
 def check_vendors_can_run(vendors: list[str], placement_mode: str | None) -> list[Finding]:
     """Can the vendors that were named actually rent a machine.
 
-    DDPSRUN-VENDOR-CHOICE. Six vendor names are accepted and only two of them can
+    HYPERUN-VENDOR-CHOICE. Six vendor names are accepted and only two of them can
     run anything. aws, runpod and shadeform have an execution path; gcp, azure, lambda and
     nebius are answered from the SkyPilot catalogue CSVs, which is enough to
     state a price and nothing like enough to rent a machine -- no actuator in
@@ -826,7 +826,7 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
                         vendors: list[str] | None = None) -> list[Finding]:
     """Can the GPU that was asked for actually be bought.
 
-    DDPSRUN-CATALOGUE. Three ways an ask can be unfillable, and none of them was
+    HYPERUN-CATALOGUE. Three ways an ask can be unfillable, and none of them was
     visible before submitting until this existed. On 2026-09-02 a job asked for
     "NVIDIA L40S" on spot and sat in Pending forever, retrying the same failure
     every eleven minutes:
@@ -966,7 +966,7 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
             _unfillable_remedy(choice.name, gpu_count, pods, counts, aws_only),
         ))
 
-    # ★ DDPSRUN-RUNPOD-CAPACITY, new on 2026-09-09 and only possible now. This
+    # ★ HYPERUN-RUNPOD-CAPACITY, new on 2026-09-09 and only possible now. This
     # asks RunPod the question the AWS block above asks AWS -- "can this vendor
     # be sold this shape at all" -- and until prices.csv carried RunPod rows
     # there was nothing to ask it with. It matters for the same reason: an ask
@@ -1083,7 +1083,7 @@ def check_secret_expiry(secrets: list[str],
                         expiries: dict[str, str | None]) -> list[Finding]:
     """Is any name this job asks for past the date it was stored with.
 
-    DDPSRUN-SECRET-EXPIRY. On 2026-09-08 a judge credential expired at 14:27Z
+    HYPERUN-SECRET-EXPIRY. On 2026-09-08 a judge credential expired at 14:27Z
     and nothing said so: the name was still there, the submit was accepted, and
     the run failed at the Bedrock call an hour in on a rented GPU. The date was
     known the whole time -- `GetFederationToken` returns it and the operator
@@ -1121,7 +1121,7 @@ def check_secret_expiry(secrets: list[str],
 def check_secret_names(secrets: list[str], known: dict[str, object]) -> list[Finding]:
     """Are the names in `secrets` ones this deployment actually holds.
 
-    DDPSRUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` is a word that opens the
+    HYPERUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` is a word that opens the
     server's vault; submit refuses a word the vault does not have. Until
     2026-09-08 validate did not look at these AT ALL, so a wrong name passed
     with `Nothing blocking. EXIT=0` and the only way to learn the right one was
@@ -1164,7 +1164,7 @@ def check_aws_credential_collision(env: dict[str, str], secrets: list[str],
                                    script: str | None) -> list[Finding]:
     """Does this job want a second AWS identity in the same three variables.
 
-    DDPSRUN-AWS-COLLISION. PACSrun hands the container credentials for writing
+    HYPERUN-AWS-COLLISION. PACSrun hands the container credentials for writing
     results as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
     A job that also calls another AWS account — Bedrock for an LLM judge, say —
     reaches for the same three names, and boto3 reads the environment BEFORE
@@ -1280,9 +1280,9 @@ def validate(
         secrets: the vault words the job asks for.
         group_size: `group.size`, and `group_mode` its mode. Both together:
             whether the pods need a rendezvous is the two of them, and a size
-            without a mode says nothing. DDPSRUN-GROUP.
+            without a mode says nothing. HYPERUN-GROUP.
         secret_expiries: name -> the date it was stored with, for this
-            namespace's own registrations. DDPSRUN-SECRET-EXPIRY.
+            namespace's own registrations. HYPERUN-SECRET-EXPIRY.
         known_secrets: what the deployment holds (`Settings.secret_bindings`).
             Both are needed together, and passing secrets without this would
             make every name look unknown — so a caller that cannot supply the
@@ -1294,7 +1294,7 @@ def validate(
     alloc_on, patch_on = mitigations_from(env, script)
 
     findings: list[Finding] = []
-    # ── PLATFORM TIER (DDPSRUN-CHECK-TIERS). True for every job, because each is
+    # ── PLATFORM TIER (HYPERUN-CHECK-TIERS). True for every job, because each is
     # a fact about PACSrun, a vendor or a credential -- not about what the job
     # computes.
     findings += check_vendors_can_run(vendors or [], placement_mode)

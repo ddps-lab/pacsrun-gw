@@ -1,5 +1,5 @@
 /*
- * DDPSRUN-UI-APP
+ * HYPERUN-UI-APP
  *
  * The whole screen. It makes no decisions of its own.
  *
@@ -33,7 +33,7 @@
 
 const $ = (id) => document.getElementById(id);
 
-/* DDPSRUN-UI-STALE-TAB. Which build of this file is running.
+/* HYPERUN-UI-STALE-TAB. Which build of this file is running.
 
    The release workflow rewrites index.html's `<script src="app.js">` to `app.js?v=<commit>`, so
    the running code can read its own version out of its own src. `document.currentScript` is only
@@ -195,7 +195,7 @@ function span(fromISO, toISO) {
  *   3. finished, no start      -> unknowable. Print "-".
  *
  * Case 3 is real. The controller that stamps startedAt/finishedAt
- * (PACSRUN-JOB-CLOCK) started 2026-09-01T00:06:53Z and stamps once without
+ * (HYPERUN-JOB-CLOCK) started 2026-09-01T00:06:53Z and stamps once without
  * backfilling, while the newest PacsJob on the cluster was created
  * 2026-08-29T15:23:25Z. Without this branch, aiops-exp2 — which succeeded days
  * ago — read as "64h 42m queued". On 2026-09-01 all 24 jobs were this case.
@@ -322,7 +322,7 @@ function drawHome() {
   // The address is this page's own, so the sign-in line can be a command that
   // runs rather than one with a placeholder in it. `--server` is required by
   // the CLI's argparse, so `hyperun login` on its own exits 2 without signing
-  // anybody in (DDPSRUN-GETTING-STARTED in index.html).
+  // anybody in (HYPERUN-GETTING-STARTED in index.html).
   if (store.server) {
     $("home-login").textContent = `hyperun login --server ${store.server}`;
   }
@@ -376,7 +376,7 @@ const card = (label, value, cls = "") =>
 
 let jobsTab = "active";
 
-/* DDPSRUN-UI-NAMESPACE. Which namespace the jobs screen reads. `current` empty
+/* HYPERUN-UI-NAMESPACE. Which namespace the jobs screen reads. `current` empty
    means the caller's own, which is all a non-operator ever sees: the picker is
    drawn only when GET /v1/namespaces answers selectable (the token file's admin
    flag) with more than one namespace. A chosen foreign namespace rides into the
@@ -460,7 +460,7 @@ function jobsTable(jobs, columns) {
     // the ddpsrun-<hex> naming rule, so no id can be read off it — on
     // 2026-09-01 that was all 24 jobs on the cluster. This cell says where the
     // job came from; the row still clicks through, because the server also
-    // accepts the object NAME as the detail key (DDPSRUN-JOB-BY-NAME).
+    // accepts the object NAME as the detail key (HYPERUN-JOB-BY-NAME).
     id: (j) => j.job_id
       ? `<span class="num dim tiny">${esc(j.job_id)}</span>`
       : `<span class="dim tiny" title="Created outside this gateway">applied directly</span>`,
@@ -506,7 +506,7 @@ function jobsTable(jobs, columns) {
     jobs.map((j) => {
       // The click-through key: the gateway's id when there is one, else the
       // object name itself — the second spelling the server accepts
-      // (DDPSRUN-JOB-BY-NAME). For a kubectl-applied job the display name IS
+      // (HYPERUN-JOB-BY-NAME). For a kubectl-applied job the display name IS
       // metadata.name (models.py falls back to it), so it is the right key.
       const key = j.job_id || j.name;
       return `<tr class="${key ? "click" : ""}${j.phase === "Failed" ? " failed" : ""}" ` +
@@ -551,7 +551,7 @@ async function drawDetail(jobId, ns = "") {
   $("d-log").textContent = "Waiting for output.";
   $("d-id").textContent = jobId;
 
-  /* DDPSRUN-UI-STALE-PANELS. Hide the two panels drawMetrics owns before asking
+  /* HYPERUN-UI-STALE-PANELS. Hide the two panels drawMetrics owns before asking
      about THIS job, because drawMetrics cannot hide them itself on the path that
      matters: `/v1/jobs/<id>/metrics` answers 404 for a job with no container,
      and its `catch { return; }` leaves the screen exactly as the PREVIOUS job
@@ -567,7 +567,7 @@ async function drawDetail(jobId, ns = "") {
 
      IT IS NOT A LEAK, and that is worth saying because the shape resembles one:
      the numbers came from the previous render in this browser, so they had
-     already passed DDPSRUN-OWNER-GATE for whoever is looking. The defect is
+     already passed HYPERUN-OWNER-GATE for whoever is looking. The defect is
      that they were labelled as a different job's.
 
      WHY HERE AND NOT IN THE `catch`. This runs once per open; the catch runs on
@@ -596,7 +596,7 @@ async function drawDetail(jobId, ns = "") {
     // The folded panel still answers the question it is most often opened for.
     // The tag and not the whole address: an ECR address opens with the twelve
     // digits of the AWS account id, which is the part that does NOT tell one
-    // image from another (DDPSRUN-IMAGES in index.html).
+    // image from another (HYPERUN-IMAGES in index.html).
     const image = String(spec.spec?.image || "");
     $("d-spec-note-line").textContent = image ? image.split("/").pop() : "";
     $("d-spec-note").innerHTML = spec.redacted.length
@@ -618,7 +618,7 @@ async function drawDetail(jobId, ns = "") {
     const s = statusOf(job.phase);
     $("d-name").textContent = job.name || jobId;
     $("d-badge").innerHTML = badge(job.phase);
-    // DDPSRUN-COMPARE-PANEL. A Compared job's message IS the comparison, and drawCompare puts
+    // HYPERUN-COMPARE-PANEL. A Compared job's message IS the comparison, and drawCompare puts
     // it in its own panel with the four numbers pulled out. Printing it here as well showed the
     // same run-on sentence twice on one screen, a few hundred pixels apart -- measured by
     // looking at it on 2026-09-08.
@@ -667,7 +667,7 @@ const fact = (k, v) =>
    commands, measured 2026-09-15 against the live gateway. The Terminal panel
    below holds a WebSocket open instead, so a keystroke costs a frame, and it
    reaches a real PTY: vim, top, Ctrl+C and the arrow keys all work, on every
-   vendor including RunPod (PACSRUN-RUNPOD-PTY).
+   vendor including RunPod (HYPERUN-RUNPOD-PTY).
 
    `POST /v1/jobs/{id}/exec` IS STILL THERE AND IS STILL THE RIGHT SHAPE FOR A
    SCRIPT: one request, one answer, one exit code. `hyperun shell <job> -- cmd`
@@ -879,7 +879,7 @@ async function openTerminal(key) {
   // A resize tells the far PTY, which is what stops vim drawing at the wrong
   // width. The chain is: this message -> the gateway writes exec channel 4 ->
   // kubelet resizes the driver pod's PTY -> shell.py gets SIGWINCH and forwards
-  // the new size to the rented machine (PACSRUN-TERMINAL-RESIZE).
+  // the new size to the rented machine (HYPERUN-TERMINAL-RESIZE).
   term.onResize(({ cols, rows }) => {
     if (socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ resize: { cols, rows } }));
@@ -1358,7 +1358,7 @@ async function drawLog(jobId) {
       : "  ·  from the first line");
 }
 
-/* DDPSRUN-COMPARE-PANEL. Pull the ranking out of the one sentence the operator writes.
+/* HYPERUN-COMPARE-PANEL. Pull the ranking out of the one sentence the operator writes.
 
    THE SENTENCE IS BUILT IN internal/controller/placement.go, the `mode == placementModeCompare`
    return, and it looks like this:
@@ -1429,7 +1429,7 @@ function drawCompare(job) {
 
 /* ------------------------------------------------------------ 3b. Scripts */
 
-/* DDPSRUN-SCRIPTS. Every run.sh in one namespace, GROUPED BY THE PERSON WHO RAN IT.
+/* HYPERUN-SCRIPTS. Every run.sh in one namespace, GROUPED BY THE PERSON WHO RAN IT.
 
    THIS SAID "the scripts this caller has submitted" until 2026-09-08, and the namespace
    never guaranteed that: it is a tenancy boundary that may hold a whole team, and in this
@@ -1443,7 +1443,7 @@ function drawCompare(job) {
    NOTHING IS STORED FOR THIS. The server reads the text back out of the jobs themselves, so this
    screen shows exactly what is still on the cluster and nothing that is not. */
 async function drawScripts() {
-  // DDPSRUN-SCRIPTS-NAMESPACE. The listing is one namespace's, so it carries the
+  // HYPERUN-SCRIPTS-NAMESPACE. The listing is one namespace's, so it carries the
   // operator's namespace picker exactly as the Jobs screen does -- without it an
   // operator could only ever see their own, and `nsView` is already loaded.
   const sel = $("scripts-ns");
@@ -1567,7 +1567,7 @@ async function drawScripts() {
 }
 
 
-/* DDPSRUN-SCRIPT-FILE. Load a run.sh off the machine into the Script box.
+/* HYPERUN-SCRIPT-FILE. Load a run.sh off the machine into the Script box.
 
    Entirely in the browser: FileReader reads the chosen file and the text goes
    into the same textarea a paste would fill. Nothing is uploaded, because
@@ -1636,7 +1636,7 @@ function saveText(text, filename) {
 
 /* ------------------------------------------------------------------ Prices */
 
-/* DDPSRUN-PRICES. The catalogue's price table, every region of it.
+/* HYPERUN-PRICES. The catalogue's price table, every region of it.
 
    ONE FETCH, then filtered in the browser. The answer is about 610 rows and some
    70 KB, which is deliberate: a price table is used by sorting and narrowing it,
@@ -1673,7 +1673,7 @@ function readForm() {
     training: {},
   };
 
-  /* DDPSRUN-UI-COMMAND. The box holds ONE SHELL LINE and it goes out as
+  /* HYPERUN-UI-COMMAND. The box holds ONE SHELL LINE and it goes out as
      args ["bash","-lc", line].
 
      WHAT WAS WRONG. It used to go out as `command: "<line>"` -- a bare string
@@ -1692,7 +1692,7 @@ function readForm() {
   const line = $("f-command").value.trim();
   if (line) {
     body.args = ["bash", "-lc", line];
-    /* DDPSRUN-UI-SCRIPT. THE SAME TEXT, SENT TWICE, ON PURPOSE.
+    /* HYPERUN-UI-SCRIPT. THE SAME TEXT, SENT TWICE, ON PURPOSE.
 
        `args` is what RUNS. `script` is what validate READS, and four of its checks read nothing
        else: the adapter-path pair, the exit trap that saves partial results, the two length caps
@@ -1709,13 +1709,13 @@ function readForm() {
     body.gpu = { name: $("f-gpu").value, count: num("f-gpucount") || 1 };
   }
 
-  /* DDPSRUN-VENDOR-CHOICE. Nothing checked sends nothing, which is "no
+  /* HYPERUN-VENDOR-CHOICE. Nothing checked sends nothing, which is "no
      restriction" and is what every job did before these boxes existed. */
   const vendors = Array.from(document.querySelectorAll("#view-submit [data-vendor]"))
     .filter((b) => b.checked).map((b) => b.dataset.vendor);
   if (vendors.length) body.vendors = vendors;
   if ($("f-mode").value) body.placement_mode = $("f-mode").value;
-  // DDPSRUN-REGIONS. Comma or whitespace separated, sent verbatim: PACSrun's own
+  // HYPERUN-REGIONS. Comma or whitespace separated, sent verbatim: PACSrun's own
   // spelling is either a bare vendor ("gcp") or a vendor and region
   // ("aws/us-east-1"), and rewriting what somebody typed would hide a typo that
   // the server can name precisely.
@@ -1726,7 +1726,7 @@ function readForm() {
   const t = body.training;
   if (num("f-pairs")) t.pairs = num("f-pairs");
   if (num("f-epochs")) t.epochs = num("f-epochs");
-  // DDPSRUN-TRAINING-FACTS. row_tokens is the one that turns the estimate from "unknown" into a
+  // HYPERUN-TRAINING-FACTS. row_tokens is the one that turns the estimate from "unknown" into a
   // number: pairs and epochs give the STEP COUNT, and this gives the seconds each step takes.
   // The screen collected the other three and not this one, so it could answer how many steps and
   // never how long.
@@ -1737,7 +1737,7 @@ function readForm() {
   return body;
 }
 
-/* DDPSRUN-IMAGES. Draw the images this lab has already built, so nobody types a 70-character
+/* HYPERUN-IMAGES. Draw the images this lab has already built, so nobody types a 70-character
    address from memory.
 
    WHY IT IS FETCHED WHEN THE SCREEN OPENS AND CACHED. The list changes when somebody pushes an
@@ -1752,7 +1752,7 @@ function readForm() {
    THE NOTE IS THE PART THAT MATTERS ON A FAILURE. The server answers 200 with a `note` rather
    than 502 for exactly this reason: an empty list with no explanation reads as "this lab has
    built nothing", which would send an operator looking in the wrong place when what is actually
-   missing is the IAM policy (DDPSRUN-IMAGES-READ in terraform/lambda). */
+   missing is the IAM policy (HYPERUN-IMAGES-READ in terraform/lambda). */
 let imagesDrawn = false;
 
 /* The one row of /v1/prices this screen still keeps: the REGION NAMES. The
@@ -1763,7 +1763,7 @@ let imagesDrawn = false;
    a free-text box that silently takes a typo. */
 let priceRows = null;
 
-/* DDPSRUN-REGIONS. Free text stays free text: `placement.regions` also takes a
+/* HYPERUN-REGIONS. Free text stays free text: `placement.regions` also takes a
    bare vendor word, which is not in this list. Failure is silent on purpose --
    the box works without the suggestions, and a person filling in a form does
    not need a network error about a dropdown. */
@@ -1799,12 +1799,12 @@ async function drawImages(force) {
     return;
   }
   const rows = answer.images || [];
-  // DDPSRUN-IMAGES-NO-DATALIST (2026-09-14). These addresses used to also fill a datalist behind
+  // HYPERUN-IMAGES-NO-DATALIST (2026-09-14). These addresses used to also fill a datalist behind
   // the Image box, and the box's dropdown was then a column of `<ACCOUNT_ID>.dkr.ecr...` strings
   // whose first forty characters are identical on every row. The count is still drawn -- it is
   // the only thing that distinguishes "this lab has built nothing" from "the registry call
   // failed" -- but the addresses themselves now appear only in the picker below, keyed by the
-  // repository name and the tag, which is what tells them apart. See index.html, DDPSRUN-IMAGES.
+  // repository name and the tag, which is what tells them apart. See index.html, HYPERUN-IMAGES.
   const tagCount = rows.reduce((n, r) => n + (r.addresses || []).length, 0);
   const repos = rows.filter((r) => (r.addresses || []).length).length;
   $("f-image-note").textContent = answer.note
@@ -1815,11 +1815,11 @@ async function drawImages(force) {
       : "";
 
   /* The picker. One block per repository, newest push first, its tags as buttons. Since
-     2026-09-14 it is the ONLY place these addresses appear (DDPSRUN-IMAGES-NO-DATALIST above):
+     2026-09-14 it is the ONLY place these addresses appear (HYPERUN-IMAGES-NO-DATALIST above):
      it can be read without knowing a native popup is there, it shows in a screenshot, and it is
      keyed by the two parts that differ between images rather than by the account id they share.
 
-     DDPSRUN-IMAGES-TRIM. Only the three newest tags per repository are drawn, and the rest sit
+     HYPERUN-IMAGES-TRIM. Only the three newest tags per repository are drawn, and the rest sit
      behind a "+N more" button. Every tag of every repository came to 55 buttons on this account
      -- 19 repositories, and 12 of them other projects -- most of them 12-character or
      40-character commit shas. The registry returns tags newest first (registry.py), so the
@@ -1896,7 +1896,7 @@ function renderImagePicker(filter) {
   });
 }
 
-/* DDPSRUN-SCRIPT-REUSE. The scripts this namespace has already submitted, offered beside the
+/* HYPERUN-SCRIPT-REUSE. The scripts this namespace has already submitted, offered beside the
    Script box instead of on a screen the person has to leave the form to reach.
 
    Same source as the Scripts screen -- GET /v1/scripts, which reads each script back off the
@@ -1905,7 +1905,7 @@ function renderImagePicker(filter) {
    submitted, which is not while this form is open.
 
    ONLY THE SCRIPT IS FILLED. The name would collide with the job it came from
-   (PACSRUN-CLIENT-TOKEN burns a name), and the image, GPU and capacity type are the new job's
+   (HYPERUN-CLIENT-TOKEN burns a name), and the image, GPU and capacity type are the new job's
    decisions -- the Scripts screen's own "Use this" button has said so since it existed. */
 let reuseRows = null;
 
@@ -1963,7 +1963,7 @@ $("f-script-reuse-toggle").onclick = () => {
 
 $("f-image-search").oninput = () => renderImagePicker($("f-image-search").value);
 
-// DDPSRUN-TRAINING-SIZE. Five optional numeric boxes. They are the only input the runtime
+// HYPERUN-TRAINING-SIZE. Five optional numeric boxes. They are the only input the runtime
 // estimate has, so the screen says what filling them buys rather than hiding that.
 //
 // THE FOLDING IS THE `Advanced` ACCORDION NOW, not a button of its own -- this screen had
@@ -2049,7 +2049,7 @@ $("s1-next").onclick = async () => {
       }).join("")
     : note("info", "Nothing to flag.");
 
-  /* DDPSRUN-UI-NOT-CHECKED. What no check could look at, printed under the findings.
+  /* HYPERUN-UI-NOT-CHECKED. What no check could look at, printed under the findings.
 
      WHY IT HAS TO BE ON SCREEN. The server has always answered this list and this screen threw
      it away, so "Nothing to flag." read as "everything is fine" -- and the server's own words
@@ -2080,7 +2080,7 @@ $("s1-next").onclick = async () => {
 };
 
 $("s1-reset").onclick = () => {
-  // f-result is gone (DDPSRUN-UI-NO-RESULT-PATH) and clearing an id that no
+  // f-result is gone (HYPERUN-UI-NO-RESULT-PATH) and clearing an id that no
   // longer exists throws on $(id).value, which would have left every field after
   // it uncleared.
   ["f-name", "f-image", "f-command", "f-env",
@@ -2089,11 +2089,11 @@ $("s1-reset").onclick = () => {
   $("f-gpucount").value = 1;
   $("f-parallelism").value = 1;
   $("f-gpu").value = "";
-  // Same default the markup ships (DDPSRUN-CAPACITY-DEFAULT). Clear must land on the form's
+  // Same default the markup ships (HYPERUN-CAPACITY-DEFAULT). Clear must land on the form's
   // default, not on the one it used to have -- otherwise pressing Clear silently changes what
   // the next submission buys.
   $("f-capacity").value = "on-demand";
-  // DDPSRUN-PLACEMENT-DEFAULT. Same rule as the capacity box on the line above: Clear has to land
+  // HYPERUN-PLACEMENT-DEFAULT. Same rule as the capacity box on the line above: Clear has to land
   // on the default the markup ships, not on the one this form used to have. Landing on "" would
   // put the next submission back on `ordered` without saying so.
   $("f-mode").value = "cheapest";
@@ -2102,7 +2102,7 @@ $("s1-reset").onclick = () => {
   $("s1-err").innerHTML = "";
 };
 
-/* DDPSRUN-VENDOR-CHOICE. gcp, azure, lambda and nebius are answered from
+/* HYPERUN-VENDOR-CHOICE. gcp, azure, lambda and nebius are answered from
    catalogue CSVs and no actuator in PACSrun understands their machine names, so
    checking one only makes sense under `compare`, which ranks the candidates and
    then stops without buying anything. Under `ordered` or `cheapest` such a
@@ -2152,7 +2152,7 @@ $("s2-next").onclick = async () => {
   const hours = (r) => (r.low == null || r.high == null) ? "unknown"
     : r.low === r.high ? r.low.toFixed(1) + " h"
     : `${r.low.toFixed(1)} - ${r.high.toFixed(1)} h`;
-  // DDPSRUN-AWS-PRICES. The hourly rate is drawn even when the hours are not,
+  // HYPERUN-AWS-PRICES. The hourly rate is drawn even when the hours are not,
   // and that is the whole reason this card exists. Twelve of the fourteen cards
   // in the GPU dropdown have no throughput measurement, so "Estimated cost"
   // read "unknown" for all twelve -- and the screen said nothing else about
@@ -2315,7 +2315,7 @@ async function drawVendors() {
   ].join("");
 
   // A job that never reached Running rented nothing, so the server files it
-  // under no vendor at all (DDPSRUN-STATS, VendorTotals). Silently showing
+  // under no vendor at all (HYPERUN-STATS, VendorTotals). Silently showing
   // fewer jobs here than Team shows is the kind of quiet gap this screen's
   // SCOPE_NOTE exists to refuse, so the difference is stated outright.
   const placed = rows.reduce((sum, v) => sum + v.jobs, 0);
@@ -2497,7 +2497,7 @@ document.querySelectorAll("#jobs-tabs button").forEach((b) => {
   };
 });
 
-/* DDPSRUN-UI-RERUN. Copy the submitted spec back into the form.
+/* HYPERUN-UI-RERUN. Copy the submitted spec back into the form.
 
    THREE THINGS IT USED TO DROP, all of them silently:
 
@@ -2560,7 +2560,7 @@ $("d-again").onclick = () => {
   go("submit");
 };
 
-/* DDPSRUN-CANCEL. A job can sit in Pending forever with nothing to do about it,
+/* HYPERUN-CANCEL. A job can sit in Pending forever with nothing to do about it,
    and until this existed the only way out was kubectl — the thing this service
    exists so that nobody needs. Deleting the PacsJob is the only stop the CRD
    offers, so the row goes away rather than staying with a "cancelled" state.
@@ -2698,7 +2698,7 @@ $("d-log-copy").onclick = () => copyText(logText || "", $("d-log-copy"), $("d-lo
 /* ------------------------------------------------------------------ sign in */
 
 /*
- * DDPSRUN-UI-LOGIN. Two ways in, and the server decides which is offered.
+ * HYPERUN-UI-LOGIN. Two ways in, and the server decides which is offered.
  *
  *   Cognito, when GET /v1/login-config says enabled. The page sends the browser
  *   to Cognito's own login page, Cognito sends it back with a code, and the page
@@ -2748,7 +2748,7 @@ async function makeVerifier() {
    over from the last sign-in would make the next one fail. */
 const redirectUri = () => location.origin + location.pathname;
 
-/* DDPSRUN-UI-LOGIN-STAGE. What the login card shows while start() works:
+/* HYPERUN-UI-LOGIN-STAGE. What the login card shows while start() works:
      "checking" — fresh load, we do not yet know how this deployment signs in;
      "signing"  — back from Cognito with a ?code=, the exchange is running;
      "ready"    — start() finished; show the way in the server offers.
@@ -2767,7 +2767,7 @@ function setLoginStage(stage) {
   }
 }
 
-/* DDPSRUN-REGISTER. The address inside an id_token, FOR DISPLAY ONLY.
+/* HYPERUN-REGISTER. The address inside an id_token, FOR DISPLAY ONLY.
 
    This decodes the token's payload without checking its signature, and that is
    safe for exactly one reason: the token is the browser's own, so the only
@@ -3117,7 +3117,7 @@ window.addEventListener("hashchange", route);
       // A startup check as well as the ten-minute one: a browser holding an
       // index.html from before `cache-control: no-cache` existed will not
       // revalidate it, so even a deliberate reload can come back on the old
-      // script. This catches that on the very first load (DDPSRUN-UI-STALE-TAB).
+      // script. This catches that on the very first load (HYPERUN-UI-STALE-TAB).
       checkStale(deployed.version);
     }
   } catch { /* no config.json: a pod deployment, or a local file. */ }

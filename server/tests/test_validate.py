@@ -202,7 +202,7 @@ def test_every_finding_says_what_to_change_or_deliberately_does_not():
             assert finding.fix, finding.code
 
 
-# ---------------------------------------------------------------- DDPSRUN-VENDOR-CHOICE
+# ---------------------------------------------------------------- HYPERUN-VENDOR-CHOICE
 
 
 def test_a_price_only_vendor_under_the_default_mode_is_warned_about():
@@ -283,7 +283,7 @@ def test_the_findings_reach_the_aggregator():
 
 
 def test_a_secret_name_the_deployment_does_not_hold_is_blocking():
-    """DDPSRUN-SECRET-NAMES. 없는 이름은 submit 이 거부하므로 여기서 error 다.
+    """HYPERUN-SECRET-NAMES. 없는 이름은 submit 이 거부하므로 여기서 error 다.
 
     그 세션은 `secrets: ["GITHUB_PAT"]` 로 validate 를 통과했고(EXIT=0),
     submit 에서야 거부를 봤다. 검사가 볼 수 있는 것을 안 봤다는 뜻이다.
@@ -347,7 +347,7 @@ def test_a_ppo_script_hears_nothing_about_the_dpo_arithmetic():
 
     옛 판은 "이 patch 는 DPO 것이라 안 맞는다" 를 INFO 로 알려 줬다. 그것도
     개선이었지만 여전히 남의 recipe 를 이 job 의 화면에 올리는 것이다.
-    DDPSRUN-CHECK-TIERS: `peak_logits_gib` 는 **한 trainer 에서 측정한 산술**이고,
+    HYPERUN-CHECK-TIERS: `peak_logits_gib` 는 **한 trainer 에서 측정한 산술**이고,
     PPO 의 가장 큰 allocation 은 그것이 아니다. 그래서 recipe 층 전체가 꺼지고,
     못 봤다는 사실은 `not_checked` 가 말한다.
     """
@@ -398,7 +398,7 @@ def test_an_unknown_trainer_still_gets_the_patch_warning():
 
 
 def test_a_second_aws_identity_is_named_before_the_run_starts():
-    """DDPSRUN-AWS-COLLISION. Bedrock judge 와 결과 upload 가 같은 세 이름을 쓴다."""
+    """HYPERUN-AWS-COLLISION. Bedrock judge 와 결과 upload 가 같은 세 이름을 쓴다."""
     result = v.check_aws_credential_collision(
         {"JUDGE_AWS_ACCESS_KEY_ID": "AKIA..."}, [], None)
     assert len(result) == 1
@@ -421,7 +421,7 @@ def test_a_job_with_no_aws_identity_of_its_own_is_silent():
     assert v.check_aws_credential_collision({"HF_TOKEN": "x"}, ["GITHUB_PAT"], "python x.py") == []
 
 
-# ------------------------------------------- DDPSRUN-DEFERRED-SCRIPT
+# ------------------------------------------- HYPERUN-DEFERRED-SCRIPT
 # 2026-09-09 결정 4번. `alloc-conf-missing` 이 오탐은 아니었지만 사용법이 갈렸다.
 
 
@@ -463,7 +463,7 @@ def test_the_launcher_rule_does_not_fire_on_a_mention():
         assert v.defers_to_another_script(text) is None, text
 
 
-# ------------------------------------------- DDPSRUN-GROUP / DDPSRUN-CHECK-TIERS
+# ------------------------------------------- HYPERUN-GROUP / HYPERUN-CHECK-TIERS
 # 2026-09-09. validate 가 한 recipe 에 편향돼 있었고, 정작 분산학습은 판단할
 # 대상조차 없었다 -- `spec.group` 이 CRD 에는 있고 이 API 에는 없었다.
 

@@ -224,7 +224,7 @@ def test_the_cluster_name_is_signed_into_the_token(fake_aws_credentials):
 
 
 # ---------------------------------------------------------------------------
-# DDPSRUN-BUILD-ONCE. The defect this guards: Mangum's lifespan="auto" runs the
+# HYPERUN-BUILD-ONCE. The defect this guards: Mangum's lifespan="auto" runs the
 # ASGI lifespan around every invocation, so the whole startup ran per request.
 # Measured on the deployed function 2026-09-02: 48 requests, 48 startup log
 # lines, 3 real cold starts, and /healthz taking 1.78 s to return a two-key dict.

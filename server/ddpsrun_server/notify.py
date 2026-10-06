@@ -58,7 +58,7 @@ for a month, is 6,000 messages and $0.60. The S3 marker is one PutObject
 ($0.005 per 1,000 requests, so $0.0001 for those twenty) holding zero bytes; S3
 charges for storage by the byte and these have no body.
 
-Grep anchor: DDPSRUN-REGISTER
+Grep anchor: HYPERUN-REGISTER
 """
 from __future__ import annotations
 

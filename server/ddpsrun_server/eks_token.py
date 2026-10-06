@@ -28,7 +28,7 @@ expects on stdout:
 Verified 2026-09-01: a token built this way answered HTTP 200 against the live
 apiserver.
 
-Grep anchor: DDPSRUN-EKS-TOKEN
+Grep anchor: HYPERUN-EKS-TOKEN
 """
 
 from __future__ import annotations

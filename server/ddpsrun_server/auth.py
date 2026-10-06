@@ -26,7 +26,7 @@ yet (open item 4, unresolved). This module is the seam: when Cognito lands,
 `principal_for` gains a second branch that validates a JWT, and nothing above it
 changes.
 
-Grep anchor: DDPSRUN-AUTH
+Grep anchor: HYPERUN-AUTH
 """
 
 from __future__ import annotations
@@ -237,7 +237,7 @@ class TokenStore:
     def principal_for_email(self, email: str) -> Principal:
         """Identify a caller Cognito has already vouched for.
 
-        DDPSRUN-COGNITO-DIRECTORY. Cognito answered "who is this"; this answers
+        HYPERUN-COGNITO-DIRECTORY. Cognito answered "who is this"; this answers
         "and what may they touch". The two are deliberately separate, because a
         namespace has to exist in the cluster before anyone can be given it and
         Cognito has no way to know whether it does (`docs/16-login.md` 16.2).

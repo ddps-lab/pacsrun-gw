@@ -48,7 +48,7 @@ python gen_openrca_tasks_fast.py --lora "/root/ab/$ADAPTER"
 **When they disagree, the first part finishes and only then does the second fail.** For AIOps,
 training alone is 31 hours. `hyperun validate --script run.sh` catches it as
 `adapter-path-mismatch` **only when the two flags are named `--out`/`--lora`** (recipe tier,
-DDPSRUN-CHECK-TIERS). A pair under other names is invisible to the check — which is why this rule
+HYPERUN-CHECK-TIERS). A pair under other names is invisible to the check — which is why this rule
 comes before the check.
 
 ---
@@ -356,7 +356,7 @@ trap on_exit EXIT
 **This section is no longer something to do.** PACSrun's driver puts `driver/common/gpu-watch.sh`
 in front of the workload's command and prints it itself. It does so on every vendor — the ones
 that give a VM (AWS, GCP) use the file as the k3s pod's command, and the one that gives a
-container (RunPod) as a wrapper. The grep anchor is `PACSRUN-GPU-WATCH`.
+container (RunPod) as a wrapper. The grep anchor is `HYPERUN-GPU-WATCH`.
 
 That only one stream, stdout, comes out of the remote container is unchanged. What changed is who
 writes into that stream, and **the metrics appear even if the researcher forgets** — that is all
@@ -577,7 +577,7 @@ the round or the rank into the file name: `ckpt_iter2.pt`, `adapter_rank0.tar.gz
   restart. §17 is how.
 
 **The container's credential can do that, and it no longer runs out.** Since PACSrun #63 and #64
-(2026-09-14 and 09-15, grep `PACSRUN-CREDS-FILE`) the container is not given the key itself but a
+(2026-09-14 and 09-15, grep `HYPERUN-CREDS-FILE`) the container is not given the key itself but a
 path, `AWS_SHARED_CREDENTIALS_FILE`; the driver writes the key into that file and replaces it an
 hour before it expires, and the key may write the job's own prefix. Checked live on
 `job-9316fc95cfe3` (Shadeform, 2026-09-14): the S3 write succeeded with `method =
@@ -595,11 +595,11 @@ the difference.**
 | vendor | how the driver fetches |
 |---|---|
 | RunPod | a GET to a small HTTP server inside the container via `<pod-id>-8888.proxy.runpod.net` (`PACSrun/driver/runpod/driver.py:233` `ARTIFACT_RE`, `:2012` `_fetch_one`) |
-| VM + k3s (AWS, GCP, Shadeform. Seeweb later) | the size with `stat -c %s` and the bytes with `cat`, both through the k3s API's exec (`PACSrun/driver/common/artifact_fetch.py`, grep `PACSRUN-K3S-FETCH`) |
+| VM + k3s (AWS, GCP, Shadeform. Seeweb later) | the size with `stat -c %s` and the bytes with `cat`, both through the k3s API's exec (`PACSrun/driver/common/artifact_fetch.py`, grep `HYPERUN-K3S-FETCH`) |
 
 **★ Status, read from PACSrun's code on 2026-09-29.** The k3s path is deployed on AWS, GCP and
 Shadeform. It reads a file through the workload's running container, and only the Shadeform driver
-keeps that container open after the script ends (`PACSRUN-K3S-FETCH-HOLD`,
+keeps that container open after the script ends (`HYPERUN-K3S-FETCH-HOLD`,
 `PACSrun/driver/shadeform/driver.py`, `hold_for_fetch=True`). On AWS and GCP a file announced in the
 script's last moments -- from an EXIT trap -- can therefore miss, and a missed announced file ends
 the job with exit 34 (below) even if the same file reached S3 some other way. So the script waits
@@ -722,10 +722,10 @@ cost N machines, and they leave N unrelated results.
 
 | variable | what | who fills it |
 |---|---|---|
-| `PACSRUN_GROUP_SIZE` | how many pods this group has | the operator (`PACSRUN-GROUP-COORDS`) |
+| `PACSRUN_GROUP_SIZE` | how many pods this group has | the operator (`HYPERUN-GROUP-COORDS`) |
 | `PACSRUN_GROUP_RANK` | which one this pod is within its group | the operator |
 | `PACSRUN_GROUP_INDEX` | which group of the job this group is | the operator |
-| `PACSRUN_MASTER_ADDR` | the **private** address of the rank 0 machine | the driver (`PACSRUN-GROUP-HOSTNET`) |
+| `PACSRUN_MASTER_ADDR` | the **private** address of the rank 0 machine | the driver (`HYPERUN-GROUP-HOSTNET`) |
 | `PACSRUN_MASTER_PORT` | `29500 + group_index` | the driver |
 | `PACSRUN_POD_INDEX` | which one this is among all the job's pods. It stays separate from the group | the operator |
 
@@ -866,7 +866,7 @@ def _install():
         if resume_from_checkpoint is None:
             out = getattr(self.args, "output_dir", None)
             last = get_last_checkpoint(out) if out and os.path.isdir(out) else None
-            print("[PACSRUN-TRAINER-RESUME] " + (f"continuing from {last}" if last
+            print("[HYPERUN-TRAINER-RESUME] " + (f"continuing from {last}" if last
                   else "no checkpoint, starting at step 0"), flush=True)
             resume_from_checkpoint = last
         return original(self, resume_from_checkpoint, *args, **kwargs)
@@ -875,7 +875,7 @@ def _install():
 try:
     _install()
 except Exception as exc:                                  # never break the venv over this
-    print(f"[PACSRUN-TRAINER-RESUME] not installed: {exc}", flush=True)
+    print(f"[HYPERUN-TRAINER-RESUME] not installed: {exc}", flush=True)
 HOOK
   echo "import pacsrun_resume_hook" > "$sp/zzz_pacsrun_resume_hook.pth"
   # say at the START whether it took, not six hours in

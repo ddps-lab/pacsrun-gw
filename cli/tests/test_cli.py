@@ -109,7 +109,7 @@ class FakeClient:
     def schema(self):
         return {"properties": {"name": {}}}
 
-    # DDPSRUN-SHELL. Absent until 2026-09-10, which is exactly why the dispatch
+    # HYPERUN-SHELL. Absent until 2026-09-10, which is exactly why the dispatch
     # bug below survived every release: with no double for this call, no test
     # could reach cmd_shell at all.
     def exec_in_job(self, job, line, slot=0, session=False, seq=0):
@@ -1041,7 +1041,7 @@ def test_estimate_tells_you_the_flag_to_use(fake, capsys):
 
 
 # ---------------------------------------------------------------------------
-# DDPSRUN-CANCEL
+# HYPERUN-CANCEL
 # ---------------------------------------------------------------------------
 
 
@@ -1078,7 +1078,7 @@ def test_cancel_reports_the_servers_refusal(fake, capsys, monkeypatch):
     assert "no such job" in capsys.readouterr().err
 
 
-# ---------------------------------------------------------------- DDPSRUN-VENDOR-CHOICE
+# ---------------------------------------------------------------- HYPERUN-VENDOR-CHOICE
 
 
 def test_vendor_repeats_and_the_mode_rides_along():
@@ -1176,7 +1176,7 @@ def test_there_is_a_version_flag_at_all(capsys):
     assert capsys.readouterr().out.strip() == f"hyperun {hyperun.__version__}"
 
 
-# ------------------------------------------------- DDPSRUN-USER-SECRET
+# ------------------------------------------------- HYPERUN-USER-SECRET
 
 
 def test_the_value_is_read_from_a_file_and_never_from_argv(fake, tmp_path, capsys):
@@ -1232,7 +1232,7 @@ def test_removing_one_names_what_it_means(fake, capsys):
 
 
 def test_an_expiry_travels_and_is_read_back(fake, tmp_path, capsys):
-    """DDPSRUN-SECRET-EXPIRY. 임시 자격증명이 정상이라 날짜가 있어야 한다."""
+    """HYPERUN-SECRET-EXPIRY. 임시 자격증명이 정상이라 날짜가 있어야 한다."""
     token = tmp_path / "t.txt"
     token.write_text("tok\n")
     assert run(["secret-set", "JUDGE_AWS_SESSION_TOKEN", "--from-file", str(token),
@@ -1244,7 +1244,7 @@ def test_an_expiry_travels_and_is_read_back(fake, tmp_path, capsys):
 
 
 def test_continue_from_travels_to_the_server(fake):
-    """DDPSRUN-CONTINUE-FROM. 서버에만 넣고 CLI 를 잊으면 문서가 없는 flag 를 가르친다."""
+    """HYPERUN-CONTINUE-FROM. 서버에만 넣고 CLI 를 잊으면 문서가 없는 flag 를 가르친다."""
     assert run(["submit", "--name", "iter-2", "--image", "i",
                 "--capacity-type", "on-demand",
                 "--continue-from", "job-3e1e34cb042c"]) == 0
@@ -1260,7 +1260,7 @@ def test_without_it_the_field_is_absent(fake):
 
 # ------------------------------------------------------------------------ shell
 #
-# DDPSRUN-SHELL DISPATCH. `shell` had never once run. `add_subparsers(dest=...)`
+# HYPERUN-SHELL DISPATCH. `shell` had never once run. `add_subparsers(dest=...)`
 # and the `shell` subparser's own REMAINDER positional were BOTH called
 # `command`, so argparse wrote the shell line over the subcommand name:
 #

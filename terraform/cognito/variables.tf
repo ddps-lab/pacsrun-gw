@@ -78,7 +78,7 @@ variable "allow_password_login" {
     by anyone holding admin credentials. It only decides what the page shows.
 
     The fallback for an operator is not a password, it is the static token
-    (DDPSRUN-TWO-CREDENTIALS). That path needs no browser at all, which is why
+    (HYPERUN-TWO-CREDENTIALS). That path needs no browser at all, which is why
     it is also what CI and the agent skill use.
 
     Ignored while google_client_id is empty: with no Google, the password form

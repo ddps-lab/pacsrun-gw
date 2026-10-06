@@ -232,7 +232,7 @@ jobs:
           API_BASE: ${{ vars.API_BASE }}
         run: |
           set -euo pipefail
-          # DDPSRUN-UI-CONFIG. The page and the API are on different hosts, so
+          # HYPERUN-UI-CONFIG. The page and the API are on different hosts, so
           # the page cannot work the API address out from its own origin. It is
           # written here rather than committed because it is an environment
           # identifier, and this repository is meant to be opened later.
@@ -240,7 +240,7 @@ jobs:
           # Nothing in this file is a secret. It is one address, and it is the
           # address every request from this page goes to anyway.
           #
-          # DDPSRUN-UI-STALE-TAB. `version` is the same commit stamped into the
+          # HYPERUN-UI-STALE-TAB. `version` is the same commit stamped into the
           # asset URLs below, and it is here so a page that is ALREADY OPEN can
           # find out it is out of date. Versioned asset URLs fix the next LOAD;
           # they do nothing for a tab nobody has reloaded, and this is a
@@ -260,7 +260,7 @@ jobs:
           }, indent=2))
           PYEOF
           cat ui/config.json
-          # DDPSRUN-UI-VERSIONED-ASSETS. index.html is uploaded with
+          # HYPERUN-UI-VERSIONED-ASSETS. index.html is uploaded with
           # cache-control no-cache, so a browser revalidates it every load and
           # always gets the newest one — but app.js and style.css keep the same
           # URL forever, and a copy cached BEFORE the no-cache header existed
@@ -269,7 +269,7 @@ jobs:
           # they had never fetched. Stamping the commit into the query makes
           # each deploy a different URL, so the always-fresh index.html can
           # never point at a stale script. V is set above, where config.json
-          # records the same value for DDPSRUN-UI-STALE-TAB.
+          # records the same value for HYPERUN-UI-STALE-TAB.
           sed -i "s|src=\"app.js\"|src=\"app.js?v=$V\"|" ui/index.html
           sed -i "s|href=\"style.css\"|href=\"style.css?v=$V\"|" ui/index.html
           grep -E 'app\.js|style\.css' ui/index.html

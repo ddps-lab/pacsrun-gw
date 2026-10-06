@@ -55,7 +55,9 @@ set -euo pipefail
 # 2026-09-16: 692 -> 693. One line, and it is a live identifier the file already lists — the
 # `ddpsrun.io/owner` and `ddpsrun.io/job-id` labels the controller writes on every job, in the
 # fixture for the new pause route tests.
-BASELINE=693
+# 2026-10-07: 693 -> 391. Every grep marker in the tree -- the gateway's own and the operator's --
+# became HYPERUN-: 375 markers in 57 files, and the lines they were on stopped counting.
+BASELINE=391
 
 # ★ `git ls-files` AND NOT `grep -r .`, and the difference is the whole check.
 # A recursive grep counts what is on the DISK: a virtualenv, a build directory,

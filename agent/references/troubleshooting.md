@@ -63,7 +63,7 @@ line short of this.
 
 The second cause, **until 2026-09-14, was credential expiry.** STS temporary credentials last at
 most 43200 seconds (`DurationSeconds`), that is 12 hours, and a job longer than that could not
-upload its own results at the end. Since PACSrun #63 and #64 (grep `PACSRUN-CREDS-FILE`) the
+upload its own results at the end. Since PACSrun #63 and #64 (grep `HYPERUN-CREDS-FILE`) the
 container's credential is a file the driver replaces before it expires, and it may write the job's
 own result prefix, so this cause is gone on AWS, Shadeform and RunPod. On GCP it is not checked.
 
@@ -74,7 +74,7 @@ removed on 2026-09-14 (`PACSrun/driver/runpod/driver.py`, `_session_policy`).
 
 **★ And an announced file that never lands is a failure now, not a silent success.** On the k3s
 path (AWS, GCP, Shadeform) a job whose announced file is not in S3 ends with exit 34 rather than
-`Succeeded` (`PACSRUN-K3S-FETCH`, `PACSrun/driver/common/artifact_fetch.py`), so "succeeded but
+`Succeeded` (`HYPERUN-K3S-FETCH`, `PACSrun/driver/common/artifact_fetch.py`), so "succeeded but
 empty" becomes "failed, and says why". On AWS and GCP a file announced as the script ends can miss
 that way, because the driver reads it through a container that has already stopped --
 script-contract section 13 has the status and section 6 the lines that wait for it.
@@ -111,7 +111,7 @@ An error occurred (AccessDenied) when calling the CreateMultipartUpload operatio
 ```
 
 **Until 2026-09-14 this was normal**: in fetch mode the remote got only a read-only credential and
-the driver did the uploading. That arm was removed (PACSRUN-CREDS-FILE), and the container's
+the driver did the uploading. That arm was removed (HYPERUN-CREDS-FILE), and the container's
 credential may now write the job's own result prefix. So this line now means one of three things:
 
 | where | why |

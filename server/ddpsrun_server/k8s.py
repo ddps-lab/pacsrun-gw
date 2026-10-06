@@ -31,7 +31,7 @@ in every tenant namespace. It does NOT need `get` on `secrets`: it writes a
 `secretKeyRef` and lets kubelet do the reading, so a compromise of this server
 does not hand over the GitHub token.
 
-Grep anchor: DDPSRUN-K8S
+Grep anchor: HYPERUN-K8S
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ from .config import (
     USER_SECRET_NAME,
 )
 
-# DDPSRUN-SECRET-EXPIRY. Where a registered value's expiry date is kept: an
+# HYPERUN-SECRET-EXPIRY. Where a registered value's expiry date is kept: an
 # annotation on the namespace's own Secret, one per name.
 EXPIRY_ANNOTATION_PREFIX = "ddpsrun.io/expires-"
 
@@ -321,7 +321,7 @@ class Cluster:
     def prometheus_query(self, expr: str, timeout_seconds: int = 10) -> dict:
         """Ask the in-cluster Prometheus one instant query, through the apiserver.
 
-        DDPSRUN-PROMETHEUS-PROXY. The route is
+        HYPERUN-PROMETHEUS-PROXY. The route is
         `/api/v1/namespaces/pacsrun-system/services/prometheus:9090/proxy/...` — the apiserver's
         own `services/proxy` subresource, which forwards to the Service and returns the reply.
 
@@ -337,7 +337,7 @@ class Cluster:
         node security group admitted that source on seven ports only (443, 4443, 6443, 8443,
         9443, 10250, 10251). A security group has no reject action, so the SYN was dropped in
         silence. `pods/log` had always worked because 10250 is on that list.
-        PACSRUN-APISERVER-POD-PROXY in PACSrun's terraform/cluster/main.tf is the rule that opens
+        HYPERUN-APISERVER-POD-PROXY in PACSrun's terraform/cluster/main.tf is the rule that opens
         9090; without it this method times out rather than answering, and nothing says why.
 
         WHY AN INSTANT QUERY IS ENOUGH FOR LAMBDA, when a log stream was not. A Lambda execution
@@ -416,7 +416,7 @@ class Cluster:
 
         NAMES AND DATES ONLY, NEVER VALUES.
 
-        DDPSRUN-USER-SECRET. `read_namespaced_secret` returns the values too --
+        HYPERUN-USER-SECRET. `read_namespaced_secret` returns the values too --
         there is no "keys only" read in the Kubernetes API -- so this method
         takes `.keys()` and lets the object go. It must never be returned,
         logged, or put in an exception: the whole promise of the submit path is
@@ -435,7 +435,7 @@ class Cluster:
             is the normal state before the first `hyperun secret-set`, not an
             error.
 
-            DDPSRUN-SECRET-EXPIRY. The date lives in an ANNOTATION on the same
+            HYPERUN-SECRET-EXPIRY. The date lives in an ANNOTATION on the same
             Secret, `ddpsrun.io/expires-<NAME>`, so it costs no second read and
             no second object. An annotation and not a second key because a key
             would show up in `GET /v1/secrets` as a name a job could ask for,
@@ -501,7 +501,7 @@ class Cluster:
         which matters because this server cannot read the Secret's values and
         therefore could not rewrite the whole object even if it wanted to.
         """
-        # DDPSRUN-SECRET-EXPIRY. The date rides along in the metadata. `None`
+        # HYPERUN-SECRET-EXPIRY. The date rides along in the metadata. `None`
         # under a merge patch DELETES the annotation, which is what re-storing a
         # value without a date should mean: a re-minted credential that is now
         # permanent must not keep the old one's expiry.
@@ -627,7 +627,7 @@ class Cluster:
             timeout_seconds: how long to wait for the command to finish.
             stdin: text to hand the command, or None for the argv-only form.
 
-                ★ WHY THIS EXISTS AT ALL. It was added for PACSRUN-SHELL-SESSION,
+                ★ WHY THIS EXISTS AT ALL. It was added for HYPERUN-SHELL-SESSION,
                 where the thing being carried is a line somebody typed into a
                 debugging shell. An argv is visible in `ps` on the driver pod and
                 lands in the apiserver's audit log; a typed line can carry

@@ -29,7 +29,7 @@ WHY BOTH ARE FILES RATHER THAN OBJECTS PASSED IN. The alternative is teaching
 covers one shape or both. Writing two small files at cold start leaves the rest
 of the server unable to tell where it is running.
 
-Grep anchor: DDPSRUN-LAMBDA-HANDLER
+Grep anchor: HYPERUN-LAMBDA-HANDLER
 """
 
 from __future__ import annotations
@@ -165,7 +165,7 @@ from mangum import Mangum  # noqa: E402 - must follow the two writes above
 
 from .main import app, build_state  # noqa: E402
 
-# DDPSRUN-BUILD-ONCE. Build the state here, at import, which Lambda runs once
+# HYPERUN-BUILD-ONCE. Build the state here, at import, which Lambda runs once
 # per execution environment. Then tell Mangum NOT to run the ASGI lifespan:
 # "auto" runs it around every invocation, which rebuilt the kubernetes client
 # and the JWKS cache on every single request and cost 1.4 seconds each time

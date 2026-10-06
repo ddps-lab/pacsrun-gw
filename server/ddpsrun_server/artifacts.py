@@ -2,7 +2,7 @@
 
 END-TO-END FLOW of one `GET /v1/jobs/{id}/artifacts`:
 
-  1. The route (main.py, DDPSRUN-ARTIFACTS-ROUTE) fetches the PacsJob and reads
+  1. The route (main.py, HYPERUN-ARTIFACTS-ROUTE) fetches the PacsJob and reads
      `spec.resultPath` — an address the SERVER built at submit time
      (`models.result_path_for`), never one the caller typed. That is the whole
      scoping story: a caller can only ever reach the prefix their own job was
@@ -14,7 +14,7 @@ END-TO-END FLOW of one `GET /v1/jobs/{id}/artifacts`:
      route's own fetch does. Until 2026-09-08 that fetch was scoped to a
      NAMESPACE alone, and with two people in one namespace either could list and
      download the other's result files. The route now runs its fetch through
-     `main.require_owner` (DDPSRUN-OWNER-GATE); this module is unchanged and was
+     `main.require_owner` (HYPERUN-OWNER-GATE); this module is unchanged and was
      never the place to fix it.
   2. `split_result_path()` turns "s3://bucket/pacsrun/ns/job/" into
      (bucket, "pacsrun/ns/job/"), and the route refuses anything outside this
@@ -26,7 +26,7 @@ END-TO-END FLOW of one `GET /v1/jobs/{id}/artifacts`:
      exactly one key until the signature expires (EXPIRES_SECONDS). Minting it
      is local arithmetic — no network call — and S3 checks the SIGNER's
      permission when the URL is USED, which is why the Lambda role needs
-     s3:GetObject (terraform/lambda, DDPSRUN-ARTIFACTS-READ) even though the
+     s3:GetObject (terraform/lambda, HYPERUN-ARTIFACTS-READ) even though the
      server itself never downloads anything.
   4. The browser follows the URL and downloads straight from S3. The bytes do
      not pass through Lambda, and they must not: a Lambda response is capped at
@@ -37,7 +37,7 @@ provides boto3, so this package deliberately does not depend on it — the same
 choice `lambda_handler.py` makes for the tokens secret. The tests never import
 it either: they replace `s3_client` with a fake.
 
-Grep anchor: DDPSRUN-ARTIFACTS
+Grep anchor: HYPERUN-ARTIFACTS
 """
 
 from __future__ import annotations
@@ -109,9 +109,9 @@ def is_ours(bucket: str, prefix: str, result_bucket: str, result_prefix: str) ->
     """Is this address inside the one bucket and prefix this server serves?
 
     The same fence PACSrun's own controller puts around resultPath
-    (PACSRUN-RESULT-TENANCY), checked again here because a kubectl-applied
+    (HYPERUN-RESULT-TENANCY), checked again here because a kubectl-applied
     PacsJob reaches this route without ever passing that controller check on
-    the way in — and because the IAM policy (DDPSRUN-ARTIFACTS-READ) is scoped
+    the way in — and because the IAM policy (HYPERUN-ARTIFACTS-READ) is scoped
     the same way, so anything outside would only fail later and less clearly.
     """
     return bucket == result_bucket and prefix.startswith(result_prefix)

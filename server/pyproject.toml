@@ -34,7 +34,7 @@ dependencies = [
     # reason it drops botocore: the runtime already has it.
     "boto3>=1.34",
     # Verifies Cognito id_tokens locally instead of calling Cognito on every
-    # request (DDPSRUN-COGNITO-VERIFY). The [crypto] extra pulls `cryptography`,
+    # request (HYPERUN-COGNITO-VERIFY). The [crypto] extra pulls `cryptography`,
     # which is what actually does RS256; measured 3.8 MB, against a package that
     # unzips to 106.5 MB of a 250 MB limit.
     "pyjwt[crypto]>=2.8",

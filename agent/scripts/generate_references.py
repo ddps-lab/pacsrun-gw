@@ -29,7 +29,7 @@ Run it from the repository root:
     python3 agent/scripts/generate_references.py
     python3 agent/scripts/generate_references.py --check
 
-Grep anchor: DDPSRUN-GENERATE-REFERENCES
+Grep anchor: HYPERUN-GENERATE-REFERENCES
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def cli_version() -> str:
     return "unknown"
 
 
-# DDPSRUN-REFERENCE-VERSION. The version goes in the banner because on
+# HYPERUN-REFERENCE-VERSION. The version goes in the banner because on
 # 2026-09-08 a session followed `cli.md` and got `unrecognized arguments:
 # --vendor` -- the page was right about the repository and ahead of the 0.1.1
 # they had installed from PyPI. The page could not say which it described, so

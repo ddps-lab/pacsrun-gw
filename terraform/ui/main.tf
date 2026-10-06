@@ -25,7 +25,7 @@
 // not approach. What this does NOT cover is the Lambda, the EKS control plane
 // ($73/month) or the node.
 //
-// Grep anchor: DDPSRUN-UI
+// Grep anchor: HYPERUN-UI
 
 resource "aws_s3_bucket" "ui" {
   bucket        = var.bucket_name

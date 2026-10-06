@@ -22,7 +22,7 @@ object entirely, which makes PACSrun apply its own defaults exactly as it does
 for a hand-written PacsJob today. Those decisions arrive in stage 3 with
 `/validate` and `/estimate`.
 
-Grep anchors: DDPSRUN-SERVER-FILLS, DDPSRUN-NO-INTERNAL-NAMES
+Grep anchors: HYPERUN-SERVER-FILLS, HYPERUN-NO-INTERNAL-NAMES
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from .auth import Principal
 from .config import PACSJOB_GROUP, PACSJOB_VERSION, USER_SECRET_NAME, Settings
 from .stats import job_cost, job_hours
 
-# DDPSRUN-SCRIPT-SIZE. How long a `script` may be, and why there is a number at
+# HYPERUN-SCRIPT-SIZE. How long a `script` may be, and why there is a number at
 # all rather than "as long as you like".
 #
 # THE SCRIPT TRAVELS INSIDE THE JOB OBJECT: to_pacsjob puts it in
@@ -58,7 +58,7 @@ from .stats import job_cost, job_hours
 SCRIPT_MAX_CHARS = 256 * 1024
 
 # Environment variable names a user may not set. PACSrun's controller already
-# refuses them (`internal/controller/pacsjob_controller.go`, PACSRUN-ENV-GUARD),
+# refuses them (`internal/controller/pacsjob_controller.go`, HYPERUN-ENV-GUARD),
 # but rejecting here produces a message that names the offending variable
 # instead of a controller error the user never sees.
 RESERVED_ENV_PREFIX = "PACSRUN_"
@@ -69,7 +69,7 @@ EXPECTED_HOURS_ANNOTATION = "ddpsrun.io/expected-hours"
 
 
 class GroupRequest(BaseModel):
-    """DDPSRUN-GROUP. Do this job's pods talk to each other.
+    """HYPERUN-GROUP. Do this job's pods talk to each other.
 
     ★ WHY THIS FIELD HAD TO EXIST BEFORE ANYTHING COULD JUDGE A DISTRIBUTED JOB.
     The CRD has had `spec.group` since 2026-09-05 and this API did not, so the
@@ -142,7 +142,7 @@ class GpuRequest(BaseModel):
         return self
 
 
-# DDPSRUN-VENDOR-CHOICE. The vendor names PACSrun recognises, and the four of
+# HYPERUN-VENDOR-CHOICE. The vendor names PACSrun recognises, and the four of
 # them that can only be PRICED.
 #
 # WHY THEY ARE REPEATED HERE. They are PACSrun's list (`knownVendors` in
@@ -172,7 +172,7 @@ class GpuRequest(BaseModel):
 # including the failing ones.
 #
 # ★ ARTIFACT RETRIEVAL IS PROVEN LIVE TOO, and this note said the opposite until 2026-09-28.
-# It was written on 2026-09-10, before the hold (PACSRUN-K3S-FETCH-HOLD, PACSrun d3c611e) had
+# It was written on 2026-09-10, before the hold (HYPERUN-K3S-FETCH-HOLD, PACSrun d3c611e) had
 # run, and three agent-facing sentences were copied from it without checking. The runs since:
 # job-c5f6c3b2ccc6 (2026-09-17, massedcompute_A6000) announced demo-out.tar.gz with
 # PACSRUN_ARTIFACT alone -- no `aws s3 cp`, no boto3 -- and it is in its result path;
@@ -257,7 +257,7 @@ class SubmitRequest(BaseModel):
     cannot set them, so a caller cannot write into another user's folder or run
     as another user's identity.
 
-    PLACEMENT IS PARTLY THE CALLER'S SINCE 2026-09-08 (DDPSRUN-VENDOR-CHOICE).
+    PLACEMENT IS PARTLY THE CALLER'S SINCE 2026-09-08 (HYPERUN-VENDOR-CHOICE).
     Three of its fields are theirs -- `capacity_type`, `vendors` and
     `placement_mode` -- and the rest is still not offered. Before that date the
     server wrote `placement: {capacityType}` and nothing else, so a caller could
@@ -287,7 +287,7 @@ class SubmitRequest(BaseModel):
     )
     secrets: list[str] = Field(
         default_factory=list,
-        # DDPSRUN-SECRET-NAMES. Two different names exist and a wrapper header
+        # HYPERUN-SECRET-NAMES. Two different names exist and a wrapper header
         # showed both on 2026-09-04: `GITHUB_PAT (from Secret slm-rca-clone via
         # spec.env)`. Which one goes here was written down nowhere, so a
         # submitter had to guess between the variable their script reads and
@@ -328,7 +328,7 @@ class SubmitRequest(BaseModel):
         description="Omit for independent pods, which is what parallelism alone "
         "means. Send it with mode 'distributed' for one process group per "
         "`size` pods -- data-parallel training, tensor parallel across pods, "
-        "anything that needs a rendezvous. DDPSRUN-GROUP.",
+        "anything that needs a rendezvous. HYPERUN-GROUP.",
     )
     expected_hours: float | None = Field(
         default=None,
@@ -340,7 +340,7 @@ class SubmitRequest(BaseModel):
     )
     continue_from: str | None = Field(
         default=None,
-        # DDPSRUN-CONTINUE-FROM. A multi-iteration job cannot chain its own
+        # HYPERUN-CONTINUE-FROM. A multi-iteration job cannot chain its own
         # rounds today: each submit gets a fresh `resultPath` from its own job
         # id, the wrapper's resume step reads only its own
         # `PACSRUN_RESULT_PATH`, and the container's credential is scoped to
@@ -372,7 +372,7 @@ class SubmitRequest(BaseModel):
         "spells them: a bare vendor ('gcp'), or a vendor and region "
         "('aws/us-east-1'). EMPTY IS NOT 'anywhere' FOR AWS -- it is the "
         "operator's one default region, us-west-2 in this deployment "
-        "(PACSrun's placement.go:376, grep PACSRUN-AWS-ONE-REGION). So a job "
+        "(PACSrun's placement.go:376, grep HYPERUN-AWS-ONE-REGION). So a job "
         "that wants a cheaper region has to name it. GET /v1/prices lists "
         "every region the catalogue prices.",
     )
@@ -406,7 +406,7 @@ class SubmitRequest(BaseModel):
                 f"Pick one: env for a literal, secrets for a stored value."
             )
 
-        # DDPSRUN-VENDOR-CHOICE. An unrecognised vendor is an ERROR and not a
+        # HYPERUN-VENDOR-CHOICE. An unrecognised vendor is an ERROR and not a
         # skip, for the reason PACSrun's own validateVendors gives: the word
         # matches no placement candidate, so ignoring it would leave the walk
         # with nothing that vendor covers and the job would run somewhere the
@@ -439,7 +439,7 @@ class SubmitResponse(BaseModel):
 class ScriptView(BaseModel):
     """One script this caller has submitted before.
 
-    DDPSRUN-SCRIPTS. WHY THIS IS READ BACK OUT OF THE JOBS AND NOT STORED ANYWHERE. The screen's
+    HYPERUN-SCRIPTS. WHY THIS IS READ BACK OUT OF THE JOBS AND NOT STORED ANYWHERE. The screen's
     Script box sends the same text twice -- as `args` (what runs) and as `script` (what validate
     reads) -- and the server throws `script` away, exactly as its own field description promises.
     But `args` is on the PacsJob for as long as the job exists, so the script a job ran is
@@ -510,7 +510,7 @@ class ScriptsResponse(BaseModel):
 class ImageView(BaseModel):
     """One container repository this lab has built, as the Image box offers it.
 
-    DDPSRUN-IMAGES. The Image field was a free-text box with a 70-character ECR URL in its
+    HYPERUN-IMAGES. The Image field was a free-text box with a 70-character ECR URL in its
     placeholder, and a typo in any part of it is not caught here: the request is valid, the job
     is created, and the answer arrives as an ImagePullBackOff on a machine already rented. The
     mechanics and the four deliberate omissions -- no owner filtering, no AMIs, no pagination,
@@ -604,7 +604,7 @@ class ExecRequest(BaseModel):
         "`cd` and exported variables survive to the next request.",
     )
     slot: int = Field(default=0, ge=0, le=255, description="Which pod of a parallel job.")
-    # PACSRUN-SHELL-SESSION. Absent means the one-shot form, byte for byte what this
+    # HYPERUN-SHELL-SESSION. Absent means the one-shot form, byte for byte what this
     # route did before -- a script wants no session, and an older CLI sends no flag.
     session: bool = Field(
         default=False,
@@ -662,7 +662,7 @@ class SecretsResponse(BaseModel):
     where to go — and `config.SecretBinding`'s own docstring refuses that:
     those are internal names, and `docs/03-api.md` says internal names do not
     cross the API boundary. The same rule already strips them from
-    `GET /v1/jobs/{id}/spec` (DDPSRUN-SPEC-REDACT). What a submitter needs is
+    `GET /v1/jobs/{id}/spec` (HYPERUN-SPEC-REDACT). What a submitter needs is
     the word that works; what an operator needs is in their own cluster.
     """
 
@@ -684,7 +684,7 @@ class SecretsResponse(BaseModel):
     )
 
 
-# DDPSRUN-USER-SECRET. An environment variable name, which is also the key this
+# HYPERUN-USER-SECRET. An environment variable name, which is also the key this
 # value gets inside the namespace's Secret. Deliberately narrower than what
 # either side accepts: POSIX says a name is letters, digits and underscore and
 # must not start with a digit, and shells only export the upper-case form
@@ -721,7 +721,7 @@ class SecretPutRequest(BaseModel):
     )
     expires_at: str | None = Field(
         default=None,
-        # DDPSRUN-SECRET-EXPIRY. Decided 2026-09-09, after a judge credential
+        # HYPERUN-SECRET-EXPIRY. Decided 2026-09-09, after a judge credential
         # expired at 14:27Z on 2026-09-08 and the only way to find that out was
         # to submit a job and watch it fail at the Bedrock call -- hours in, on
         # a rented GPU. A temporary credential is the normal case here
@@ -792,7 +792,7 @@ def placement_note(asked: list[str], regions: list[str], mode: str | None,
         gpu: status.currentOffering.instanceType.
         failed: len(status.excludedOfferings).
         silent: status.notAnswering -- each candidate the last solve asked that
-            gave no answer, as "<candidate>: <why>" (PACSRUN-NOT-ANSWERING).
+            gave no answer, as "<candidate>: <why>" (HYPERUN-NOT-ANSWERING).
 
     Returns:
         The sentence. Never empty for a job with a placement to describe.
@@ -825,7 +825,7 @@ def placement_note(asked: list[str], regions: list[str], mode: str | None,
                  f"on the way.")
     # HYPERUN-NOT-ANSWERING. On 2026-09-28 a job that asked three vendors could say which
     # one won and not that RunPod had not answered, or why -- that was in the operator
-    # log alone. PACSrun now keeps the reasons in status (PACSRUN-NOT-ANSWERING), and
+    # log alone. PACSrun now keeps the reasons in status (HYPERUN-NOT-ANSWERING), and
     # they are PACSrun's own sentences, so they are passed on as they are.
     if silent:
         text += f" Did not answer: {'; '.join(silent)}."
@@ -857,7 +857,7 @@ class JobView(BaseModel):
     started_at: str | None = Field(
         default=None,
         description="When the job's pod first ran, from status.startedAt "
-        "(PACSRUN-JOB-CLOCK). Absent while the job is still waiting for a "
+        "(HYPERUN-JOB-CLOCK). Absent while the job is still waiting for a "
         "machine, which is exactly what makes queue time visible: "
         "started_at - created_at is the wait, finished_at - started_at is the run.",
     )
@@ -966,7 +966,7 @@ class JobView(BaseModel):
             metadata.get("name", "")
         )
 
-        # DDPSRUN-NO-INTERNAL-NAMES: status.currentOffering has exactly four
+        # HYPERUN-NO-INTERNAL-NAMES: status.currentOffering has exactly four
         # fields — vendor, instanceType, zone, region (`api/v1alpha1/
         # shared_types.go:131`). The first two answer "what am I running on";
         # zone and region answer "where in our account", which is our business
@@ -976,7 +976,7 @@ class JobView(BaseModel):
         vendor = offering.get("vendor") or None
 
         # Price the job with the same two functions the team total uses
-        # (DDPSRUN-STATS), so a job's own row and its share of /v1/stats can
+        # (HYPERUN-STATS), so a job's own row and its share of /v1/stats can
         # never disagree. hours is None for a job that never reached Running —
         # it spent nothing — and job_cost is None for a machine with no
         # measured price. Both surface as null, never as a false $0.00.
@@ -1007,7 +1007,7 @@ class JobView(BaseModel):
             message=status.get("message", ""),
             user=labels.get(naming.OWNER_LABEL, ""),
             created_at=metadata.get("creationTimestamp"),
-            # PACSRUN-JOB-CLOCK stamps these two once each and never rewrites
+            # HYPERUN-JOB-CLOCK stamps these two once each and never rewrites
             # them, so a job that lost its machine and restarted keeps its
             # original startedAt. That is deliberate: the screen wants elapsed
             # wall time, and recovery_count already reports the interruptions.
@@ -1035,7 +1035,7 @@ def result_path_for(settings: Settings, principal: Principal, job_id: str, name:
 
     The namespace comes from the token, so a caller cannot aim this anywhere
     else. PACSrun's own guard checks the same prefix a second time on the
-    cluster side (PACSRUN-RESULT-TENANCY), which is what makes a hand-applied
+    cluster side (HYPERUN-RESULT-TENANCY), which is what makes a hand-applied
     PacsJob obey the rule too.
 
     Args:
@@ -1069,7 +1069,7 @@ def to_pacsjob(
 ) -> dict[str, Any]:
     """Turn a submit request into the PacsJob object to create.
 
-    DDPSRUN-SERVER-FILLS. Four things the user did not send are added here:
+    HYPERUN-SERVER-FILLS. Four things the user did not send are added here:
 
       namespace           from the token
       serviceAccountName  from cluster settings
@@ -1100,7 +1100,7 @@ def to_pacsjob(
         capacity_type: "on-demand" or "spot". None writes no placement at all,
             which is stage 1's behaviour and is what the tests for the identity
             fields still exercise.
-        inherited_result_path: DDPSRUN-CONTINUE-FROM. The `spec.resultPath` of
+        inherited_result_path: HYPERUN-CONTINUE-FROM. The `spec.resultPath` of
             the job named by `continue_from`, already fetched AND already
             checked to belong to this principal by the route. None means the
             request named no previous job, and then this job gets its own path
@@ -1108,7 +1108,7 @@ def to_pacsjob(
             the same reason `own_secrets` is: this function makes no cluster
             calls, which is what lets every test of it run without a server.
         own_secrets: the names this namespace registered itself, from
-            `Cluster.user_secrets`. DDPSRUN-USER-SECRET. Passed in rather
+            `Cluster.user_secrets`. HYPERUN-USER-SECRET. Passed in rather
             than read here because this function makes no cluster calls -- it
             is pure, which is what lets every test of it run without a server.
             None means "not looked up", and then only the operator's bindings
@@ -1139,7 +1139,7 @@ def to_pacsjob(
                 "name": binding.secret_name, "key": binding.secret_key
             }
         elif secret_name in registered:
-            # DDPSRUN-USER-SECRET. Registered in this namespace through
+            # HYPERUN-USER-SECRET. Registered in this namespace through
             # `PUT /v1/secrets/{name}`, so the Secret's name is fixed and the
             # key is the environment variable name itself.
             source = {"name": USER_SECRET_NAME, "key": secret_name}
@@ -1184,7 +1184,7 @@ def to_pacsjob(
         # record which of them finished.
         "parallelism": request.parallelism,
         "serviceAccountName": settings.service_account,
-        # DDPSRUN-CONTINUE-FROM. The inherited path when one was asked for, and
+        # HYPERUN-CONTINUE-FROM. The inherited path when one was asked for, and
         # this job's own otherwise. NOT a merge and not a fallback: if the
         # route could not prove the previous job is this caller's, it raises
         # rather than passing None, so a silent "you got a fresh prefix
@@ -1195,7 +1195,7 @@ def to_pacsjob(
     }
     if request.group is not None and (request.group.size > 1
                                       or request.group.mode != "independent"):
-        # DDPSRUN-GROUP. Omitted when it says nothing -- size 1 and
+        # HYPERUN-GROUP. Omitted when it says nothing -- size 1 and
         # `independent` is exactly what no group at all means, and writing it
         # anyway would put a field on every PacsJob for no reason and make a
         # `kubectl get -o yaml` read as though the job were distributed.
@@ -1238,7 +1238,7 @@ def to_pacsjob(
         spec["env"] = env_entries
     if resources:
         spec["resources"] = resources
-    # DDPSRUN-VENDOR-CHOICE. All three placement fields the caller may set, in
+    # HYPERUN-VENDOR-CHOICE. All three placement fields the caller may set, in
     # one dict, so that a job naming vendors but no capacity type still gets a
     # placement block -- before 2026-09-08 the block existed only when a
     # capacity type did, which is why this is not three separate ifs.
@@ -1255,10 +1255,10 @@ def to_pacsjob(
                                request.placement_mode)
     if sent_mode:
         placement["mode"] = sent_mode
-    # DDPSRUN-REGIONS. Dropped until 2026-09-08, exactly as `vendors` was: the CRD
+    # HYPERUN-REGIONS. Dropped until 2026-09-08, exactly as `vendors` was: the CRD
     # has had placement.regions all along and the gateway sent nothing, so every
     # job through this screen got the operator's one default AWS region and there
-    # was no way to ask for another (PACSRUN-AWS-ONE-REGION).
+    # was no way to ask for another (HYPERUN-AWS-ONE-REGION).
     if request.regions:
         placement["regions"] = list(request.regions)
     if placement:
@@ -1292,7 +1292,7 @@ def to_pacsjob(
 # between — a validate that accepts a different shape from a submit eventually
 # passes something the submit refuses.
 #
-# Grep anchor: DDPSRUN-JUDGEMENT-MODELS
+# Grep anchor: HYPERUN-JUDGEMENT-MODELS
 # ---------------------------------------------------------------------------
 
 
@@ -1488,7 +1488,7 @@ class EstimateResponse(BaseModel):
 class PriceView(BaseModel):
     """One row of the catalogue's price table.
 
-    DDPSRUN-PRICES. Until 2026-09-08 this service could only speak about
+    HYPERUN-PRICES. Until 2026-09-08 this service could only speak about
     us-west-2, so "what does an H100 cost in Seoul" had no answer anywhere in
     it -- not in the estimate, not on the screen, not in the CLI. And until
     2026-09-09 it could not speak about RunPod at all beyond the two cards we
@@ -1566,7 +1566,7 @@ class PricesResponse(BaseModel):
     default_region: str = Field(
         description="Where an ask that names NO region actually buys: the "
         "operator's one AWS default. Not a preference -- PACSrun gives an "
-        "unqualified AWS ask exactly one region (PACSRUN-AWS-ONE-REGION)."
+        "unqualified AWS ask exactly one region (HYPERUN-AWS-ONE-REGION)."
     )
     priced_on: str = Field(
         description="When the SkyPilot catalogue was read, which dates the aws "
@@ -1698,7 +1698,7 @@ def vram_gb_for(request: JudgementRequest) -> int | None:
 # is already durable next to the output it describes. See `metrics.py` for why
 # that beats a time series store.
 #
-# Grep anchor: DDPSRUN-METRICS-MODELS
+# Grep anchor: HYPERUN-METRICS-MODELS
 # ---------------------------------------------------------------------------
 
 
@@ -2048,7 +2048,7 @@ class MetricsResponse(BaseModel):
 # their team's numbers is not thereby entitled to read another member's job
 # names or results, which stay namespace-scoped.
 #
-# Grep anchor: DDPSRUN-STATS-MODELS
+# Grep anchor: HYPERUN-STATS-MODELS
 # ---------------------------------------------------------------------------
 
 
@@ -2170,7 +2170,7 @@ class JobSpecResponse(BaseModel):
     SkyPilot's `Show SkyPilot YAML` panel (`sky/dashboard/src/pages/jobs/[job].js`)
     with our object in place of theirs.
 
-    DDPSRUN-SPEC-REDACT: two things are removed on the way out.
+    HYPERUN-SPEC-REDACT: two things are removed on the way out.
 
     1. Every `env` entry carrying a `valueFrom`. The value itself was never in
        the object (that is the point of `secretKeyRef`), but the Kubernetes

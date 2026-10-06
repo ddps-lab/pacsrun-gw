@@ -15,7 +15,7 @@ name, no `PACSRUN_*` variable. Those are internal (`docs/03-api.md`, first rule
 of the "응답 규칙" / response-rules section) and this endpoint has no token, so
 it is the most public thing here.
 
-Grep anchor: DDPSRUN-EXPLAIN
+Grep anchor: HYPERUN-EXPLAIN
 """
 
 EXPLAIN_TEXT = """\

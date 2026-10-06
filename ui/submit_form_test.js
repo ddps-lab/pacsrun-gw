@@ -326,11 +326,11 @@ c = parseCompare(undefined);
 check(c.raw === "" && !c.winner, "and an absent message does not throw");
 
 // ---------------------------------------------------------------------------------------------
-// DDPSRUN-REGIONS. Blank is not "anywhere", and the request has to say so.
+// HYPERUN-REGIONS. Blank is not "anywhere", and the request has to say so.
 //
 // WHY THIS IS THE MOST EXPENSIVE FIELD ON THE FORM TO GET WRONG. PACSrun gives an AWS ask that
 // names no region exactly ONE region -- the operator's default (placement.go:376,
-// PACSRUN-AWS-ONE-REGION). Until 2026-09-08 the screen sent nothing at all, so every job it ever
+// HYPERUN-AWS-ONE-REGION). Until 2026-09-08 the screen sent nothing at all, so every job it ever
 // submitted ran in us-west-2 and no one could ask otherwise. The H100 is $6.88/hour there and
 // $8.60 in ap-northeast-1.
 // ---------------------------------------------------------------------------------------------
@@ -362,7 +362,7 @@ check(JSON.stringify(readForm().regions) === '["AWS/US-East-1"]',
 setForm({ image: IMAGE, regions: "" });
 
 // ---------------------------------------------------------------------------------------------
-// DDPSRUN-REGISTER. The address on the first-time visitor's screen.
+// HYPERUN-REGISTER. The address on the first-time visitor's screen.
 //
 // WHY THIS IS TESTED AT ALL, given it only fills a label: getting it wrong produces a screen
 // that says "Signed in as an address we cannot read" to somebody whose sign-in just worked,
@@ -404,7 +404,7 @@ check(emailInToken(fakeToken({ email: "\uc5f0\uad6c\uc6d0@example.ac.kr" })) ===
       "a non-ASCII address survives the base64 decode");
 
 // ---------------------------------------------------------------------------------------------
-// DDPSRUN-UI-STALE-PANELS. A source check, not a behaviour one: drawMetrics returns early on a
+// HYPERUN-UI-STALE-PANELS. A source check, not a behaviour one: drawMetrics returns early on a
 // 404 without touching its panels, so the reset has to happen in drawDetail. On 2026-09-09
 // `c-iter2-base` -- a job with no container, whose own facts row read "GPU: not yet known" --
 // showed "360 samples, 09-04 16:39 ~ 09-04 22:39" under it, four days of another job's readings
@@ -515,7 +515,7 @@ check(SRC.includes("`hyperun login --server ${store.server}`"),
       "app.js fills that line with this deployment's own address rather than a placeholder");
 
 // ---------------------------------------------------------------------------------------------
-// DDPSRUN-SCRIPT-REUSE. The submit screen offers the scripts already submitted. Source checks:
+// HYPERUN-SCRIPT-REUSE. The submit screen offers the scripts already submitted. Source checks:
 // the function is small and its one rule is what it must NOT touch.
 // ---------------------------------------------------------------------------------------------
 const reuse = SRC.slice(SRC.indexOf("async function drawScriptReuse"),
@@ -538,7 +538,7 @@ check(reuse.includes('call("/v1/scripts")'),
       "the list is the same /v1/scripts the Scripts screen reads, so the two cannot disagree");
 
 // ---------------------------------------------------------------------------------------------
-// DDPSRUN-IMAGES-TRIM and DDPSRUN-TRAINING-SIZE. Both are about what the form shows first, so
+// HYPERUN-IMAGES-TRIM and HYPERUN-TRAINING-SIZE. Both are about what the form shows first, so
 // both are source checks over the shipped files.
 // ---------------------------------------------------------------------------------------------
 const picker = SRC.slice(SRC.indexOf("function renderImagePicker"),
@@ -584,7 +584,7 @@ check(SRC.includes('$("f-advanced")?.querySelector(".acc-note")'),
       + "reader who has folded the section can still see it");
 
 // ---------------------------------------------------------------------------------------------
-// DDPSRUN-UI-STALE-TAB. A behaviour check on the real function: a tab that never reloads runs
+// HYPERUN-UI-STALE-TAB. A behaviour check on the real function: a tab that never reloads runs
 // old code forever and looks normal doing it, which cost two exchanges on 2026-09-11.
 // ---------------------------------------------------------------------------------------------
 {
@@ -633,7 +633,7 @@ check(/url\.searchParams\.set\("v"/.test(SRC),
 // index.html, because both are decided before any handler runs.
 // ---------------------------------------------------------------------------------------------
 
-// DDPSRUN-CAPACITY-DEFAULT. Neither the server nor the CLI has a default -- capacity_type is
+// HYPERUN-CAPACITY-DEFAULT. Neither the server nor the CLI has a default -- capacity_type is
 // None in SubmitRequest and --capacity-type is one you must pass -- so the box's default is
 // this screen's own decision, and a reclaimed machine costs a run already hours in.
 check(/<option value="on-demand" selected>/.test(HTML),
@@ -643,7 +643,7 @@ check(/<option value="on-demand" selected>/.test(HTML),
 check(SRC.includes('$("f-capacity").value = "on-demand"'),
       "and Clear lands on that same default, rather than silently putting the form back on spot");
 
-// DDPSRUN-PLACEMENT-DEFAULT. `ordered` stops at the first candidate that answers, so accepting it
+// HYPERUN-PLACEMENT-DEFAULT. `ordered` stops at the first candidate that answers, so accepting it
 // meant no other price was ever looked at. The option is still there and its value is still the
 // empty string, which is what makes readForm send no `placement_mode` for it.
 check(/<option value="cheapest" selected>/.test(HTML),
@@ -665,7 +665,7 @@ check(SRC.includes('$("f-mode").value = "cheapest"'),
         + "the default that reaches the PacsJob");
 }
 
-// DDPSRUN-IMAGES-NO-DATALIST. The Image box's dropdown listed full ECR addresses, every one of
+// HYPERUN-IMAGES-NO-DATALIST. The Image box's dropdown listed full ECR addresses, every one of
 // them beginning with the same twelve-digit account id. The picker below shows the repository and
 // the tag, which are the parts that differ.
 check(!/id="f-image-list"/.test(HTML) && !/list="f-image-list"/.test(HTML),
@@ -677,7 +677,7 @@ check(!SRC.includes('$("f-image-list")'),
 check(/id="f-image-toggle"/.test(HTML) && /id="f-image-picker"/.test(HTML),
       "Browse this lab's images and its picker are still the way in");
 
-// DDPSRUN-BRAND. The product is called hyperun: the command is `pip install hyperun`, the plugin
+// HYPERUN-BRAND. The product is called hyperun: the command is `pip install hyperun`, the plugin
 // is `/plugin install hyperun`, and the tab title has said hyperun since the rename. The two
 // places a person actually reads -- the bar across the top and the sign-in heading -- still said
 // ddpsrun, so the screen introduced itself by a name that appears nowhere else.

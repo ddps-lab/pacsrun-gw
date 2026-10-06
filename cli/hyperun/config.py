@@ -36,7 +36,7 @@ Neither fallback is dated for removal here. Deleting them is a decision about
 how long the old spelling has to keep working, which belongs to whoever knows
 who still has it exported.
 
-Grep anchor: DDPSRUN-CLI-CONFIG
+Grep anchor: HYPERUN-CLI-CONFIG
 """
 
 from __future__ import annotations

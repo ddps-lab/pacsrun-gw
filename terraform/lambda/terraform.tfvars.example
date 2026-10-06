@@ -40,14 +40,14 @@ secret_bindings = {
 // exists -- once it does, an empty value here deletes the deployed cors block.
 cors_allow_origins = ["https://<DISTRIBUTION>.cloudfront.net"]
 
-// DDPSRUN-COGNITO-WIRING. All four together or none: a pool id with no client id
+// HYPERUN-COGNITO-WIRING. All four together or none: a pool id with no client id
 // refuses every token. `cognito_region` is not a variable -- main.tf derives it
 // from `region` when the pool id is non-empty.
 cognito_pool_id      = "<REGION>_<POOLID>"
 cognito_client_id    = "<CLIENT_ID>"
 cognito_login_domain = "https://<PREFIX>.auth.<REGION>.amazoncognito.com"
 
-// DDPSRUN-REGISTER. Where "somebody signed in with Google and has no namespace"
+// HYPERUN-REGISTER. Where "somebody signed in with Google and has no namespace"
 // mail goes. Empty turns the feature off cleanly: no button on the screen, no
 // IAM permission created, and the screen tells the person to find an operator
 // another way.

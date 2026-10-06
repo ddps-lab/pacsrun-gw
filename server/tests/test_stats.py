@@ -89,7 +89,7 @@ def test_a_machine_we_have_never_rented_has_no_price_rather_than_zero():
 
 
 def test_a_group_priced_job_needs_no_price_table():
-    # PACSRUN-GROUP-PRICE: PACSrun stamps each offering group with the price
+    # HYPERUN-GROUP-PRICE: PACSrun stamps each offering group with the price
     # its solve stated, machine count already inside. Any vendor works — this
     # instance type appears in no local table, and the sum is still exact.
     j = job(instance="g6.2xlarge")
@@ -260,7 +260,7 @@ def test_a_job_with_no_vendor_that_never_ran_is_in_no_row_at_all():
 def test_a_named_vendor_keeps_its_row_even_with_no_clock():
     # ★ THE FIRST ATTEMPT AT THE RULE ABOVE DROPPED THESE TOO, and that deleted
     # `gcp` from the Per vendor table outright: its one job finished before
-    # PACSRUN-JOB-CLOCK (2026-09-01) and carries a vendor with no startedAt,
+    # HYPERUN-JOB-CLOCK (2026-09-01) and carries a vendor with no startedAt,
     # as do eleven runpod jobs. We know exactly who sold those machines, so a
     # row reading 0.0 hours is the true answer and no row is not.
     old_gcp = job(phase="Succeeded", started=None)
