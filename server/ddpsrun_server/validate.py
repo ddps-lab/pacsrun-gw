@@ -438,7 +438,12 @@ DISTRIBUTED_LAUNCHERS = (
 # `internal/controller/hyperunjob_controller.go` (HYPERUN-GROUP-COORDS) and
 # `driver/aws/driver.py` (HYPERUN-GROUP-HOSTNET). A script that reads NONE of
 # these cannot know where its rendezvous is.
+# Both spellings count: the runner sets HYPERUN_<X> and, for these, PACSRUN_<X> too (PACSrun
+# driver/common/oldnames.py), so a script written before the rename still finds its rendezvous.
+# The new names come first because the messages below quote the first two.
 GROUP_COORDS = (
+    "HYPERUN_MASTER_ADDR", "HYPERUN_MASTER_PORT",
+    "HYPERUN_GROUP_RANK", "HYPERUN_GROUP_SIZE", "HYPERUN_GROUP_INDEX",
     "PACSRUN_MASTER_ADDR", "PACSRUN_MASTER_PORT",
     "PACSRUN_GROUP_RANK", "PACSRUN_GROUP_SIZE", "PACSRUN_GROUP_INDEX",
 )
@@ -463,7 +468,7 @@ def check_distributed(script: str | None, group_size: int, group_mode: str,
     MODEL. Nothing here knows whether the parallelism strategy is a good one.
 
       the script never reads the coordinates   PACSrun hands them over as
-                                               PACSRUN_MASTER_ADDR and friends
+                                               HYPERUN_MASTER_ADDR and friends
                                                and translates nothing: torchrun
                                                wants --master_addr, another
                                                launcher wants something else,
@@ -518,8 +523,8 @@ def check_distributed(script: str | None, group_size: int, group_mode: str,
               "those and translates nothing, so every rank would start alone and "
               "wait for a peer that is not coming -- with no error and no output.",
             "read them and pass them to your launcher, e.g. `torchrun "
-            "--nnodes $PACSRUN_GROUP_SIZE --node_rank $PACSRUN_GROUP_RANK "
-            "--master_addr $PACSRUN_MASTER_ADDR --master_port $PACSRUN_MASTER_PORT "
+            "--nnodes $HYPERUN_GROUP_SIZE --node_rank $HYPERUN_GROUP_RANK "
+            "--master_addr $HYPERUN_MASTER_ADDR --master_port $HYPERUN_MASTER_PORT "
             "--nproc_per_node <GPUs per pod> train.py`.",
         ))
 
@@ -553,7 +558,7 @@ def check_distributed(script: str | None, group_size: int, group_mode: str,
             f"the launcher asks for {nnodes.group(1)} node(s) and one group is "
             f"{group_size} pod(s). Every rank has to agree on the world size or "
             f"the rendezvous never completes.",
-            f"use --nnodes $PACSRUN_GROUP_SIZE so the two cannot drift.",
+            f"use --nnodes $HYPERUN_GROUP_SIZE so the two cannot drift.",
         ))
     return findings
 
@@ -569,12 +574,12 @@ def check_results_leave(script: str | None) -> list[Finding]:
 
     THREE WAYS OUT COUNT, because all three are real:
 
-      `PACSRUN_ARTIFACT=`   the contract (script-contract 13). Works on every
+      `HYPERUN_ARTIFACT=`   the contract (script-contract 13). Works on every
                             vendor.
       `aws s3 cp` and kin   the workload uploading with the credential it was
                             given. Still works, and is what AWS/GCP jobs do
                             until the k3s fetch is deployed.
-      `$PACSRUN_RESULT_PATH` a script that reads the destination and does
+      `$HYPERUN_RESULT_PATH` a script that reads the destination and does
                             something with it that we cannot name -- boto3, a
                             framework's own writer. Its presence is enough:
                             guessing further would produce false alarms.
@@ -589,20 +594,21 @@ def check_results_leave(script: str | None) -> list[Finding]:
     """
     if not script:
         return []
-    ways_out = ("PACSRUN_ARTIFACT", "PACSRUN_RESULT_PATH", "aws s3 ", "gsutil ",
-                "s3.upload", "upload_file", "boto3")
+    ways_out = ("HYPERUN_ARTIFACT", "HYPERUN_RESULT_PATH",
+                "PACSRUN_ARTIFACT", "PACSRUN_RESULT_PATH",      # a script from before the rename
+                "aws s3 ", "gsutil ", "s3.upload", "upload_file", "boto3")
     if any(way in script for way in ways_out):
         return []
     return [
         Finding(
             WARNING, "nothing-leaves-the-container",
             "the script mentions no way of getting anything out: no "
-            "`PACSRUN_ARTIFACT=` line, no `$PACSRUN_RESULT_PATH`, no upload. The "
+            "`HYPERUN_ARTIFACT=` line, no `$HYPERUN_RESULT_PATH`, no upload. The "
             "machine is deleted seconds after the workload exits, and its disk "
             "goes with it, so a job like this can spend its whole runtime and be "
             "marked Succeeded with an empty result prefix.",
             "announce each finished file with "
-            "`echo \"PACSRUN_ARTIFACT=/path/to/file\"` (script-contract 13). If "
+            "`echo \"HYPERUN_ARTIFACT=/path/to/file\"` (script-contract 13). If "
             "the output really is only the log, that is fine -- the log is "
             "relayed and kept, and this warning is one to dismiss out loud.",
         )
@@ -905,7 +911,7 @@ def check_gpu_is_buyable(gpu_name: str | None, gpu_count: int,
                 f"{gpu_name!r} is the name nvidia-smi prints. Capacity is asked "
                 f"for by the catalogue's name, and nothing will match this one.",
                 f"Ask for {suggestion!r}. The nvidia-smi spelling is the right one "
-                f"for reading your own PACSRUN_GPU= lines, and the wrong one here.",
+                f"for reading your own HYPERUN_GPU= lines, and the wrong one here.",
             ))
         else:
             known = ", ".join(c.name for c in catalogue.CHOOSABLE)

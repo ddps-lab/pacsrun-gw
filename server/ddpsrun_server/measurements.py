@@ -105,7 +105,7 @@ class Gpu:
 # There are at least three vocabularies for the same card and they are not
 # interchangeable:
 #
-#   nvidia-smi   "NVIDIA L40S", "NVIDIA A100-SXM4-80GB"   what PACSRUN_GPU= carries
+#   nvidia-smi   "NVIDIA L40S", "NVIDIA A100-SXM4-80GB"   what HYPERUN_GPU= carries
 #   catalogue    "L40S", "A100-80GB"                      what a placement ask must say
 #   RunPod       "A100 PCIe", "A100 SXM"                   RunPod's own names
 #
@@ -274,7 +274,7 @@ def billed_pod_rate(gpu_name: str, cards: int) -> tuple[float, str] | None:
 # operator's own default. PACSrun's placement.go:376 says so --
 # "For AWS it means the operator's ONE --region default" (grep:
 # HYPERUN-AWS-ONE-REGION) -- and this deployment's operator sets
-# PACSRUN_AWS_HOME_REGION=us-west-2. So DEFAULT_AWS_REGION below is not a
+# HYPERUN_AWS_HOME_REGION=us-west-2. So DEFAULT_AWS_REGION below is not a
 # preference, it is where an unqualified ask really buys, and pricing an
 # unqualified ask at the globally cheapest region would be a wrong number
 # dressed as a helpful one.

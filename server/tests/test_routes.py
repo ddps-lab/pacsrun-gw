@@ -773,18 +773,21 @@ def test_explain_needs_no_token_and_names_no_internals(client):
     for internal in ("namespace", "ServiceAccount", "kubectl", "<RESULT_BUCKET>"):
         assert internal not in text
 
-    # PACSRUN_ARTIFACT IS THE ONE EXCEPTION, and it is not an internal name at
+    # HYPERUN_ARTIFACT IS THE ONE EXCEPTION, and it is not an internal name at
     # all: it is the line a job's own script has to PRINT to get its results
     # collected, so a document that hides it hides the protocol. It was hidden
     # until 2026-09-08, when a session with only the repository and this tool
     # got a 21-hour job to the point of submission without ever learning it —
-    # and would have written to S3 directly and lost everything.
-    assert "PACSRUN_ARTIFACT" in text
-    # No OTHER PACSRUN_ variable belongs here: those are the platform's own
-    # (PACSRUN_FETCH_MODE, PACSRUN_DISK_GB) and nobody submitting a job sets one.
+    # and would have written to S3 directly and lost everything. (It was spelled
+    # PACSRUN_ARTIFACT then, and that spelling is still read.)
+    assert "HYPERUN_ARTIFACT" in text
+    # No OTHER runner variable belongs here, under either spelling: those are the
+    # platform's own (HYPERUN_FETCH_MODE, HYPERUN_DISK_GB) and nobody submitting a
+    # job sets one.
     others = [
         word for word in text.split()
-        if word.startswith("PACSRUN_") and not word.startswith("PACSRUN_ARTIFACT")
+        if word.startswith(("HYPERUN_", "PACSRUN_"))
+        and not word.startswith(("HYPERUN_ARTIFACT", "PACSRUN_ARTIFACT"))
     ]
     assert others == [], others
 

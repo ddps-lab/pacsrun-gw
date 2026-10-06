@@ -487,11 +487,19 @@ def test_a_distributed_group_that_reads_none_of_the_coordinates_is_blocking():
     finding = [f for f in result if f.code == "group-coords-unread"]
     assert len(finding) == 1
     assert finding[0].level == v.ERROR
-    assert "PACSRUN_MASTER_ADDR" in finding[0].message
-    assert "torchrun --nnodes $PACSRUN_GROUP_SIZE" in finding[0].fix
+    assert "HYPERUN_MASTER_ADDR" in finding[0].message
+    assert "torchrun --nnodes $HYPERUN_GROUP_SIZE" in finding[0].fix
+
+
+def test_reading_the_coordinates_under_the_new_names_is_enough_to_pass():
+    script = ("torchrun --nnodes $HYPERUN_GROUP_SIZE --node_rank $HYPERUN_GROUP_RANK "
+              "--master_addr $HYPERUN_MASTER_ADDR --master_port $HYPERUN_MASTER_PORT "
+              "--nproc_per_node 4 train.py")
+    assert v.check_distributed(script, 2, "distributed", 4, 4) == []
 
 
 def test_reading_the_coordinates_is_enough_to_pass():
+    """The PACSRUN_ spelling, from a script written before the rename: the runner still sets it."""
     script = ("torchrun --nnodes $PACSRUN_GROUP_SIZE --node_rank $PACSRUN_GROUP_RANK "
               "--master_addr $PACSRUN_MASTER_ADDR --master_port $PACSRUN_MASTER_PORT "
               "--nproc_per_node 4 train.py")

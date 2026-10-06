@@ -196,7 +196,7 @@ def nvidia_smi_spelling(name: str) -> str | None:
 
     WHY THIS EXISTS RATHER THAN JUST ACCEPTING BOTH. Accepting both would hide
     the difference, and the difference is real: the same job reads its own
-    `PACSRUN_GPU=` lines in nvidia-smi's vocabulary and asks for capacity in the
+    `HYPERUN_GPU=` lines in nvidia-smi's vocabulary and asks for capacity in the
     catalogue's. A caller who writes the wrong one should be told which one to
     write, not quietly corrected.
 

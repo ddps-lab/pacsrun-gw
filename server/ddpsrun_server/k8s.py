@@ -59,10 +59,11 @@ from .config import (
 EXPIRY_ANNOTATION_PREFIX = "hyperun.io/expires-"
 
 # The driver prints its own bookkeeping on the same stdout as the workload.
-# `PACSRUN_KEEPALIVE` is emitted every 30 seconds for the whole life of the job
+# `HYPERUN_KEEPALIVE` is emitted every 30 seconds for the whole life of the job
 # purely so the log stream stays open; a user reading their training output does
 # not want one of those between every progress line.
-_KEEPALIVE_LINE = re.compile(r"^\s*PACSRUN_KEEPALIVE\s*$")
+# Either prefix: the driver spells it HYPERUN_ since the hyperun cluster, PACSRUN_ before.
+_KEEPALIVE_LINE = re.compile(r"^\s*(?:HYPERUN|PACSRUN)_KEEPALIVE\s*$")
 # The GPU telemetry line, also every 30 seconds, also dropped whole. It is not
 # the user's output: it exists for /v1/jobs/{id}/metrics, which reads the same
 # log unredacted. Masking it instead of dropping it left a line reading
@@ -81,12 +82,12 @@ _KEEPALIVE_LINE = re.compile(r"^\s*PACSRUN_KEEPALIVE\s*$")
 # real ones. That is precisely the noise the paragraph above says this rule exists to prevent, and
 # it is the second thing that change broke by adding a line shape without telling the code that
 # reads line shapes. `/v1/jobs/{id}/metrics` reads the log UNREDACTED and is unaffected either way.
-_GPU_LINE = re.compile(r"^\s*PACSRUN_GPU(_CARD|_HEALTH|_HEALTH_CARD)?=")
-# Any other PACSRUN_* token is an internal name (`docs/03-api.md`, first rule
+_GPU_LINE = re.compile(r"^\s*(?:HYPERUN|PACSRUN)_GPU(_CARD|_HEALTH|_HEALTH_CARD)?=")
+# Any other HYPERUN_* or PACSRUN_* token is an internal name (`docs/03-api.md`, first rule
 # of the "응답 규칙" / response-rules section). The line around it may be the
 # user's own output, so the token is masked
 # and the line kept, rather than the line being dropped.
-_INTERNAL_TOKEN = re.compile(r"\bPACSRUN_[A-Z0-9_]+\b")
+_INTERNAL_TOKEN = re.compile(r"\b(?:HYPERUN|PACSRUN)_[A-Z0-9_]+\b")
 
 
 
@@ -762,7 +763,7 @@ class Cluster:
         """Read a time window of a job's log, unredacted.
 
         WHY UNREDACTED, when `job_logs` masks these very lines. The metrics
-        endpoint exists precisely to read `PACSRUN_GPU=`, which the user-facing
+        endpoint exists precisely to read `HYPERUN_GPU=`, which the user-facing
         relay masks as an internal name. The two callers want opposite things
         from the same stream, so the redaction belongs at the point of use
         rather than here.

@@ -52,7 +52,9 @@ from dataclasses import dataclass, field
 # old script that still has its own loop is not broken -- two watchers print two
 # lines per interval and `scan` takes the latest.
 GPU_LINE = re.compile(
-    r"PACSRUN_GPU=(\d+),(\d+),(\d+),(\d+),([\d.]+)"
+    # Either prefix: the driver's watcher prints HYPERUN_ since the hyperun cluster, and a
+    # script written before it may still print PACSRUN_ from its own loop.
+    r"(?:HYPERUN|PACSRUN)_GPU=(\d+),(\d+),(\d+),(\d+),([\d.]+)"
 )
 
 # THE PER-CARD LINE, sent since 2026-09-08 by driver/common/gpu-watch.sh — one
@@ -69,7 +71,7 @@ GPU_LINE = re.compile(
 # still arrives on BOTH lines (the watcher sends the old one for compatibility);
 # `scan` keys by index, so the two land on the same card and cannot double it.
 GPU_CARD_LINE = re.compile(
-    r"PACSRUN_GPU_CARD=(\d+),(\d+),(\d+),(\d+),(\d+),([\d.]+)"
+    r"(?:HYPERUN|PACSRUN)_GPU_CARD=(\d+),(\d+),(\d+),(\d+),(\d+),([\d.]+)"
 )
 
 # What the training library prints on its own. Two shapes have to be read,
@@ -111,7 +113,7 @@ PROGRESS_LINE = re.compile(
 # would mean the server decides what a researcher may measure. The only two keys
 # this file knows are `_series`, which says WHICH training a row belongs to, and
 # the step field, which orders them.
-METRIC_LINE = re.compile(r"PACSRUN_METRIC=(?P<body>\{.*\})\s*$")
+METRIC_LINE = re.compile(r"(?:HYPERUN|PACSRUN)_METRIC=(?P<body>\{.*\})\s*$")
 
 # The key metric-watch.sh puts the series label under. Anything else in the row
 # is the training's own.
@@ -699,7 +701,7 @@ def scan(lines: object, window_seconds: int) -> Metrics:
     # job. It is the platform's job now (see GPU_LINE above), so "no readings" no
     # longer means "you forgot". It means the pod has no card, the image has no
     # nvidia-smi, or nothing has run yet -- and the watcher says WHICH, in a
-    # PACSRUN_GPU_WATCH line sitting in this same log. Pointing at that line is more
+    # HYPERUN_GPU_WATCH line sitting in this same log. Pointing at that line is more
     # useful than pointing at a document, because it is evidence about THIS run.
     # Fold the old-shape readings in only when no per-card line was seen (the
     # reasoning is above, where they were collected), so that from here on
@@ -713,14 +715,14 @@ def scan(lines: object, window_seconds: int) -> Metrics:
     if not samples and progress is None:
         note = (
             "no GPU readings and no progress lines in this window. The job may not "
-            "have started computing yet. If it has, look for a PACSRUN_GPU_WATCH "
+            "have started computing yet. If it has, look for a HYPERUN_GPU_WATCH "
             "line in the log: it says whether the GPU watcher started, or found no "
             "nvidia-smi in the image."
         )
     elif not samples:
         note = (
             "training progress is here but no GPU readings are. Look for a "
-            "PACSRUN_GPU_WATCH line in the log: the usual causes are an image with "
+            "HYPERUN_GPU_WATCH line in the log: the usual causes are an image with "
             "no nvidia-smi, or a job that asked for no GPU."
         )
     elif progress is None:

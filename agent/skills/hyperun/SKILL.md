@@ -92,7 +92,7 @@ Its rules, so you know which to open:
 | 10 | ask the user for spot vs on-demand, with the numbers | always |
 | 11 | ask the server for the rest (`estimate`, `validate`) | always |
 | 12 | a big script or several files do not go in `args` | script > ~50 KB |
-| 13 | finished results leave through `PACSRUN_ARTIFACT=`; checkpoints are written directly | always |
+| 13 | finished results leave through `HYPERUN_ARTIFACT=`; checkpoints are written directly | always |
 | 14 | a second AWS account gets its own variable names | Bedrock/judge jobs |
 | 15 | disk, `/dev/shm` and NCCL P2P are printed once and read after | multi-card jobs |
 | 16 | pass our group coordinates to your launcher yourself | distributed jobs |
@@ -258,7 +258,7 @@ it out.
 
 **Distributed jobs: pass `--group-size` and `--group-mode distributed`.**
 Without them validate cannot judge the wiring, and four checks are waiting for
-it: whether the script reads `PACSRUN_MASTER_ADDR` at all (an error — every rank
+it: whether the script reads `HYPERUN_MASTER_ADDR` at all (an error — every rank
 would wait for a rendezvous nobody hosts, with no error and no output), whether
 there is a launcher, and whether `--nproc_per_node` and `--nnodes` agree with
 the cards and the group size.

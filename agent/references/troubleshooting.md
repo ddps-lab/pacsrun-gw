@@ -55,7 +55,7 @@ same time.
 
 ## The job is `Succeeded` but S3 is empty
 
-**There are two causes. Look at this one first: the script did not print `PACSRUN_ARTIFACT`.**
+**There are two causes. Look at this one first: the script did not print `HYPERUN_ARTIFACT`.**
 In fetch mode that line is the only way results get out (script-contract section 13), and without
 it the job ends `Succeeded` with no problem at all — the hours it burned simply vanish. Search the
 driver log for `fetched`; if there is none, this is the case. On 2026-09-08 a 21-hour job stood one
@@ -67,7 +67,7 @@ upload its own results at the end. Since PACSrun #63 and #64 (grep `HYPERUN-CRED
 container's credential is a file the driver replaces before it expires, and it may write the job's
 own result prefix, so this cause is gone on AWS, Shadeform and RunPod. On GCP it is not checked.
 
-Collection by the driver is still the operator's `PACSRUN_FETCH_MODE` (`fetchMode` at
+Collection by the driver is still the operator's `HYPERUN_FETCH_MODE` (`fetchMode` at
 `PACSrun/internal/controller/vendorpod.go:1053`), a cluster-wide switch that cannot be turned on and
 off per job, and it is on. It no longer makes the container's credential read-only -- that arm was
 removed on 2026-09-14 (`PACSrun/driver/runpod/driver.py`, `_session_policy`).
@@ -117,7 +117,7 @@ credential may now write the job's own result prefix. So this line now means one
 | where | why |
 |---|---|
 | in the first seconds of the run | the driver has not written the credentials file yet -- wait for it (script-contract section 17) |
-| a key outside `$PACSRUN_RESULT_PATH` | the credential writes the job's own prefix and nothing else |
+| a key outside `$HYPERUN_RESULT_PATH` | the credential writes the job's own prefix and nothing else |
 | a GCP job | whether the GCP driver writes the file is not checked |
 
 ---

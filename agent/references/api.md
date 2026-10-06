@@ -218,7 +218,7 @@ HYPERUN-GROUP. Do this job's pods talk to each other.
 
 | field | required | description |
 |---|---|---|
-| `mode` |  | `independent` -- the pods never talk, identical to sending no group at all. `distributed` -- they form one process group: every pod is told its peers' addresses through PACSRUN_MASTER_ADDR / PACSRUN_MASTER_PORT and PACSRUN_GROUP_RANK, and NONE starts its workload until the whole group has a machine. Your script has to read those and hand them to its launcher; nothing translates them for you. |
+| `mode` |  | `independent` -- the pods never talk, identical to sending no group at all. `distributed` -- they form one process group: every pod is told its peers' addresses through HYPERUN_MASTER_ADDR / HYPERUN_MASTER_PORT and HYPERUN_GROUP_RANK, and NONE starts its workload until the whole group has a machine. Your script has to read those and hand them to its launcher; nothing translates them for you. |
 | `size` |  | How many pods form one group. `parallelism` divided by this is the number of groups, so parallelism 6 with size 2 is three groups of two. |
 
 ### HTTPValidationError
