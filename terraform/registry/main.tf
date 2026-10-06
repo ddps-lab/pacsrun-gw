@@ -220,6 +220,19 @@ data "aws_iam_policy_document" "github_permissions" {
     }
   }
 
+  // `aws eks update-kubeconfig` in the release's roll step. The first gateway role got this by
+  // hand (DescribeThisClusterOnly on the pacsrun cluster); a variable makes the second one's
+  // reproducible. Its EKS access entry, which lets kubectl in, is the cluster's to grant.
+  dynamic "statement" {
+    for_each = var.eks_cluster_name == "" ? [] : [1]
+    content {
+      sid       = "DescribeThisClusterOnly"
+      effect    = "Allow"
+      actions   = ["eks:DescribeCluster"]
+      resources = ["arn:aws:eks:${var.region}:${data.aws_caller_identity.current.account_id}:cluster/${var.eks_cluster_name}"]
+    }
+  }
+
   statement {
     sid = "EcrPushToThisRepositoryOnly"
     actions = [
