@@ -43,7 +43,7 @@ spec:
               value: <RESULT_BUCKET>
             - name: DDPSRUN_RESULT_PREFIX
               value: hyperun/
-            # Must match PACSrun's PACSRUN_RESULT_PREFIX_TEMPLATE, which checks
+            # Must match PACSrun's HYPERUN_RESULT_PREFIX_TEMPLATE, which checks
             # the same prefix a second time on the cluster side. If the two
             # disagree every job is refused at admission.
             # The ServiceAccount the DRIVER pod runs as, and it must be the one PACSrun's

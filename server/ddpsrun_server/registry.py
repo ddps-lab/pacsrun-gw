@@ -29,7 +29,7 @@ WHAT IT DOES NOT DO, and why each is deliberate.
   hiding direction is worse than the noise -- a researcher who cannot find their own image goes
   back to typing it. Every caller here is a lab member holding a token this deployment issued.
 
-  IT DOES NOT LIST AMIs. There is no equivalent for the machine image: PACSRUN_AWS_AMI holds an
+  IT DOES NOT LIST AMIs. There is no equivalent for the machine image: HYPERUN_AWS_AMI holds an
   SSM public-parameter PATH, not an id, and that path resolves to a different ami-* in every
   region on purpose (awsdriverpod.go, awsAMIEnv). There is nothing to enumerate, and a job does
   not choose one anyway -- the driver resolves it per region at rent time.

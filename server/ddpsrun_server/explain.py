@@ -11,7 +11,7 @@ order. It does not assume the reader knows Kubernetes, PACSrun, or that a GPU is
 being rented from anybody.
 
 WHAT IT MUST NOT SAY. No namespace names, no ServiceAccount names, no bucket
-name, no `PACSRUN_*` variable. Those are internal (`docs/03-api.md`, first rule
+name, no `HYPERUN_*` variable. Those are internal (`docs/03-api.md`, first rule
 of the "응답 규칙" / response-rules section) and this endpoint has no token, so
 it is the most public thing here.
 
@@ -99,7 +99,7 @@ RESULTS
   HOW A FILE GETS THERE, and this is the whole protocol: print one line on
   stdout for each finished file,
 
-      PACSRUN_ARTIFACT=/root/work/adapter.tar.gz
+      HYPERUN_ARTIFACT=/root/work/adapter.tar.gz
 
   and the driver collects it. Print it AFTER the file is closed, or a truncated
   one is collected, and do not let the script end until the file is in the

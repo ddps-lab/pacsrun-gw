@@ -61,7 +61,10 @@ SCRIPT_MAX_CHARS = 256 * 1024
 # refuses them (`internal/controller/hyperunjob_controller.go`, HYPERUN-ENV-GUARD),
 # but rejecting here produces a message that names the offending variable
 # instead of a controller error the user never sees.
-RESERVED_ENV_PREFIX = "PACSRUN_"
+# Both spellings: the runner hands every workload HYPERUN_<X> and, for the names a script reads,
+# PACSRUN_<X> as well (PACSrun driver/common/oldnames.py), so a user value under either would
+# collide with one the runner sets.
+RESERVED_ENV_PREFIXES = ("HYPERUN_", "PACSRUN_")
 
 # Recorded on the object so that stage 3 can compare what `/estimate` predicted
 # with what the job actually took. Nothing reads it yet.
@@ -105,8 +108,8 @@ class GroupRequest(BaseModel):
         pattern="^(independent|distributed)$",
         description="`independent` -- the pods never talk, identical to sending "
         "no group at all. `distributed` -- they form one process group: every "
-        "pod is told its peers' addresses through PACSRUN_MASTER_ADDR / "
-        "PACSRUN_MASTER_PORT and PACSRUN_GROUP_RANK, and NONE starts its "
+        "pod is told its peers' addresses through HYPERUN_MASTER_ADDR / "
+        "HYPERUN_MASTER_PORT and HYPERUN_GROUP_RANK, and NONE starts its "
         "workload until the whole group has a machine. Your script has to read "
         "those and hand them to its launcher; nothing translates them for you.",
     )
@@ -175,7 +178,7 @@ class GpuRequest(BaseModel):
 # It was written on 2026-09-10, before the hold (HYPERUN-K3S-FETCH-HOLD, PACSrun d3c611e) had
 # run, and three agent-facing sentences were copied from it without checking. The runs since:
 # job-c5f6c3b2ccc6 (2026-09-17, massedcompute_A6000) announced demo-out.tar.gz with
-# PACSRUN_ARTIFACT alone -- no `aws s3 cp`, no boto3 -- and it is in its result path;
+# HYPERUN_ARTIFACT alone -- no `aws s3 cp`, no boto3 -- and it is in its result path;
 # ckpt-livetest (2026-09-12) and market64-exp0 (2026-09-13) brought back 213 MB and 369 MB
 # checkpoints on L40S. So there is nothing about Shadeform a user has to be warned of.
 RUNNABLE_VENDORS: tuple[str, ...] = ("aws", "runpod", "shadeform")
@@ -343,7 +346,7 @@ class SubmitRequest(BaseModel):
         # HYPERUN-CONTINUE-FROM. A multi-iteration job cannot chain its own
         # rounds today: each submit gets a fresh `resultPath` from its own job
         # id, the wrapper's resume step reads only its own
-        # `PACSRUN_RESULT_PATH`, and the container's credential is scoped to
+        # `HYPERUN_RESULT_PATH`, and the container's credential is scoped to
         # that one prefix -- so iteration 2 cannot see iteration 1's
         # checkpoint even though the same person submitted both. Naming the
         # previous job is the whole fix: the server copies ITS resultPath, so
@@ -394,9 +397,10 @@ class SubmitRequest(BaseModel):
         # ENTRYPOINT/CMD is. That is legitimate, so this is not an error — but a
         # reserved environment name never is.
         for key in self.env:
-            if key.startswith(RESERVED_ENV_PREFIX):
+            if key.startswith(RESERVED_ENV_PREFIXES):
                 raise ValueError(
-                    f"env[{key!r}] uses the reserved prefix {RESERVED_ENV_PREFIX!r}. "
+                    f"env[{key!r}] uses a reserved prefix "
+                    f"({' or '.join(repr(p) for p in RESERVED_ENV_PREFIXES)}). "
                     f"Those names belong to the job runner."
                 )
         overlap = sorted(set(self.env) & set(self.secrets))

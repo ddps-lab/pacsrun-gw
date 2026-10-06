@@ -5,6 +5,12 @@ what actually happened when it was broken. There is no rule here without evidenc
 
 This file is written by people. It is not generated.
 
+**The names here are `HYPERUN_*`.** Until October 2026 they were `PACSRUN_*`, and a script written
+with the old spelling still runs: the runner sets both spellings of the names a script reads
+(`_RESULT_PATH`, `_POD_INDEX`, `_PARALLELISM`, `_GPU_COUNT`, and the group coordinates), and it
+reads a `PACSRUN_ARTIFACT=` line exactly as it reads `HYPERUN_ARTIFACT=`. Write new scripts with
+`HYPERUN_`. Neither prefix may be set in a job's own `env`; both are the runner's.
+
 ---
 
 ## 1. Check the repository's real layout against its documentation
@@ -143,9 +149,9 @@ size 12345678
 is too late.
 
 ```bash
-echo probe | aws s3 cp - "$PACSRUN_RESULT_PATH.probe" \
-  && aws s3 rm "$PACSRUN_RESULT_PATH.probe" \
-  || { echo "cannot write to the result path: $PACSRUN_RESULT_PATH"; exit 1; }
+echo probe | aws s3 cp - "$HYPERUN_RESULT_PATH.probe" \
+  && aws s3 rm "$HYPERUN_RESULT_PATH.probe" \
+  || { echo "cannot write to the result path: $HYPERUN_RESULT_PATH"; exit 1; }
 ```
 
 `hyperun validate` cannot look at these for you. **Neither the user's repository nor the vendor's
@@ -158,10 +164,10 @@ credentials are visible from the server.** So they have to be in the script.
 ```bash
 upload_everything() {
   # make the file -> announce it. Announcing is §13's contract, and the driver collects it.
-  cp "train_${JOB}.log" /root/work/ && echo "PACSRUN_ARTIFACT=/root/work/train_${JOB}.log"
+  cp "train_${JOB}.log" /root/work/ && echo "HYPERUN_ARTIFACT=/root/work/train_${JOB}.log"
   if [ -d "$ADAPTER" ]; then
     tar czf /root/work/adapter.tar.gz "$ADAPTER" \
-      && echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
+      && echo "HYPERUN_ARTIFACT=/root/work/adapter.tar.gz"
   fi
   # Stay alive until they are in the result path: on AWS and GCP the driver copies an announced
   # file out THROUGH the running container, and nothing keeps that container open once this
@@ -174,7 +180,7 @@ wait_until_landed() {        # basenames, as they will be named in the result pa
   local name
   for name in "$@"; do
     for _ in $(seq 1 60); do                     # up to 5 minutes per file
-      aws s3 ls "${PACSRUN_RESULT_PATH%/}/$name" >/dev/null 2>&1 && break
+      aws s3 ls "${HYPERUN_RESULT_PATH%/}/$name" >/dev/null 2>&1 && break
       sleep 5
     done
   done
@@ -199,7 +205,7 @@ own prefix (§13, "Why announce").
 ```bash
 python train_dpo_m3.py ... | tee "train_${JOB}.log"
 tar czf /root/work/adapter.tar.gz "$ADAPTER"                       # export it here first
-echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
+echo "HYPERUN_ARTIFACT=/root/work/adapter.tar.gz"
 python gen_openrca_tasks_fast.py ...                                 # then inference
 ```
 
@@ -287,7 +293,7 @@ the end it holds the machine until all of them are copied.
 
 ```bash
 CKPT_DIR="$OUTPUT_DIR"                                   # where the trainer writes checkpoint-NNN/
-CKPT_URI="${PACSRUN_RESULT_PATH%/}/checkpoints"
+CKPT_URI="${HYPERUN_RESULT_PATH%/}/checkpoints"
 watch_checkpoints() {
   local dir name
   while true; do
@@ -333,7 +339,7 @@ if [ -f "$f" ] && [ -z "$(find "$f" -newermt '-120 seconds')" ] \
 fi
 ```
 
-**Always kill the watcher on exit.** If it stays alive, `tee` never gets EOF, so `PACSRUN_EXIT=`
+**Always kill the watcher on exit.** If it stays alive, `tee` never gets EOF, so `HYPERUN_EXIT=`
 is never printed and the driver never learns the job has ended.
 
 ```bash
@@ -365,7 +371,7 @@ this change is.
 The printed line is the same.
 
 ```
-PACSRUN_GPU=94,38200,45440,71,298
+HYPERUN_GPU=94,38200,45440,71,298
 ```
 
 - The format is `utilization,memory_used,memory_total,temperature,power`. The server reads them in
@@ -374,7 +380,7 @@ PACSRUN_GPU=94,38200,45440,71,298
   lines, that is negligible.
 - **An old script that still has `watch_gpu` does not break.** The same line is printed twice every
   30 seconds, and the server uses the last one. Delete it if you like, or leave it.
-- If the metrics do not show, look in the log for lines starting with `PACSRUN_GPU_WATCH`. That line
+- If the metrics do not show, look in the log for lines starting with `HYPERUN_GPU_WATCH`. That line
   says whether the watcher started, or whether it skipped because the image has no `nvidia-smi`.
 - These five values are everything `nvidia-smi` gives, and **they are not "how much the card
   worked".** `utilization.gpu` is defined as "the fraction of time **at least one** kernel was
@@ -482,7 +488,7 @@ set -euo pipefail
 pip install --quiet --no-input boto3
 python3 - <<'PY2'
 import os, urllib.parse, boto3
-u = urllib.parse.urlparse(os.environ["PACSRUN_RESULT_PATH"])
+u = urllib.parse.urlparse(os.environ["HYPERUN_RESULT_PATH"])
 base = u.path.lstrip("/").rstrip("/")
 boto3.client("s3").download_file(u.netloc, f"{base}/run.sh", "/root/run.sh")
 PY2
@@ -505,7 +511,7 @@ address does not even exist before the submit. The order is: the user uploads wi
 
 ---
 
-## 13. Export finished results with `PACSRUN_ARTIFACT`
+## 13. Export finished results with `HYPERUN_ARTIFACT`
 
 **We nearly lost results for lack of this section.** On 2026-09-08 a session about to submit task C
 with only the repository **could not find this contract anywhere in the documentation**, and
@@ -531,10 +537,10 @@ was not handed back.
 "check the pipe first"; only the thing checked differs.
 
 ```bash
-echo "PACSRUN_ARTIFACT=$FIRST_SMALL_FILE"
+echo "HYPERUN_ARTIFACT=$FIRST_SMALL_FILE"
 sleep 120
 # Is that name visible in the result path? If not, the announce is not getting through.
-aws s3 ls "$PACSRUN_RESULT_PATH" | grep -q "$(basename "$FIRST_SMALL_FILE")" \
+aws s3 ls "$HYPERUN_RESULT_PATH" | grep -q "$(basename "$FIRST_SMALL_FILE")" \
   || echo "★ the announce is not getting through -- suspect the log channel, and tell a person"
 ```
 
@@ -549,7 +555,7 @@ was recovered through it. **Ending without a word is the worst outcome.**
 
 ```bash
 tar czf /root/work/adapter.tar.gz "$ADAPTER"
-echo "PACSRUN_ARTIFACT=/root/work/adapter.tar.gz"
+echo "HYPERUN_ARTIFACT=/root/work/adapter.tar.gz"
 ```
 
 - **The path is an absolute path inside the container.** The driver reads that path and moves the
@@ -585,7 +591,7 @@ shared-credentials-file`. Two things follow for a script:
 
 - **The first seconds have no file.** The driver writes it only once the container is running, so
   a script whose first step touches S3 waits for the file first -- §17 has the lines. RunPod's
-  wrapper already waits (`PACSRUN_CREDS_FILE_READY after <n>s`).
+  wrapper already waits (`HYPERUN_CREDS_FILE_READY after <n>s`).
 - **A long-lived process keeps the key it started with.** botocore reads the file once per client,
   so an uploader that runs for hours should be a fresh `aws` or `python` process each time.
 
@@ -624,13 +630,13 @@ first with one small file.**
 
 ```bash
 date > /root/work/_probe.txt
-echo "PACSRUN_ARTIFACT=/root/work/_probe.txt"
+echo "HYPERUN_ARTIFACT=/root/work/_probe.txt"
 ```
 
 Look for that line coming back in the driver log as `fetched ... bytes`, then start training.
 
 **In the log, that line shows as `<internal>=/root/work/_probe.txt`.** The gateway's log relay
-masks names that start with `PACSRUN_` (`redact` in `server/ddpsrun_server/k8s.py`;
+masks names that start with `HYPERUN_` (`redact` in `server/ddpsrun_server/k8s.py`;
 `server/tests/test_k8s.py:23` pins that behaviour), and **the path stays, so the check still
 works.** The name not showing is not a failure — the line not being there at all is.
 
@@ -698,7 +704,7 @@ depend on which host you got. So the rule is not "request it" but "**check it an
 
 | what | where the value comes from now | what the script does |
 |---|---|---|
-| disk | the operator-wide `PACSRUN_DISK_GB=200`. It cannot be set per job | print one line of `df -h /root` before training. Measured on 09-04: 3 venvs + a model around 30 GB fit in 200 GB |
+| disk | the operator-wide `HYPERUN_DISK_GB=200`. It cannot be set per job | print one line of `df -h /root` before training. Measured on 09-04: 3 venvs + a model around 30 GB fit in 200 GB |
 | `/dev/shm` | set by the host you got. No field | print `df -h /dev/shm`. TP4 vLLM needs it, so if it is small, leave that fact in the log and tell the user the tensor parallel size should come down |
 | NCCL P2P | on some RunPod hosts the first all-reduce hangs. No field | set `NCCL_P2P_DISABLE` **in one place** so it can be reverted. The platform catches the hang itself and ends it with exit 21 |
 
@@ -722,22 +728,22 @@ cost N machines, and they leave N unrelated results.
 
 | variable | what | who fills it |
 |---|---|---|
-| `PACSRUN_GROUP_SIZE` | how many pods this group has | the operator (`HYPERUN-GROUP-COORDS`) |
-| `PACSRUN_GROUP_RANK` | which one this pod is within its group | the operator |
-| `PACSRUN_GROUP_INDEX` | which group of the job this group is | the operator |
-| `PACSRUN_MASTER_ADDR` | the **private** address of the rank 0 machine | the driver (`HYPERUN-GROUP-HOSTNET`) |
-| `PACSRUN_MASTER_PORT` | `29500 + group_index` | the driver |
-| `PACSRUN_POD_INDEX` | which one this is among all the job's pods. It stays separate from the group | the operator |
+| `HYPERUN_GROUP_SIZE` | how many pods this group has | the operator (`HYPERUN-GROUP-COORDS`) |
+| `HYPERUN_GROUP_RANK` | which one this pod is within its group | the operator |
+| `HYPERUN_GROUP_INDEX` | which group of the job this group is | the operator |
+| `HYPERUN_MASTER_ADDR` | the **private** address of the rank 0 machine | the driver (`HYPERUN-GROUP-HOSTNET`) |
+| `HYPERUN_MASTER_PORT` | `29500 + group_index` | the driver |
+| `HYPERUN_POD_INDEX` | which one this is among all the job's pods. It stays separate from the group | the operator |
 
 **That the names belong to no framework is intentional.** torchrun wants `--node_rank`/`--master_addr`,
 and other launchers want other things. **That translation is the line the script writes.**
 
 ```bash
 torchrun \
-  --nnodes "$PACSRUN_GROUP_SIZE" \
-  --node_rank "$PACSRUN_GROUP_RANK" \
-  --master_addr "$PACSRUN_MASTER_ADDR" \
-  --master_port "$PACSRUN_MASTER_PORT" \
+  --nnodes "$HYPERUN_GROUP_SIZE" \
+  --node_rank "$HYPERUN_GROUP_RANK" \
+  --master_addr "$HYPERUN_MASTER_ADDR" \
+  --master_port "$HYPERUN_MASTER_PORT" \
   --nproc_per_node 4 \
   train.py
 ```
@@ -757,7 +763,7 @@ group size is an error.
 ### Do not write a value in two places
 
 Hard-code `--nnodes 2` and it silently disagrees the day you change to `--group-size 4`. **Use
-`$PACSRUN_GROUP_SIZE`.** `--nproc_per_node` is the number of cards per pod, so it has to equal
+`$HYPERUN_GROUP_SIZE`.** `--nproc_per_node` is the number of cards per pod, so it has to equal
 `--gpu-count`, and validate compares the two.
 
 ### Keep performance expectations low
@@ -891,6 +897,6 @@ HOOK
 - **A finished stage is not run again.** If the final output of training is already in the result
   path -- the machine was lost during a later stage -- skip training and go on to that stage.
 - **A distributed group** (§16): with HF DDP only rank 0 writes the checkpoint, so only
-  `PACSRUN_GROUP_RANK=0` runs the watcher. A sharded checkpoint that every rank writes to its own
+  `HYPERUN_GROUP_RANK=0` runs the watcher. A sharded checkpoint that every rank writes to its own
   disk (FSDP, DeepSpeed ZeRO) is not covered here -- tell the user.
 

@@ -47,3 +47,11 @@ def test_the_gpu_telemetry_line_is_dropped_from_the_user_facing_log():
 def test_a_training_line_that_merely_mentions_gpu_survives():
     line = "using GPU 0: NVIDIA L40S"
     assert redact(line) == line
+
+
+def test_the_new_spelling_of_the_runner_lines_is_handled_like_the_old():
+    """The hyperun cluster's driver prints HYPERUN_ where it printed PACSRUN_; both are its own."""
+    assert redact("HYPERUN_KEEPALIVE") is None
+    assert redact("HYPERUN_GPU=94,38200,45440,71,298.5") is None
+    assert redact("HYPERUN_GPU_CARD=0,94,38200,81920,71,298.5") is None
+    assert redact("HYPERUN_ARTIFACT=/workspace/out.tar") == "<internal>=/workspace/out.tar"

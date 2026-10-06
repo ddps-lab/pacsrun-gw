@@ -171,17 +171,17 @@ def test_a_window_with_nothing_in_it_points_at_the_watcher_line_not_the_users_sc
     # right while printing the GPU line was the script's job. PACSrun's drivers print it
     # now (driver/common/gpu-watch.sh, grep HYPERUN-GPU-WATCH), so that advice would send
     # someone to change a file that was never the cause. What IS diagnostic is the
-    # PACSRUN_GPU_WATCH line the watcher itself prints, so the notes name that instead.
+    # HYPERUN_GPU_WATCH line the watcher itself prints, so the notes name that instead.
     reading = m.scan(["installing packages", "downloading model"], 3600)
     assert reading.latest_gpu is None
     assert reading.progress is None
-    assert "PACSRUN_GPU_WATCH" in reading.note
+    assert "HYPERUN_GPU_WATCH" in reading.note
     assert "run.sh" not in reading.note
 
 
 def test_progress_without_gpu_readings_names_the_watcher_line_and_the_two_usual_causes():
     reading = m.scan([PROGRESS], 3600)
-    assert "PACSRUN_GPU_WATCH" in reading.note
+    assert "HYPERUN_GPU_WATCH" in reading.note
     assert "nvidia-smi" in reading.note
     assert "run.sh" not in reading.note
 
@@ -494,3 +494,11 @@ def test_a_zero_rate_is_not_a_reading_in_either_unit():
     assert m.parse_progress("0/4000 [00:00<00:00,  0.00s/it]") is None
     assert m.parse_progress("0/4000 [00:00<00:00,  0.00it/s]") is None
 
+
+
+def test_the_new_spelling_of_the_gpu_and_metric_lines_is_read():
+    """The hyperun cluster's watcher prints HYPERUN_GPU=; a training row may be either spelling."""
+    assert m.parse_gpu("HYPERUN_GPU=94,38200,45440,71,298.5") is not None
+    assert m.parse_gpu_card("HYPERUN_GPU_CARD=3,99,44950,81920,63,366.04").gpu_index == 3
+    assert m.METRIC_LINE.search('HYPERUN_METRIC={"step": 1, "loss": 0.5}') is not None
+    assert m.METRIC_LINE.search('PACSRUN_METRIC={"step": 1, "loss": 0.5}') is not None

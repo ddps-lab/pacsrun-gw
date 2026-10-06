@@ -10,7 +10,7 @@
 # and the driver pod's identity is what RENTS THE MACHINE. Without a usable one the job does not
 # "run without uploading" -- it does not run at all:
 #
-#     configuration error: PACSRUN_AWS_ZONE is unusable: the availability zone id 'usw2-az4'
+#     configuration error: HYPERUN_AWS_ZONE is unusable: the availability zone id 'usw2-az4'
 #     could not be resolved in region 'us-west-2': An error occurred (AccessDenied) when calling
 #     the AssumeRoleWithWebIdentity operation: Not authorized to perform
 #     sts:AssumeRoleWithWebIdentity
@@ -63,4 +63,4 @@
 # THE OPEN DESIGN QUESTION THE OLD NOTE RAISED IS STILL OPEN, and it is a DIFFERENT question:
 # whether the WORKLOAD out on the rented machine gets its own AWS identity, one role per tenant
 # namespace or one shared. Today it does not need one -- fetch mode has the driver pod upload the
-# results (PACSRUN_FETCH_MODE=on), so nothing on the rented machine calls S3.
+# results (HYPERUN_FETCH_MODE=on), so nothing on the rented machine calls S3.

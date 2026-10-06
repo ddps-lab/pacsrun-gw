@@ -165,6 +165,9 @@ def test_a_reserved_env_name_is_refused_at_the_edge():
     # who has no kubectl.
     with pytest.raises(ValidationError, match="PACSRUN_"):
         minimal(env={"PACSRUN_EXIT": "0"})
+    # And the new spelling, which the runner sets on every workload since the hyperun cluster.
+    with pytest.raises(ValidationError, match="HYPERUN_"):
+        minimal(env={"HYPERUN_POD_INDEX": "0"})
 
 
 def test_the_same_name_in_env_and_secrets_is_refused():

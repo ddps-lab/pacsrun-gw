@@ -160,8 +160,8 @@ def job_arguments() -> argparse.ArgumentParser:
     shared.add_argument(
         "--group-mode", choices=("independent", "distributed"),
         help="independent (default) is pods that never talk. distributed makes "
-        "each group one process group: every pod is given PACSRUN_MASTER_ADDR, "
-        "PACSRUN_MASTER_PORT, PACSRUN_GROUP_RANK and PACSRUN_GROUP_SIZE, and NONE "
+        "each group one process group: every pod is given HYPERUN_MASTER_ADDR, "
+        "HYPERUN_MASTER_PORT, HYPERUN_GROUP_RANK and HYPERUN_GROUP_SIZE, and NONE "
         "starts until the whole group has a machine. Your script passes those to "
         "its launcher -- nothing translates them for you.",
     )

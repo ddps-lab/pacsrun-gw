@@ -243,7 +243,7 @@ spec:
               value: <RESULT_BUCKET>
             - name: HYPERUN_RESULT_PREFIX
               value: hyperun/
-            # Must match PACSrun's PACSRUN_RESULT_PREFIX_TEMPLATE, which checks
+            # Must match PACSrun's HYPERUN_RESULT_PREFIX_TEMPLATE, which checks
             # the same prefix again on the cluster side. If the two disagree,
             # every job is refused at admission.
             #

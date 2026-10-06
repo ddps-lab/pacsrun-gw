@@ -2765,7 +2765,7 @@ def get_metrics(
 ) -> MetricsResponse:
     """GPU usage and training progress, read out of the job's own log.
 
-    NOTHING IS STORED. The job's script prints one `PACSRUN_GPU=` line every 30
+    NOTHING IS STORED. The job's script prints one `HYPERUN_GPU=` line every 30
     seconds and the training library prints its own progress line, so both are
     already in the log next to the output they describe. Reading a window of it
     is cheaper than keeping a second copy, and it cannot disagree with the log.
