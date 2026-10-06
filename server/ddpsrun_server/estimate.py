@@ -33,7 +33,7 @@ NO NUMBERS LIVE IN THIS FILE. Every measurement is in `measurements.py`, and so
 is every price -- `THROUGHPUT` and `GPUS` for what we ran and were charged,
 `AWS_MACHINES` for what AWS publishes. What is here is arithmetic.
 
-Grep anchor: DDPSRUN-ESTIMATE
+Grep anchor: HYPERUN-ESTIMATE
 """
 
 from __future__ import annotations
@@ -681,7 +681,7 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
         regions: `placement.regions`. EMPTY IS NOT "anywhere" -- an AWS ask that
             names no region gets the operator's ONE default region, so pricing
             an unqualified ask at the globally cheapest region would be a wrong
-            number (PACSrun's placement.go:376, PACSRUN-AWS-ONE-REGION). Only
+            number (PACSrun's placement.go:376, HYPERUN-AWS-ONE-REGION). Only
             the `aws/<region>` entries are read; a bare vendor word names no
             region and leaves the default in place.
 
@@ -785,7 +785,7 @@ def hourly_rate(gpu_name: str, gpu_count: int, parallelism: int,
             # ★ THREE SOURCES OF A RUNPOD RATE, TRIED IN THIS ORDER, and the
             # order is an evidence ranking rather than a preference:
             #
-            #   1. an INVOICE for exactly this pod shape (DDPSRUN-BILLED-RATE).
+            #   1. an INVOICE for exactly this pod shape (HYPERUN-BILLED-RATE).
             #      What the vendor actually charged, the pod's disk included.
             #   2. RunPod's PUBLISHED price for that pod, out of prices.csv.
             #      Read on RUNPOD_PRICED_ON from the same endpoint PACSrun's

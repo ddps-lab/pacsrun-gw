@@ -21,7 +21,7 @@ combination rather than interpolating off a single point.
 Source for every row: `docs/04-estimate.md`, which in turn cites the training
 logs of the eight jobs run between 2026-08-20 and 2026-08-31.
 
-Grep anchor: DDPSRUN-MEASUREMENTS
+Grep anchor: HYPERUN-MEASUREMENTS
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ class Gpu:
 
 # Only what we have rented. A GPU absent here cannot be priced, and
 # `estimate.py` says so rather than guessing.
-# DDPSRUN-GPU-NAMES. These are the CATALOGUE's spelling, not nvidia-smi's.
+# HYPERUN-GPU-NAMES. These are the CATALOGUE's spelling, not nvidia-smi's.
 #
 # There are at least three vocabularies for the same card and they are not
 # interchangeable:
@@ -132,7 +132,7 @@ GPUS: tuple[Gpu, ...] = (
 )
 
 # ---------------------------------------------------------------------------
-# DDPSRUN-BILLED-RATE. What a MULTI-CARD pod was actually BILLED, per hour.
+# HYPERUN-BILLED-RATE. What a MULTI-CARD pod was actually BILLED, per hour.
 #
 # WHY THIS OVERRIDES THE MULTIPLICATION. `hourly_rate` prices a RunPod pod of N
 # cards as N x the per-card rate above, and that is sound -- RunPod bills per
@@ -177,7 +177,7 @@ def billed_pod_rate(gpu_name: str, cards: int) -> tuple[float, str] | None:
     return BILLED_POD_RATES.get((gpu.name, cards))
 
 # ---------------------------------------------------------------------------
-# DDPSRUN-AWS-PRICES. What AWS charges for the cards a user may CHOOSE.
+# HYPERUN-AWS-PRICES. What AWS charges for the cards a user may CHOOSE.
 #
 # WHY THIS TABLE EXISTS, AND WHY IT IS NOT THE ONE ABOVE. `GPUS` above is what we
 # have RENTED, and its price is RunPod's on-demand rate at the moment we were
@@ -273,7 +273,7 @@ def billed_pod_rate(gpu_name: str, cards: int) -> tuple[float, str] | None:
 # ★★ WHAT AN ASK GETS WHEN IT NAMES NO REGION: exactly ONE region, the
 # operator's own default. PACSrun's placement.go:376 says so --
 # "For AWS it means the operator's ONE --region default" (grep:
-# PACSRUN-AWS-ONE-REGION) -- and this deployment's operator sets
+# HYPERUN-AWS-ONE-REGION) -- and this deployment's operator sets
 # PACSRUN_AWS_HOME_REGION=us-west-2. So DEFAULT_AWS_REGION below is not a
 # preference, it is where an unqualified ask really buys, and pricing an
 # unqualified ask at the globally cheapest region would be a wrong number
@@ -432,7 +432,7 @@ SHADEFORM_MACHINES: tuple[PriceRow, ...] = tuple(
 
 # ★ HYPERUN-NAME-FLOOR (2026-09-29). How a name that carries its memory reaches this
 # table's AWS, GCP and Shadeform rows -- the same rule PACSrun now applies on every
-# vendor (PACSRUN-NAME-FLOOR, pkg/decider/names.go): the whole name, or the family
+# vendor (HYPERUN-NAME-FLOOR, pkg/decider/names.go): the whole name, or the family
 # before the memory suffix with AT LEAST that much memory.
 #
 # WHY THE TABLE NEEDS HELP. These rows are spelled as SkyPilot spells them, and
@@ -517,7 +517,7 @@ def aws_machines_for(card: str,
         card: the catalogue's spelling.
         regions: which AWS regions the ask allows. None or empty means the ask
             named none, which gets the operator's ONE default region -- not
-            every region (PACSRUN-AWS-ONE-REGION).
+            every region (HYPERUN-AWS-ONE-REGION).
 
     Returns:
         The matching rows. Empty when no allowed region offers the card.

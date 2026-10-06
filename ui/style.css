@@ -888,12 +888,12 @@ input::placeholder, textarea::placeholder { color: var(--fg-muted); }
 
 /* ------------------------------------------------------------------- shell */
 
-/* The Shell panel's input row. PACSRUN-SHELL-SESSION.
+/* The Shell panel's input row. HYPERUN-SHELL-SESSION.
    The prompt, the line and the button sit on one row so the pane above reads as
    the transcript and this reads as the place you type -- the same arrangement a
    terminal has, without pretending to be one. */
 .shell-row { display: flex; gap: var(--sp-2); align-items: center; }
-/* Carries the working directory since 2026-09-12 (DDPSRUN-SHELL-CWD), so it can
+/* Carries the working directory since 2026-09-12 (HYPERUN-SHELL-CWD), so it can
    get long: `min-width: 0` on the input next to it is what stops a deep path
    pushing the button off the panel, and the prompt itself still refuses to wrap
    mid-path. */
@@ -911,7 +911,7 @@ input::placeholder, textarea::placeholder { color: var(--fg-muted); }
 
 /* ----------------------------------------------------------------- stale tab */
 
-/* DDPSRUN-UI-STALE-TAB. Above the bar and across the width, because the thing it
+/* HYPERUN-UI-STALE-TAB. Above the bar and across the width, because the thing it
    says is that NOTHING else on the page can be trusted to be current. Not a
    toast: a toast that fades leaves the reader with stale code and no record of
    being told. */

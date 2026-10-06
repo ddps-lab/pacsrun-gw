@@ -43,7 +43,7 @@ EXIT CODES, because a script will read them:
   1  the server refused, or could not be reached
   2  the command was wrong, or there are no credentials
 
-Grep anchor: DDPSRUN-CLI
+Grep anchor: HYPERUN-CLI
 """
 
 from __future__ import annotations
@@ -107,7 +107,7 @@ def job_arguments() -> argparse.ArgumentParser:
         "`hyperun estimate` first — it recommends one and says why. submit refuses "
         "without it rather than choosing for you.",
     )
-    # DDPSRUN-VENDOR-CHOICE. The two placement fields that are not capacity type.
+    # HYPERUN-VENDOR-CHOICE. The two placement fields that are not capacity type.
     # The valid names are NOT listed as argparse `choices` on purpose: the server
     # owns that list and refuses an unknown one with a message naming every name
     # that would have worked, and a second copy in this file would go stale the
@@ -120,7 +120,7 @@ def job_arguments() -> argparse.ArgumentParser:
         "shadeform can actually run a job; gcp, azure, lambda and nebius can only "
         "be PRICED, so name one of those only with --placement-mode compare.",
     )
-    # DDPSRUN-REGIONS. Missing until 2026-09-08, so every job this CLI submitted
+    # HYPERUN-REGIONS. Missing until 2026-09-08, so every job this CLI submitted
     # ran in the operator's one default region and there was no way to say
     # otherwise -- the same hole `--vendor` filled a day earlier.
     shared.add_argument(
@@ -147,7 +147,7 @@ def job_arguments() -> argparse.ArgumentParser:
         "talk to each other. With --gpu-count this is how a job fills a multi-GPU machine: "
         "--parallelism 8 --gpu-count 1 may land 4 pods on each of two 4-GPU boxes.",
     )
-    # DDPSRUN-GROUP. Distributed training. Two flags and not one, because the
+    # HYPERUN-GROUP. Distributed training. Two flags and not one, because the
     # size alone says nothing: `--group-size 2` with the default independent
     # mode is identical to no group at all, and PACSrun treats the two shapes
     # with opposite scheduling rules.
@@ -170,7 +170,7 @@ def job_arguments() -> argparse.ArgumentParser:
     shared.add_argument(
         "--expected-hours", type=float, help="your own guess at the runtime, in hours"
     )
-    # DDPSRUN-CONTINUE-FROM. Chain this job onto a previous one's result path.
+    # HYPERUN-CONTINUE-FROM. Chain this job onto a previous one's result path.
     shared.add_argument(
         "--continue-from", metavar="JOB_ID",
         help="the job id of a previous run of YOURS whose result path this job "
@@ -348,7 +348,7 @@ def build_parser() -> argparse.ArgumentParser:
         "registered with `secret set`. Values are never shown by any command.",
     )
 
-    # DDPSRUN-USER-SECRET. Registering a value for your own namespace.
+    # HYPERUN-USER-SECRET. Registering a value for your own namespace.
     secret_set = sub.add_parser(
         "secret-set", help="store a value in your namespace under a name",
         description="Store one value so your jobs can ask for it by name. It is "
@@ -559,7 +559,7 @@ def build_submit_body(args: argparse.Namespace) -> dict[str, Any]:
         }
     if getattr(args, "capacity_type", None):
         body["capacity_type"] = args.capacity_type
-    # DDPSRUN-VENDOR-CHOICE. `--vendor` REPLACES the file's list rather than
+    # HYPERUN-VENDOR-CHOICE. `--vendor` REPLACES the file's list rather than
     # adding to it, which is the opposite of how `--secret` behaves one screen
     # up. The two are different in kind: a secret is one more thing to inject and
     # a union is the obvious reading, while a vendor list is a RESTRICTION, so a
@@ -640,7 +640,7 @@ def build_submit_body(args: argparse.Namespace) -> dict[str, Any]:
 def refreshed(credentials: config.Credentials) -> config.Credentials:
     """Renew the stored id_token when it is about to expire.
 
-    DDPSRUN-CLI-REFRESH. A Cognito id_token lives an hour. Without this, a
+    HYPERUN-CLI-REFRESH. A Cognito id_token lives an hour. Without this, a
     command run 61 minutes after `hyperun login` fails with 401 and the person
     has no idea why. With a refresh token stored, the renewal is silent.
 
@@ -711,7 +711,7 @@ def cmd_login(args: argparse.Namespace) -> int:
     if args.token:
         token = args.token.strip()
     else:
-        # DDPSRUN-CLI-LOGIN. With no --token, try the browser first. A server
+        # HYPERUN-CLI-LOGIN. With no --token, try the browser first. A server
         # that has no user pool says so and we fall back to the prompt, which is
         # exactly what this command did before Cognito existed.
         try:
@@ -1088,7 +1088,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 def cmd_delete(args: argparse.Namespace) -> int:
     """Delete a job. It stops, and it disappears.
 
-    DDPSRUN-CANCEL. A job can sit in Pending forever with nothing to do about
+    HYPERUN-CANCEL. A job can sit in Pending forever with nothing to do about
     it: on 2026-09-02 one asked for an L40S on spot, which RunPod refuses before
     reading the catalogue and which no AWS row matched, and the controller
     retried that same failure every eleven minutes. Until this existed the only
@@ -1184,7 +1184,7 @@ def bar(percent: float, width: int = 20) -> str:
     return "#" * filled + "-" * (width - filled)
 
 
-# DDPSRUN-WATCH-TERMINAL. The three phases a job never leaves. They are the
+# HYPERUN-WATCH-TERMINAL. The three phases a job never leaves. They are the
 # controller's own words: the phase enum in api/v1alpha1/pacsjob_types.go
 # carries Pending / Starting / Running / Recovering / Succeeded / Failed /
 # Compared and nothing else, and the screen keeps the same three in

@@ -49,7 +49,7 @@
 // Kubernetes object in `config/deploy/rbac.yaml`, and creating it here would make
 // every plan depend on the cluster being reachable.
 //
-// Grep anchor: DDPSRUN-LAMBDA
+// Grep anchor: HYPERUN-LAMBDA
 
 data "aws_eks_cluster" "target" {
   name = var.cluster_name
@@ -112,12 +112,12 @@ resource "aws_iam_role_policy" "gw" {
   policy = data.aws_iam_policy_document.permissions.json
 }
 
-// DDPSRUN-IMAGES-READ needs this account's id to build the ECR repository ARN. A data source
+// HYPERUN-IMAGES-READ needs this account's id to build the ECR repository ARN. A data source
 // rather than a variable: the id is a fact about whoever is running terraform, and asking for it
 // in terraform.tfvars would be one more twelve-digit number to copy wrongly.
 data "aws_caller_identity" "gw" {}
 
-// DDPSRUN-ARTIFACTS-READ. The results bucket, read-only, results prefix only.
+// HYPERUN-ARTIFACTS-READ. The results bucket, read-only, results prefix only.
 // GET /v1/jobs/{id}/artifacts lists a job's files and mints a presigned GET
 // URL per file. S3 checks a presigned URL against the SIGNER's permission at
 // the moment the URL is USED, so without GetObject here every link the server
@@ -154,7 +154,7 @@ resource "aws_iam_role_policy" "results_read" {
   policy = data.aws_iam_policy_document.results_read.json
 }
 
-// DDPSRUN-IMAGES-READ. The container registry, read-only, this account only.
+// HYPERUN-IMAGES-READ. The container registry, read-only, this account only.
 //
 // WHY. GET /v1/images offers the images this lab has already built, because the Image field on
 // the New job screen was free text with a 70-character ECR URL in its placeholder and a typo in
@@ -199,7 +199,7 @@ resource "aws_iam_role_policy" "registry_read" {
   policy = data.aws_iam_policy_document.registry_read.json
 }
 
-// DDPSRUN-REGISTER. Email one operator, and remember who has already asked.
+// HYPERUN-REGISTER. Email one operator, and remember who has already asked.
 //
 // WHY. A first-time Google visitor holds a valid Cognito token and is 403 on every route,
 // because being known to Google is not being registered here. That was a dead end with nothing

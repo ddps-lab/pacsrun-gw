@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Everything a NEW TENANT NAMESPACE needs, in one place. Grep anchor: DDPSRUN-ONBOARD.
+# Everything a NEW TENANT NAMESPACE needs, in one place. Grep anchor: HYPERUN-ONBOARD.
 #
 # WHY THIS EXISTS. Adding a person took five separate steps in four different
 # tools, and on 2026-09-10 two of them were found missing for a namespace that

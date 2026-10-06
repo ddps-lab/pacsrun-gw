@@ -33,7 +33,7 @@ the same judgement. `/v1/gpus` is missing for a different reason: answering it
 needs a vendor API key in this pod and a catalogue cache, which is
 `docs/04-estimate.md`'s subject, not a route we can bolt on.
 
-Grep anchor: DDPSRUN-ROUTES
+Grep anchor: HYPERUN-ROUTES
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ from fastapi.responses import PlainTextResponse
 from . import artifacts
 from . import catalogue
 from . import naming
-from . import registry      # DDPSRUN-IMAGES: the container images this lab has built
+from . import registry      # HYPERUN-IMAGES: the container images this lab has built
 from . import cognito
 from . import measurements
 from . import monitor   # HYPERUN-MONITOR: the rules, shared with the CronJob
@@ -135,7 +135,7 @@ logger = logging.getLogger("ddpsrun")
 def build_state(app: FastAPI, force: bool = False) -> None:
     """Build everything the routes need.
 
-    DDPSRUN-BUILD-ONCE. This used to live inside `lifespan`, which uvicorn runs
+    HYPERUN-BUILD-ONCE. This used to live inside `lifespan`, which uvicorn runs
     exactly once. Mangum does not: with `lifespan="auto"` it runs the ASGI
     lifespan protocol around EVERY invocation, so every request rebuilt all of
     this. Measured on the deployed function on 2026-09-02: 48 requests produced
@@ -316,7 +316,7 @@ def require_principal(
 ) -> Principal:
     """FastAPI dependency: identify the caller or refuse the request.
 
-    DDPSRUN-TWO-CREDENTIALS. Two kinds of credential arrive here and both end at
+    HYPERUN-TWO-CREDENTIALS. Two kinds of credential arrive here and both end at
     the same `Principal`:
 
       * a Cognito id_token, from the screen and from `hyperun login`. Verified
@@ -398,7 +398,7 @@ def require_signed_in(request: Request,
                       authorization: str | None = Header(default=None)) -> cognito.CognitoIdentity:
     """Identify a caller Cognito vouched for, WITHOUT requiring registration.
 
-    DDPSRUN-REGISTER. This is the one dependency in the file that stops at "who
+    HYPERUN-REGISTER. This is the one dependency in the file that stops at "who
     is this" and never asks "and what may they touch". Every other route uses
     `require_principal`, which answers 403 for an address the token file does
     not name -- and that 403 is precisely the state this endpoint exists to
@@ -450,7 +450,7 @@ SignedInDep = Annotated[cognito.CognitoIdentity, Depends(require_signed_in)]
 def namespace_for(principal: Principal, requested: str) -> str:
     """Which namespace this request reads.
 
-    DDPSRUN-ADMIN-NAMESPACE. Every job route reads exactly one namespace: the
+    HYPERUN-ADMIN-NAMESPACE. Every job route reads exactly one namespace: the
     caller's own, unless they asked for another with `?namespace=`. Asking is
     honoured only for a token file entry marked `admin: true`; for anyone else
     it is 403 rather than a silent fall-back to their own, because answering
@@ -509,7 +509,7 @@ K8S_NAME = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")
 def owned_by_caller(obj: dict[str, Any], principal: Principal) -> bool:
     """Does this PacsJob belong to the caller.
 
-    ★ DDPSRUN-OWNER-GATE. WHY THIS EXISTS AT ALL, given every route already scopes
+    ★ HYPERUN-OWNER-GATE. WHY THIS EXISTS AT ALL, given every route already scopes
     to a namespace. Because the namespace is a TENANCY boundary and not a person,
     and seven route docstrings in this file said otherwise -- "someone else's job
     reads as 404", "it cannot contain anyone else's work". Those sentences were
@@ -582,7 +582,7 @@ def require_owner(obj: dict[str, Any], principal: Principal) -> dict[str, Any]:
 def resolve_object_name(job_id: str) -> str:
     """The Kubernetes object behind a path's {job_id} — two spellings.
 
-    DDPSRUN-JOB-BY-NAME. An id this server issued ("job-<12 hex>") maps through
+    HYPERUN-JOB-BY-NAME. An id this server issued ("job-<12 hex>") maps through
     naming.object_name, exactly as before. Anything else that is a legal
     Kubernetes object name is used AS the object name — which is what lets a
     PacsJob applied with kubectl (no id, no label; on 2026-09-01 that was every
@@ -693,7 +693,7 @@ def login_config(request: Request) -> dict[str, object]:
         "issuer": verifier.issuer,
         "login_domain": settings.cognito_login_domain,
         "scopes": ["openid", "email"],
-        # DDPSRUN-REGISTER. Whether POST /v1/register-request can actually reach
+        # HYPERUN-REGISTER. Whether POST /v1/register-request can actually reach
         # an operator. The screen draws its button from this and NOT from
         # `enabled`: a deployment with Cognito but no notification address would
         # otherwise offer a button that answers 503, and a first-time visitor
@@ -711,7 +711,7 @@ def login_config(request: Request) -> dict[str, object]:
 def register_request(request: Request, identity: SignedInDep) -> dict[str, object]:
     """Ask an operator to give this signed-in address a namespace.
 
-    DDPSRUN-REGISTER. The state this serves: Cognito verified somebody, so their
+    HYPERUN-REGISTER. The state this serves: Cognito verified somebody, so their
     sign-in worked, and `auth.principal_for_email` still refuses them because
     nobody has registered the address. Until 2026-09-08 that was a dead end --
     the screen showed the 403 text and there was nothing to press.
@@ -766,7 +766,7 @@ def register_request(request: Request, identity: SignedInDep) -> dict[str, objec
                 subject_id=identity.subject,
                 notify_to=settings.register_notify_to,
                 notify_from=settings.register_notify_from,
-                # DDPSRUN-REGISTER. The mail ASKS for the team, because the
+                # HYPERUN-REGISTER. The mail ASKS for the team, because the
                 # server cannot know which one somebody belongs to. Listing the
                 # ones that already exist turns that into a question the
                 # operator answers in a second.
@@ -834,7 +834,7 @@ def _estimate_for(body: JudgementRequest) -> estimator.Estimate:
         # time model has already said `unknown`. It never becomes the duration:
         # a figure we did not measure must not be reported as ours.
         expected_hours=body.expected_hours,
-        # DDPSRUN-AWS-PRICES. These three reach the PRICE, not the runtime. The
+        # HYPERUN-AWS-PRICES. These three reach the PRICE, not the runtime. The
         # throughput table was measured on one-card pods on RunPod, so neither
         # the count nor the vendor can change what we claim about step time --
         # but both change the machine that gets rented and what it costs.
@@ -858,7 +858,7 @@ def prices_route(
 ) -> PricesResponse:
     """What every GPU the catalogue knows costs, in every region it prices.
 
-    DDPSRUN-PRICES. NO TOKEN NEEDED, for the same reason `/v1/schema` needs none:
+    HYPERUN-PRICES. NO TOKEN NEEDED, for the same reason `/v1/schema` needs none:
     a published list price is not this lab's information. It is also what somebody
     reads BEFORE deciding whether to ask for an account.
 
@@ -1006,7 +1006,7 @@ def _validation_for(body: JudgementRequest, request: Request,
         cap=cap_from(body),
         vram_gb=vram_gb_for(body),
         job_estimate=_estimate_for(body),
-        # DDPSRUN-CATALOGUE. What the caller asked for, so the checks can say
+        # HYPERUN-CATALOGUE. What the caller asked for, so the checks can say
         # whether it can be bought at all before anything is submitted.
         gpu_name=gpu_name_for(body),
         gpu_count=(body.gpu.count if body.gpu else 1),
@@ -1016,15 +1016,15 @@ def _validation_for(body: JudgementRequest, request: Request,
         # asking for one A100-80GB is unfillable and eight pods asking for one
         # each fill a p4de.24xlarge exactly (aws.go:333).
         parallelism=body.parallelism,
-        # DDPSRUN-REGIONS. The sizes AWS offers vary by region, so "can this be
+        # HYPERUN-REGIONS. The sizes AWS offers vary by region, so "can this be
         # bought" cannot be answered without knowing where.
         regions=body.regions,
-        # DDPSRUN-VENDOR-CHOICE. Four of the six vendor names can be priced and
+        # HYPERUN-VENDOR-CHOICE. Four of the six vendor names can be priced and
         # not rented, so whether the list the caller sent is sensible depends on
         # the mode. Both go in together.
         vendors=body.vendors,
         placement_mode=body.placement_mode,
-        # DDPSRUN-SECRET-NAMES. `to_pacsjob` refuses a word the deployment does
+        # HYPERUN-SECRET-NAMES. `to_pacsjob` refuses a word the deployment does
         # not hold, and until 2026-09-08 validate did not look at these at all
         # -- so the only way to learn a wrong name was a submit. Both go in
         # together: names without the bindings would make every name look wrong.
@@ -1036,11 +1036,11 @@ def _validation_for(body: JudgementRequest, request: Request,
             **request.app.state.settings.secret_bindings,
             **own_secrets,
         },
-        # DDPSRUN-SECRET-EXPIRY. Only the namespace's own registrations carry a
+        # HYPERUN-SECRET-EXPIRY. Only the namespace's own registrations carry a
         # date; an operator binding points at a Secret whose lifetime is the
         # operator's business and this server is not told about it.
         secret_expiries=own_secrets,
-        # DDPSRUN-GROUP. Whether the pods need a rendezvous, and how big one is.
+        # HYPERUN-GROUP. Whether the pods need a rendezvous, and how big one is.
         group_size=(body.group.size if body.group else 1),
         group_mode=(body.group.mode if body.group else "independent"),
     )
@@ -1098,7 +1098,7 @@ def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
     Aggregate only. A caller asking for their team's figures does not thereby get
     to read another member's job names or results: this route returns totals, and
     the routes that return job detail check the job's `ddpsrun.io/owner` label
-    (DDPSRUN-OWNER-GATE).
+    (HYPERUN-OWNER-GATE).
 
     THE OLD WORDING SAID THE ISOLATION LIVED IN "each member's own namespace",
     which is a convention `auth.py` documents and nothing enforces -- and this
@@ -1127,7 +1127,7 @@ def get_stats(request: Request, principal: PrincipalDep) -> StatsResponse:
     # KNOWN_VENDORS is passed in rather than imported by stats.py, which cannot
     # import models -- models imports stats. It makes the Per vendor table the
     # same list of sellers for every team instead of only the ones that have
-    # already sold into these namespaces (DDPSRUN-STATS, the seeding comment).
+    # already sold into these namespaces (HYPERUN-STATS, the seeding comment).
     totals = stats_reader.summarise(
         principal.team, namespaces, jobs_by_namespace,
         known_vendors=KNOWN_VENDORS,
@@ -1197,7 +1197,7 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
 
     job_id = naming.new_job_id()
 
-    # DDPSRUN-CONTINUE-FROM. Chain this job onto a previous one's result path.
+    # HYPERUN-CONTINUE-FROM. Chain this job onto a previous one's result path.
     #
     # WHY THE LOOKUP IS HERE AND NOT IN `to_pacsjob`. That function is pure --
     # no cluster calls -- and this needs one, because the only place the
@@ -1278,7 +1278,7 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
         raise HTTPException(status_code=400, detail=_refusal_for(verdict))
 
     try:
-        # DDPSRUN-USER-SECRET. Looked up ONLY when the request names a secret,
+        # HYPERUN-USER-SECRET. Looked up ONLY when the request names a secret,
         # so an ordinary submit costs no extra cluster call. `to_pacsjob` is
         # pure and cannot read the cluster itself, so the names come in as an
         # argument; without them a name this namespace registered would be
@@ -1309,7 +1309,7 @@ def submit(request: Request, body: JudgementRequest, principal: PrincipalDep) ->
     )
 
 
-# DDPSRUN-PHASE-GROUPS: the two tabs the jobs screen offers, from
+# HYPERUN-PHASE-GROUPS: the two tabs the jobs screen offers, from
 # `docs/15-screens.md`. Borrowed from SkyPilot's `statusGroups`
 # (`sky/dashboard/src/components/jobs.jsx:97`), which splits the same way: the
 # default view is what is still moving, not everything ever submitted.
@@ -1337,7 +1337,7 @@ def secrets_route(
 ) -> SecretsResponse:
     """Which names a job may put in `secrets` — the names only.
 
-    DDPSRUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` is not a field a submitter
+    HYPERUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` is not a field a submitter
     fills with a value; it is a word that opens the server's vault, and the
     server refuses a word it does not hold. Until this route existed the ONLY
     way to learn the accepted words was to guess one and read them off the
@@ -1348,7 +1348,7 @@ def secrets_route(
     NO VALUES, AND NO INTERNAL NAMES EITHER. What comes back is the WORD and
     nothing more: which Kubernetes Secret holds it is an internal name, and
     `docs/03-api.md` keeps those inside (the same rule strips them from
-    `GET /v1/jobs/{id}/spec`, DDPSRUN-SPEC-REDACT). The value stays in the Kubernetes
+    `GET /v1/jobs/{id}/spec`, HYPERUN-SPEC-REDACT). The value stays in the Kubernetes
     Secret: the server writes a `secretKeyRef` into the PacsJob and kubelet
     resolves it, so this process never holds the string at all
     (`config/deploy/rbac.yaml` grants no `secrets` verb — deliberately).
@@ -1364,7 +1364,7 @@ def secrets_route(
     settings: Settings = request.app.state.settings
     bindings = settings.secret_bindings
     namespace = namespace_for(principal, namespace)
-    # DDPSRUN-USER-SECRET. Two sources answer this question and a submitter does
+    # HYPERUN-USER-SECRET. Two sources answer this question and a submitter does
     # not care which: the deployment's own bindings, and whatever this namespace
     # registered for itself. `own` says which is which, because only the second
     # kind can be changed from here.
@@ -1384,7 +1384,7 @@ def secrets_route(
             "by this API."
         )
     if expired:
-        # DDPSRUN-SECRET-EXPIRY. Said in the note rather than by hiding the name:
+        # HYPERUN-SECRET-EXPIRY. Said in the note rather than by hiding the name:
         # the name still works as far as this API is concerned (the value is
         # still there and still injectable), and what has stopped working is the
         # credential inside it. Hiding it would make `validate`'s refusal look
@@ -1423,7 +1423,7 @@ def put_secret(
 ) -> SecretPutResponse:
     """Register one value under one name, for jobs in your own namespace.
 
-    DDPSRUN-USER-SECRET. ★ THIS IS THE ONE ROUTE WHERE A SECRET VALUE CROSSES
+    HYPERUN-USER-SECRET. ★ THIS IS THE ONE ROUTE WHERE A SECRET VALUE CROSSES
     THIS API, and every other part of the design says values do not. The reason
     the exception is worth it: before this existed, using a credential in a job
     meant asking an operator to edit `terraform.tfvars` and run `terraform
@@ -1509,7 +1509,7 @@ def put_secret(
             ),
         )
 
-    # DDPSRUN-SECRET-EXPIRY. Checked here so a typo in the date is a 400 now
+    # HYPERUN-SECRET-EXPIRY. Checked here so a typo in the date is a 400 now
     # rather than a name that quietly never expires.
     if body.expires_at is not None and not secret_expiry.parse(body.expires_at):
         raise HTTPException(
@@ -1610,7 +1610,7 @@ def list_jobs(
     the caller's own jobs by `owned_by_caller`, so it cannot contain anyone else's
     work.
 
-    DDPSRUN-OWNER-GATE. THE SECOND SENTENCE WAS FALSE UNTIL 2026-09-08. It rested
+    HYPERUN-OWNER-GATE. THE SECOND SENTENCE WAS FALSE UNTIL 2026-09-08. It rested
     on one namespace holding one person, which nothing enforces and this
     deployment does not do -- all three principals sit in `default`. So this route
     handed every namespace-mate's job, with their owner name and their S3 result
@@ -1638,7 +1638,7 @@ def list_jobs(
     except ClusterError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    # DDPSRUN-OWNER-GATE. The list is where the exposure STARTED: nobody had to
+    # HYPERUN-OWNER-GATE. The list is where the exposure STARTED: nobody had to
     # guess an id, because this route handed every namespace-mate's job -- with
     # their owner name and their S3 result prefix on each row -- to anyone in the
     # namespace, under a docstring saying "it cannot contain anyone else's work".
@@ -1677,7 +1677,7 @@ def get_job(
             checked against the job's own `ddpsrun.io/owner` label (an operator
             may name another namespace with ?namespace=), so a job belonging
             to someone else reads as 404, not 403 -- we do not confirm that
-            another user's job exists. DDPSRUN-OWNER-GATE: true since 2026-09-08 and not before,
+            another user's job exists. HYPERUN-OWNER-GATE: true since 2026-09-08 and not before,
             when it
             rested on one namespace holding one person -- which nothing
             enforces and this deployment does not do.
@@ -1708,7 +1708,7 @@ def cancel_job(
 ) -> Response:
     """Stop a job and take it off the list.
 
-    DDPSRUN-CANCEL. Deleting the PacsJob is the only stop the CRD offers, and it
+    HYPERUN-CANCEL. Deleting the PacsJob is the only stop the CRD offers, and it
     is what PACSrun's controller watches to give back whatever the job rented.
     This server never deletes a pod or a node itself: it does not know what a
     job took, and a partial cleanup would strand capacity nobody is tracking.
@@ -1727,7 +1727,7 @@ def cancel_job(
         job_id: an id this server issued.
         principal: the caller. The job is FETCHED and its owner checked before
             anything is deleted, so someone else's job reads as 404 and cannot
-            be cancelled by guessing. DDPSRUN-OWNER-GATE: true since 2026-09-08 and not before, when
+            be cancelled by guessing. HYPERUN-OWNER-GATE: true since 2026-09-08 and not before, when
             it
             rested on one namespace holding one person -- which nothing
             enforces and this deployment does not do. Before it, any
@@ -1850,12 +1850,12 @@ def get_job_spec(
 
     Two screens need it. The detail screen shows "what exactly did I run", and
     "same settings again" copies from it. Redaction is described on
-    `JobSpecResponse` (DDPSRUN-SPEC-REDACT).
+    `JobSpecResponse` (HYPERUN-SPEC-REDACT).
 
     Args:
         job_id: an id this server issued.
         principal: the caller. The lookup is scoped to their namespace and to
-            the job's owner, so someone else's job reads as 404. DDPSRUN-OWNER-GATE: true since
+            the job's owner, so someone else's job reads as 404. HYPERUN-OWNER-GATE: true since
             2026-09-08 and not before, when it
             rested on one namespace holding one person -- which nothing
             enforces and this deployment does not do.
@@ -1888,7 +1888,7 @@ def scripts_route(
 ) -> ScriptsResponse:
     """The scripts this caller has submitted before, newest first.
 
-    DDPSRUN-SCRIPTS-ROUTE. The Script box on the New job screen is where a run.sh goes, and until
+    HYPERUN-SCRIPTS-ROUTE. The Script box on the New job screen is where a run.sh goes, and until
     this route existed there was no way to get one back: the screen sent it, the job ran it, and
     finding it again meant opening jobs one at a time and reading the Submitted spec panel.
 
@@ -1905,7 +1905,7 @@ def scripts_route(
         A `ScriptsResponse`, newest first, one entry per DISTINCT text.
     """
     cluster: Cluster = request.app.state.cluster
-    # DDPSRUN-SCRIPTS-NAMESPACE. Hoisted so the ANSWER can name whose scripts
+    # HYPERUN-SCRIPTS-NAMESPACE. Hoisted so the ANSWER can name whose scripts
     # these are. Every listing is one namespace's and never a mixture -- the
     # caller's own, or another one when an operator asked for it -- and a list of
     # somebody's training scripts with no owner printed on it reads as
@@ -2001,7 +2001,7 @@ def scripts_route(
 def images_route(request: Request, principal: PrincipalDep) -> ImagesResponse:
     """Every container image this lab has already built.
 
-    DDPSRUN-IMAGES-ROUTE. The Image field on the New job screen was free text with an ECR URL in
+    HYPERUN-IMAGES-ROUTE. The Image field on the New job screen was free text with an ECR URL in
     its placeholder, so the one thing it could not do was offer the addresses that exist. The
     mechanics, and why it filters nothing by owner and lists no AMIs, are in registry.py.
 
@@ -2013,7 +2013,7 @@ def images_route(request: Request, principal: PrincipalDep) -> ImagesResponse:
         An `ImagesResponse`. A registry that refuses answers 200 with an empty list and a note
         rather than 502: the Image box still accepts anything typed into it, so a caller who
         cannot see the list is inconvenienced and not blocked. The note names the refusal so an
-        operator missing the IAM policy (DDPSRUN-IMAGES-READ in terraform/lambda) is sent to the
+        operator missing the IAM policy (HYPERUN-IMAGES-READ in terraform/lambda) is sent to the
         right place instead of concluding the lab has built nothing.
     """
     settings: Settings = request.app.state.settings
@@ -2052,7 +2052,7 @@ def get_artifacts(
 ) -> ArtifactsResponse:
     """The job's result files, each with a link that downloads it.
 
-    DDPSRUN-ARTIFACTS-ROUTE. The prefix listed is the one on the JOB OBJECT
+    HYPERUN-ARTIFACTS-ROUTE. The prefix listed is the one on the JOB OBJECT
     (spec.resultPath, which this server wrote at submit time), never one the
     caller names — that is the scoping the screen relies on. The mechanics —
     ListObjectsV2, what a presigned URL is, why downloads bypass Lambda, and
@@ -2061,7 +2061,7 @@ def get_artifacts(
     Raises:
         HTTPException: 404 for an unknown job; 502 when the cluster or S3
             refused. An S3 refusal here usually means the IAM policy
-            (DDPSRUN-ARTIFACTS-READ in terraform/lambda) is missing, and hiding
+            (HYPERUN-ARTIFACTS-READ in terraform/lambda) is missing, and hiding
             that behind an empty list would send the operator hunting in the
             wrong place.
     """
@@ -2123,7 +2123,7 @@ def exec_in_job(
 ) -> ExecResponse:
     """Run one command inside a running job's workload container.
 
-    DDPSRUN-EXEC. This is `hyperun shell`'s server half, and it exists so a
+    HYPERUN-EXEC. This is `hyperun shell`'s server half, and it exists so a
     researcher NEVER needs kubectl: the same relay an operator reached with
     `kubectl exec` (driver pod -> shell.py -> the workload container on the
     rented machine, verified live 2026-09-07) is reached here through the
@@ -2154,7 +2154,7 @@ def exec_in_job(
             "so there is nothing to run a command in",
         )
 
-    # PACSRUN-SHELL-SESSION vs the one-shot form, and the difference is what the
+    # HYPERUN-SHELL-SESSION vs the one-shot form, and the difference is what the
     # person sees between two commands.
     #
     #   without `session`   `sh -lc <line>` -- a FRESH shell every request, so a
@@ -2514,7 +2514,7 @@ def query_metrics(
 ) -> dict:
     """Ask the in-cluster Prometheus one instant query.
 
-    DDPSRUN-PROMETHEUS-PROXY. THIS IS THE HALF OF MONITORING /v1/jobs/{id}/metrics CANNOT DO.
+    HYPERUN-PROMETHEUS-PROXY. THIS IS THE HALF OF MONITORING /v1/jobs/{id}/metrics CANNOT DO.
     That route reads a job's own log, so it answers only while the pod exists — when the pod is
     garbage-collected a finished job's chart is gone. Prometheus keeps the series after the pod,
     which is the whole reason it was deployed.
@@ -2782,7 +2782,7 @@ def get_metrics(
     cluster: Cluster = request.app.state.cluster
     name = resolve_object_name(job_id)
 
-    # DDPSRUN-OWNER-GATE. Neither of these routes fetched the job, so both
+    # HYPERUN-OWNER-GATE. Neither of these routes fetched the job, so both
     # read straight from the driver pod behind an id -- another person's
     # training output in one case and their GPU samples in the other. The
     # owner is written on the JOB and nowhere else, so the object has to be
@@ -2805,7 +2805,7 @@ def get_metrics(
     reading = metrics_reader.scan(lines, window_seconds)
     return MetricsResponse(
         latest_gpu=_gpu_view(reading.latest_gpu),
-        # PACSRUN-METRIC-WATCH. The trends came out of `metrics.trend_of`, which is
+        # HYPERUN-METRIC-WATCH. The trends came out of `metrics.trend_of`, which is
         # least squares and two averages and nothing else. Nothing on this path
         # asks a model anything; a model is shown these numbers later, by the
         # monitor, and is asked to name the objective and write a sentence.
@@ -2930,7 +2930,7 @@ def get_logs(
     cluster: Cluster = request.app.state.cluster
     name = resolve_object_name(job_id)
 
-    # DDPSRUN-OWNER-GATE. Neither of these routes fetched the job, so both
+    # HYPERUN-OWNER-GATE. Neither of these routes fetched the job, so both
     # read straight from the driver pod behind an id -- another person's
     # training output in one case and their GPU samples in the other. The
     # owner is written on the JOB and nowhere else, so the object has to be

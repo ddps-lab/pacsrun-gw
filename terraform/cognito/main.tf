@@ -1,4 +1,4 @@
-# DDPSRUN-COGNITO
+# HYPERUN-COGNITO
 #
 # The login system, so we do not build one. Decisions and their reasons are in
 # `docs/16-login.md`; this file is the four objects that implement them.

@@ -122,7 +122,7 @@ def test_the_server_fills_the_four_fields_the_user_cannot_send():
 
 def test_the_result_path_carries_the_namespace_from_the_token_only():
     # PACSrun's own guard requires the prefix s3://<bucket>/pacsrun/<namespace>/
-    # (PACSRUN-RESULT-TENANCY). If this ever stops matching, every job a tenant
+    # (HYPERUN-RESULT-TENANCY). If this ever stops matching, every job a tenant
     # submits is refused on the cluster side.
     bob = Principal(user="bob", namespace="lab-bob")
     obj = to_pacsjob(minimal(), bob, SETTINGS, JOB_ID)
@@ -315,7 +315,7 @@ def test_parallelism_is_capped_at_what_the_crd_can_record():
         minimal(parallelism=0)
 
 
-# ---------------------------------------------------------------- DDPSRUN-VENDOR-CHOICE
+# ---------------------------------------------------------------- HYPERUN-VENDOR-CHOICE
 
 
 def test_the_caller_may_name_the_vendors_and_the_mode():
@@ -417,7 +417,7 @@ def test_an_unrecognised_mode_is_refused_rather_than_defaulted():
     with pytest.raises(ValidationError):
         SubmitRequest(name="n", image="img", placement_mode="cheapets")
 
-# ---------------------------------------------------------------- DDPSRUN-WORKLOAD-SA
+# ---------------------------------------------------------------- HYPERUN-WORKLOAD-SA
 
 
 def test_the_default_service_account_is_the_one_the_role_trusts(monkeypatch):
@@ -459,7 +459,7 @@ def test_the_default_service_account_is_the_one_the_role_trusts(monkeypatch):
     assert Settings.from_env().service_account == "some-other-sa"
 
 
-# ------------------------------------------------- DDPSRUN-SCRIPTS: it has to RUN
+# ------------------------------------------------- HYPERUN-SCRIPTS: it has to RUN
 
 
 def _submitted(**kwargs):
@@ -597,7 +597,7 @@ def test_the_memory_checks_run_for_a_named_gpu_too():
 
 
 def test_a_script_too_big_for_the_job_object_is_refused_before_anything_is_rented():
-    # DDPSRUN-SCRIPT-SIZE. The script travels inside spec.args, so it is stored
+    # HYPERUN-SCRIPT-SIZE. The script travels inside spec.args, so it is stored
     # in etcd with the PacsJob and shares etcd's 1.5 MiB request limit. Without
     # a cap here the refusal arrives from the apiserver as "etcdserver: request
     # is too large", which names nothing the submitter can act on.
@@ -669,7 +669,7 @@ def test_the_note_says_when_the_job_did_not_land_on_the_first_vendor_asked():
 def test_the_view_names_the_vendor_that_did_not_answer_and_why():
     """LIMITATIONS.md item 9. job-444deedf4967 asked three vendors, and that RunPod
     had not answered -- and why -- was in the operator log alone. PACSrun now keeps
-    it in status.notAnswering (PACSRUN-NOT-ANSWERING); the view passes it on."""
+    it in status.notAnswering (HYPERUN-NOT-ANSWERING); the view passes it on."""
     line = ("runpod: recommender returned no decisions for region runpod (RunPod sells "
             "NVIDIA L40S for this ask, and no data center has it in stock right now)")
     obj = {

@@ -88,7 +88,7 @@ RUNPOD_MIN_MEMORY_GB = 16
 # ★ SHADEFORM IS FETCHED, NOT READ OFF DISK, and that is not a shortcut. `~/.sky/catalogs/v8`
 # has aws, gcp, runpod and common on this machine and no shadeform directory -- SkyPilot writes
 # one only for a cloud it is configured for. The DECIDER already reads this same URL with no
-# credential (pkg/decider/skycatalog, PACSRUN-CSV-VENDOR), so fetching it here keeps the price
+# credential (pkg/decider/skycatalog, HYPERUN-CSV-VENDOR), so fetching it here keeps the price
 # table and the solve reading one source instead of two that can disagree.
 SHADEFORM = ("https://raw.githubusercontent.com/skypilot-org/skypilot-catalog/master/"
              "catalogs/v8/shadeform/vms.csv")

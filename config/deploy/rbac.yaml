@@ -15,7 +15,7 @@
 # (checked 2026-09-08: `kubectl get clusterrolebinding ddpsrun-gw` exists and
 # names Group `ddpsrun-gw`). So a `secrets` verb added up there would be a
 # secrets verb in kube-system. The write path gets its own Role at the bottom
-# of this file, bound one namespace at a time -- see DDPSRUN-USER-SECRET.
+# of this file, bound one namespace at a time -- see HYPERUN-USER-SECRET.
 # ★ THE ServiceAccount IS NOT HERE ANY MORE. It used to be declared in this file, in a
 # namespace called `ddpsrun-system` that no longer exists -- the gateway moved to a pod in
 # `hyperun-system` on 2026-09-15 and its ServiceAccount is declared beside it in
@@ -34,7 +34,7 @@ metadata:
 rules:
   # Submit, read back, and cancel the jobs it created.
   #
-  # `delete` is what DDPSRUN-CANCEL needs. Deleting the PacsJob is the only stop
+  # `delete` is what HYPERUN-CANCEL needs. Deleting the PacsJob is the only stop
   # the CRD offers, and PACSrun's controller watches for it to give back whatever
   # the job rented. Without this verb the cancel route reaches the apiserver and
   # comes back 403 — which is how it shipped on 2026-09-02: the route, the CLI
@@ -63,7 +63,7 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
-  # DDPSRUN-EXEC. `POST /v1/jobs/{id}/exec` runs one command in a job's driver
+  # HYPERUN-EXEC. `POST /v1/jobs/{id}/exec` runs one command in a job's driver
   # pod (which relays it into the workload container on the rented machine).
   # Both verbs on purpose: the exec subresource maps a WebSocket upgrade to
   # `get` and the SPDY path to `create`, and which one a client library uses is
@@ -72,7 +72,7 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["get", "create"]
-  # DDPSRUN-PROMETHEUS-PROXY. Reach the in-cluster Prometheus through the apiserver instead of
+  # HYPERUN-PROMETHEUS-PROXY. Reach the in-cluster Prometheus through the apiserver instead of
   # giving it an address of its own.
   #
   # WHY A VERB AND NOT AN INGRESS. Prometheus holds one lab's GPU history and the obvious way to
@@ -169,7 +169,7 @@ subjects:
     name: hyperun-gw
     namespace: hyperun-system
 ---
-# DDPSRUN-USER-SECRET. What `PUT /v1/secrets/{name}` needs, and not one verb more.
+# HYPERUN-USER-SECRET. What `PUT /v1/secrets/{name}` needs, and not one verb more.
 #
 # WHY A SEPARATE Role AND NOT THREE MORE LINES IN THE ClusterRole ABOVE. The
 # ClusterRole is bound cluster-wide in the live cluster, so a `secrets` verb in

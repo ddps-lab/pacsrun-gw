@@ -1,6 +1,6 @@
 """Can the GPU a caller asked for actually be bought, and do we say so first.
 
-DDPSRUN-CATALOGUE. Written after a job asked for "NVIDIA L40S" on spot on
+HYPERUN-CATALOGUE. Written after a job asked for "NVIDIA L40S" on spot on
 2026-09-02 and sat in Pending forever, retrying the same failure every eleven
 minutes. Two separate things were wrong and neither was visible before
 submitting. Every test here is one of those two, or the vocabulary rule that
@@ -207,7 +207,7 @@ def test_the_old_name_is_warned_about_and_not_refused():
 
 
 def test_a_memory_suffix_is_a_floor_across_the_skypilot_rows():
-    """The rule PACSrun applies on every vendor (PACSRUN-NAME-FLOOR): the family with at
+    """The rule PACSrun applies on every vendor (HYPERUN-NAME-FLOOR): the family with at
     least that much memory. SkyPilot spells the 40 GB A100 with no memory at all."""
     assert measurements.skypilot_cards_for("A100-40GB") == ("A100", "A100-80GB")
     assert measurements.skypilot_cards_for("A100-80GB") == ("A100-80GB",)

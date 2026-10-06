@@ -31,7 +31,7 @@ estimate is made from other people's runs. This is made from THIS run, and after
 about 50 steps it is better: bank-exp2v2's projection was 32% out at step 1 and
 within 4% by step 50.
 
-Grep anchor: DDPSRUN-METRICS
+Grep anchor: HYPERUN-METRICS
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 # WHO PRINTS IT CHANGED, AND THE REGEX DELIBERATELY DID NOT. It used to be the
 # researcher's run.sh, per section 9 of script-contract.md. PACSrun's drivers now
 # prepend driver/common/gpu-watch.sh to every GPU workload on every vendor, so the
-# line arrives whether or not the script cooperates (grep PACSRUN-GPU-WATCH). The
+# line arrives whether or not the script cooperates (grep HYPERUN-GPU-WATCH). The
 # format is frozen at five fields precisely so that both producers parse here and an
 # old script that still has its own loop is not broken -- two watchers print two
 # lines per interval and `scan` takes the latest.
@@ -92,7 +92,7 @@ PROGRESS_LINE = re.compile(
     r"(?P<pace>[\d.]+)(?P<unit>s/it|it/s)"
 )
 
-# PACSRUN-METRIC-WATCH. The TRAINING'S OWN numbers, one JSON object per line,
+# HYPERUN-METRIC-WATCH. The TRAINING'S OWN numbers, one JSON object per line,
 # printed by driver/common/metric-watch.sh on the rented machine:
 #
 #   PACSRUN_METRIC={"_series":"bank/adapters/AD/iter_1","step":1,"score":2.44,...}
@@ -475,7 +475,7 @@ class Metrics:
     # card 0 alone (baseline-c, 2026-09-08). The four fields above still
     # describe the LOWEST-indexed card so an older screen keeps working.
     cards: list[CardMetrics] = field(default_factory=list)
-    # PACSRUN-METRIC-WATCH. One entry per TRAINING, which is not one per job: a
+    # HYPERUN-METRIC-WATCH. One entry per TRAINING, which is not one per job: a
     # job that trains nine adapters produces nine, each with its own steps
     # starting at 1. Empty for a job whose image has no python3, and for one
     # that keeps its numbers in memory and writes them once at the end -- which
@@ -657,7 +657,7 @@ def scan(lines: object, window_seconds: int) -> Metrics:
     metric_rows: list[dict] = []
 
     for line in lines:
-        # PACSRUN-METRIC-WATCH first, and the order matters for cost rather than
+        # HYPERUN-METRIC-WATCH first, and the order matters for cost rather than
         # correctness: a long training prints far more of these than GPU lines,
         # and the three regexes below would each run over every one of them.
         row = parse_metric(line)

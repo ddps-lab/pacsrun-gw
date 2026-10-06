@@ -33,7 +33,7 @@ was visible before submitting:
   * the count. Some cards are only sold in whole eight-GPU machines, so asking
     for one of them cannot be filled however the name is spelled.
 
-Grep anchor: DDPSRUN-CATALOGUE
+Grep anchor: HYPERUN-CATALOGUE
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ CHOOSABLE: tuple[Choice, ...] = (
     #
     # WHAT IT IS NOW. The name says its memory, and the memory is a FLOOR -- the rule RunPod's
     # decider already had (splitVRAMSuffix) and PACSrun now applies on AWS, GCP and Shadeform
-    # too (PACSRUN-NAME-FLOOR, pkg/decider/names.go). "A100-40GB" is any A100 with at least
+    # too (HYPERUN-NAME-FLOOR, pkg/decider/names.go). "A100-40GB" is any A100 with at least
     # 40 GB, so the 80 GB one answers it where it is cheaper -- and on 2026-09-28 it was, on
     # RunPod and on Shadeform ($1.35 against $1.99). "A100-80GB" reaches only 80 GB cards, as
     # it always did. The price sentence names the machine it priced, which is where a reader

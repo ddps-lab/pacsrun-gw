@@ -26,7 +26,7 @@ WHY RANDOM AND NOT A COUNTER. A counter needs somewhere to keep the count, and
 the server is meant to hold no state. 12 hex characters is 48 bits; with a
 thousand jobs the chance any two collide is about 1 in 560 million.
 
-Grep anchor: DDPSRUN-JOBID
+Grep anchor: HYPERUN-JOBID
 """
 
 from __future__ import annotations

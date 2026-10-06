@@ -30,7 +30,7 @@ WHY PKCE. Exchanging a code normally needs a client secret, and a CLI on a
 laptop cannot hold one. PKCE replaces it with a random number this process
 generates, keeps, and only reveals at the exchange.
 
-Grep anchor: DDPSRUN-CLI-LOGIN
+Grep anchor: HYPERUN-CLI-LOGIN
 """
 
 from __future__ import annotations

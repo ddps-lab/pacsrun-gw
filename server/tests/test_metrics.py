@@ -169,7 +169,7 @@ def test_a_short_series_is_not_thinned():
 def test_a_window_with_nothing_in_it_points_at_the_watcher_line_not_the_users_script():
     # Both of these notes used to tell the reader to go and edit their run.sh, which was
     # right while printing the GPU line was the script's job. PACSrun's drivers print it
-    # now (driver/common/gpu-watch.sh, grep PACSRUN-GPU-WATCH), so that advice would send
+    # now (driver/common/gpu-watch.sh, grep HYPERUN-GPU-WATCH), so that advice would send
     # someone to change a file that was never the cause. What IS diagnostic is the
     # PACSRUN_GPU_WATCH line the watcher itself prints, so the notes name that instead.
     reading = m.scan(["installing packages", "downloading model"], 3600)
@@ -295,7 +295,7 @@ def test_every_card_carries_its_own_utilisation_peak():
     assert m.scan(lines, 3600).peak_utilization_percent == 100
 
 
-# ------------------------------------------------- PACSRUN-METRIC-WATCH: the training's own numbers
+# ------------------------------------------------- HYPERUN-METRIC-WATCH: the training's own numbers
 #
 # ★ WHY THESE EXIST, in one measurement. On 2026-09-15 a job finished `Succeeded`
 # after 9 h 44 m on four A100s at $6.36/hour with a perfect progress bar, and one

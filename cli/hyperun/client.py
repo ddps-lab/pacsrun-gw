@@ -19,7 +19,7 @@ WHY THERE IS NO RETRY. A submit that timed out may or may not have created a
 job, and retrying it would create a second one that also rents a GPU. Until the
 API takes an idempotency key, the honest thing is to fail and say so.
 
-Grep anchor: DDPSRUN-CLI-CLIENT
+Grep anchor: HYPERUN-CLI-CLIENT
 """
 
 from __future__ import annotations
@@ -171,7 +171,7 @@ class Client:
                    expires_at: str | None = None) -> dict[str, Any]:
         """Store one value under `name`, for this caller's own namespace.
 
-        DDPSRUN-USER-SECRET. The one call in this file that carries a secret.
+        HYPERUN-USER-SECRET. The one call in this file that carries a secret.
         It goes in the BODY and never in the path or a query string: a URL is
         logged by every hop that touches it, and the server's own routes are
         forbidden from putting personal data in a query string for the same
@@ -181,7 +181,7 @@ class Client:
             name: the environment variable name, e.g. `HF_TOKEN`.
             value: the secret, already read from a file or stdin by `cli.py`.
             expires_at: when it stops working, ISO-8601. Omitted for a value
-                that does not expire. DDPSRUN-SECRET-EXPIRY.
+                that does not expire. HYPERUN-SECRET-EXPIRY.
 
         Returns:
             `{name, namespace, created}`.

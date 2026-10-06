@@ -9,14 +9,14 @@ the field safe.
 
 END-TO-END FLOW of one `GET /v1/images`:
 
-  1. The route (main.py, DDPSRUN-IMAGES-ROUTE) calls `list_images()`.
+  1. The route (main.py, HYPERUN-IMAGES-ROUTE) calls `list_images()`.
   2. `DescribeRepositories` returns every repository in THIS account and region. One page.
   3. For each repository, `DescribeImages` returns its images; the tagged ones are sorted newest
      first and the newest few are kept (TAGS_PER_REPO).
   4. Each repository becomes one row: its pullable address, its tags, and when the newest one was
      pushed. The screen draws them as a picker under the Image box, one block per repository with
      its tags as buttons, and clicking one fills the box. There is no datalist as of 2026-09-14
-     (ui/index.html, DDPSRUN-IMAGES): a dropdown of full addresses is a column of one repeated
+     (ui/index.html, HYPERUN-IMAGES): a dropdown of full addresses is a column of one repeated
      account id. The box still accepts anything -- a public image like `runpod/pytorch:...` is
      not in ECR and must stay typeable.
 
@@ -48,7 +48,7 @@ WHY boto3 IS IMPORTED INSIDE A FUNCTION. The Lambda runtime provides it, so this
 depend on it -- the same choice artifacts.py and lambda_handler.py make. The tests replace
 `ecr_client` with a fake and never import boto3 at all.
 
-Grep anchor: DDPSRUN-IMAGES
+Grep anchor: HYPERUN-IMAGES
 """
 
 from __future__ import annotations

@@ -51,7 +51,7 @@
   on screen against what the cluster says.
 -->
 
-<!-- DDPSRUN-UI-STALE-TAB. Sits above everything, hidden until the page finds out it is running
+<!-- HYPERUN-UI-STALE-TAB. Sits above everything, hidden until the page finds out it is running
      code older than what is deployed. Versioned asset URLs make the next LOAD correct and do
      nothing for a tab nobody reloads, and every navigation here is a hash change, so a tab left
      open overnight runs yesterday's code with no sign of it. On 2026-09-11 that had a reader
@@ -60,7 +60,7 @@
 <div id="stale" hidden></div>
 
 <header hidden id="bar">
-  <!-- DDPSRUN-BRAND. The word on screen is `hyperun`, split so the accent lands on `run` exactly
+  <!-- HYPERUN-BRAND. The word on screen is `hyperun`, split so the accent lands on `run` exactly
        where it did before: `hype` + `run` spells hyperun, because the name is hyper and run
        sharing one r. The tab title (<title> at the top of this file) has said hyperun since the
        rename; this line and the sign-in heading below were the two places the old word survived,
@@ -144,7 +144,7 @@
     <button class="go" id="do-login">Sign in with a token</button>
   </div>
 
-  <!-- DDPSRUN-REGISTER. The screen a first-time Google visitor lands on.
+  <!-- HYPERUN-REGISTER. The screen a first-time Google visitor lands on.
        WHAT STATE THIS IS. Cognito verified them, so the sign-in WORKED and the
        token in the browser is good. Every route still answers 403, because
        nobody has given the address a namespace and only an operator can
@@ -199,7 +199,7 @@
     <div id="home-running"></div>
   </div>
 
-  <!-- DDPSRUN-GETTING-STARTED. EVERY LINE HERE IS A COMMAND SOMEBODY WILL COPY, so a line that
+  <!-- HYPERUN-GETTING-STARTED. EVERY LINE HERE IS A COMMAND SOMEBODY WILL COPY, so a line that
        is only most of a command is worse than no line: it runs, it does not fail loudly, and it
        leaves the reader believing they have done the step. Two of the three were that (reported
        2026-09-11).
@@ -313,7 +313,7 @@
     <div id="d-message"></div>
   </div>
 
-  <!-- DDPSRUN-COMPARE-PANEL. A mode=compare job priced every candidate and bought nothing, so
+  <!-- HYPERUN-COMPARE-PANEL. A mode=compare job priced every candidate and bought nothing, so
        it has no GPU, no logs, no result files and no shell -- and until this panel existed the
        one thing it DID have, the ranking, arrived as a run-on sentence in the status message
        under a badge most readers would take for a failure.
@@ -496,7 +496,7 @@
         <div class="grid2">
           <label><span><b>Name</b></span>
             <input id="f-name" placeholder="bank-exp3"></label>
-          <!-- DDPSRUN-IMAGES. A free-text box plus a VISIBLE picker, and deliberately no datalist.
+          <!-- HYPERUN-IMAGES. A free-text box plus a VISIBLE picker, and deliberately no datalist.
                The box is not a select because a public image (nvidia/cuda:..., runpod/pytorch:...)
                is not in our registry at all and must stay typeable.
 
@@ -518,7 +518,7 @@
             <div class="field-aside">
               <button class="flat tiny" id="f-image-toggle" type="button">Browse this lab's images</button>
             </div>
-            <!-- DDPSRUN-IMAGES-TRIM. The list drew EVERY tag of EVERY repository: 55 buttons across
+            <!-- HYPERUN-IMAGES-TRIM. The list drew EVERY tag of EVERY repository: 55 buttons across
                  19 repositories on this account, and most of them 12-character or 40-character
                  commit shas that tell a reader nothing. Twelve of the nineteen repositories belong
                  to other projects entirely (criu-kubevirt-test, theseus), so the thing being looked
@@ -543,14 +543,14 @@
         <span class="spacer"></span>
       </summary>
       <div class="acc-body">
-        <!-- DDPSRUN-UI-COMMAND. One shell line, sent as args ["bash","-lc","<line>"], which is
+        <!-- HYPERUN-UI-COMMAND. One shell line, sent as args ["bash","-lc","<line>"], which is
              the idiom /v1/explain's own example uses. It used to be sent as a bare STRING into a
              field the server types as list[str], so ANY text here made Validate answer 422
              "Input should be a valid list" - the placeholder itself was a failing input, and an
              empty box was the only submittable state. Sending a shell line rather than splitting
              on spaces is what makes quoting work: `python -c "import x"` is one argument to the
              shell, and four wrong tokens to a splitter. -->
-        <!-- DDPSRUN-UI-SCRIPT. The box was labelled "one shell line" and it is a textarea, so a whole
+        <!-- HYPERUN-UI-SCRIPT. The box was labelled "one shell line" and it is a textarea, so a whole
              run.sh always pasted fine -- but the request only carried it as `args`, never as
              `script`, and FOUR of validate's checks read `script` and nothing else. So on this
              screen check_adapter_paths, check_partial_results, check_caps and the TRL-patch check
@@ -559,7 +559,7 @@
           <textarea id="f-command" rows="10" placeholder="set -euo pipefail&#10;&#10;python src/train.py --config configs/train.yaml&#10;python src/evaluate.py --config configs/train.yaml"></textarea>
           <div id="f-command-note"></div></label>
 
-        <!-- DDPSRUN-SCRIPT-FILE. Load a run.sh from the machine instead of pasting
+        <!-- HYPERUN-SCRIPT-FILE. Load a run.sh from the machine instead of pasting
              it, and save the box back out to a file.
              WHY NO UPLOAD TO THE SERVER. The script is not stored anywhere: it
              travels on the job itself, inside `args`, which is what makes the
@@ -574,7 +574,7 @@
           <span class="dim tiny" id="f-script-file-note"></span>
         </div>
 
-        <!-- DDPSRUN-SCRIPT-REUSE. The scripts this namespace has already submitted, ON THIS SCREEN.
+        <!-- HYPERUN-SCRIPT-REUSE. The scripts this namespace has already submitted, ON THIS SCREEN.
              They were reachable before -- the Scripts screen has had a "Use this" button since it
              existed -- but only by leaving the half-filled form, finding that screen, clicking, and
              being sent back. Rerunning a script with one thing changed is the commonest submission
@@ -616,7 +616,7 @@
               <option value="B200">B200 (180 GB) - sold only as an 8-GPU machine</option>
               <option value="B300">B300 (288 GB) - sold only as an 8-GPU machine</option>
             </select></label>
-          <!-- DDPSRUN-UI-GPU-COUNT. Six of the fourteen cards in the list above are sold only as a
+          <!-- HYPERUN-UI-GPU-COUNT. Six of the fourteen cards in the list above are sold only as a
                whole 8-GPU machine, and validate refuses them with `gpu-not-sold-singly` when the
                count is 1 (validate.py's `if gpu_count == 1 and not choice.sold_singly`). Without a
                box for the count, those six could be selected and never submitted -- the check was
@@ -626,7 +626,7 @@
           <label><span><b>Parallelism</b> <span class="dim">how many independent pods</span></span>
             <input id="f-parallelism" type="number" min="1" max="256" value="1"></label>
           <label><span><b>Capacity type</b></span>
-            <!-- DDPSRUN-CAPACITY-DEFAULT. on-demand, changed from spot 2026-09-12. Neither the
+            <!-- HYPERUN-CAPACITY-DEFAULT. on-demand, changed from spot 2026-09-12. Neither the
                  server nor the CLI has a default at all -- SubmitRequest.capacity_type defaults to
                  None and the CLI makes you pass --capacity-type -- so this box's default is this
                  screen's own choice and nothing else disagrees with it. A reclaimed machine costs a
@@ -637,7 +637,7 @@
               <option value="on-demand" selected>on-demand (dearer, never reclaimed)</option>
               <option value="spot">spot (cheaper, can be reclaimed)</option>
             </select></label>
-          <!-- DDPSRUN-UI-NO-RESULT-PATH. There was a "Result path" input here and the server has
+          <!-- HYPERUN-UI-NO-RESULT-PATH. There was a "Result path" input here and the server has
                no field for it: /v1/explain says "Where the output goes, which identity the job runs
                as, and which slice of storage it may write to are all decided from your token. There
                is no field for any of them." The box sent `result_path`, pydantic ignores unknown
@@ -656,7 +656,7 @@
         <span class="spacer"></span>
       </summary>
       <div class="acc-body">
-        <!-- DDPSRUN-PLACEMENT-DEFAULT. cheapest, changed from ordered 2026-09-14.
+        <!-- HYPERUN-PLACEMENT-DEFAULT. cheapest, changed from ordered 2026-09-14.
 
              WHAT THE OLD DEFAULT DID. `ordered` asks the candidates in the order written and STOPS
              at the first that answers, so the job takes whatever the first vendor quotes and no
@@ -664,14 +664,14 @@
              placement.mode `default: ordered`) because it is what every job did before the field
              existed, not because it is the better answer for a person filling in this form.
 
-             WHY THE SCREEN MAY DIFFER FROM THE CRD. Same reasoning as DDPSRUN-CAPACITY-DEFAULT
+             WHY THE SCREEN MAY DIFFER FROM THE CRD. Same reasoning as HYPERUN-CAPACITY-DEFAULT
              above: a default is a decision made on behalf of whoever does not change it, and the
              person least able to judge the walk order is the one most likely to accept it. Asking
              every candidate and buying the cheapest costs one solve and can only lower the bill.
 
              WHAT IT IS NOT. It is not a promise about which vendor wins: `cheapest` ranks the
              candidates the deciders produce, and a vendor nobody can rent from is still filtered by
-             the Vendors row below (DDPSRUN-VENDOR-CHOICE). Every `cheapest` job submitted so far
+             the Vendors row below (HYPERUN-VENDOR-CHOICE). Every `cheapest` job submitted so far
              landed on RunPod and finished (15 of them, 2026-08-24 to 2026-09-07; the sixteenth is
              Pending for a reason that has nothing to do with the mode).
 
@@ -686,7 +686,7 @@
           </select></label>
         <div id="f-mode-note"></div>
 
-        <!-- DDPSRUN-VENDOR-CHOICE. PACSrun's CRD has had spec.placement.vendors and
+        <!-- HYPERUN-VENDOR-CHOICE. PACSrun's CRD has had spec.placement.vendors and
              spec.placement.mode all along and this gateway wrote neither: it sent
              `placement: {capacityType}` and nothing else, so "run this on RunPod" and "price every
              vendor and buy nothing" could not be said through the screen at all.
@@ -711,10 +711,10 @@
             <label class="chk"><input type="checkbox" data-vendor="nebius" data-priced> nebius</label>
           </div></label>
 
-        <!-- DDPSRUN-REGIONS. EMPTY IS NOT "ANYWHERE", and that is the whole reason
+        <!-- HYPERUN-REGIONS. EMPTY IS NOT "ANYWHERE", and that is the whole reason
              this box exists. PACSrun gives an AWS ask that names no region exactly
              ONE region -- the operator's own default, us-west-2 here
-             (placement.go:376, grep PACSRUN-AWS-ONE-REGION). So every job submitted
+             (placement.go:376, grep HYPERUN-AWS-ONE-REGION). So every job submitted
              from this screen before 2026-09-08 was in us-west-2 and there was no way
              to say otherwise: the CRD had placement.regions all along and the
              gateway sent nothing.
@@ -738,7 +738,7 @@
         <label><span><b>Environment</b> <span class="dim">one KEY=VALUE per line</span></span>
           <textarea id="f-env" placeholder="EPOCHS=4&#10;PAIRS=train.jsonl"></textarea></label>
 
-        <!-- DDPSRUN-TRAINING-FACTS. Four boxes, and until 2026-09-08 there were four DIFFERENT ones:
+        <!-- HYPERUN-TRAINING-FACTS. Four boxes, and until 2026-09-08 there were four DIFFERENT ones:
              `row_tokens` was missing and it is the single field that turns the estimate from
              "unknown" into a number. estimate.estimate uses them as
                  pairs + epochs   -> the step count
@@ -748,7 +748,7 @@
              the user had filled three boxes to be told nothing. Measured on this screen 2026-09-08.
              grad_accum is not asked for: it defaults to 8, which is what our scripts use, and the
              CLI has --grad-accum for anyone who differs. -->
-        <!-- DDPSRUN-TRAINING-SIZE. Folded away by default (2026-09-11). Five numeric boxes sat open
+        <!-- HYPERUN-TRAINING-SIZE. Folded away by default (2026-09-11). Five numeric boxes sat open
              in the middle of the form and every one of them is optional, so the commonest
              submission -- rerun this script, change one thing -- had to scroll past five questions
              it was never going to answer. They are the ONLY input the runtime estimate has, so they
@@ -779,7 +779,7 @@
   <div class="panel" id="s2" hidden>
     <header><h2>Validate</h2><span class="dim small">The server checks the request before anything is bought.</span></header>
     <div id="s2-findings"></div>
-    <!-- DDPSRUN-UI-NOT-CHECKED. The server always answered this and the screen threw it away,
+    <!-- HYPERUN-UI-NOT-CHECKED. The server always answered this and the screen threw it away,
          so "Nothing to flag." read as "everything is fine". -->
     <div id="s2-not-checked"></div>
     <div class="row">
@@ -815,7 +815,7 @@
 </section>
 
 <!-- ------------------------------------------------------------ 4b. Scripts -->
-<!-- DDPSRUN-SCRIPTS. Every run.sh in one namespace, GROUPED BY OWNER, read back out of the
+<!-- HYPERUN-SCRIPTS. Every run.sh in one namespace, GROUPED BY OWNER, read back out of the
      jobs themselves. It said "this caller's own" and "already scoped to this caller" until
      2026-09-08; the namespace never gave that, since it may hold a whole team and here it holds
      everyone. Each section is one person, from that job's ddpsrun.io/owner label.
@@ -830,7 +830,7 @@
       <p class="dim small" id="scripts-note"></p>
     </div>
     <div class="actions">
-      <!-- DDPSRUN-SCRIPTS-NAMESPACE. One listing is one namespace's. Drawn only
+      <!-- HYPERUN-SCRIPTS-NAMESPACE. One listing is one namespace's. Drawn only
            for an operator, whose token file entry says admin. -->
       <select id="scripts-ns" hidden title="Namespace"></select>
       <button class="go" data-goto="submit">New job</button>

@@ -8,7 +8,7 @@ The PKCE check is the one that matters: if the challenge is not really the
 SHA-256 of the verifier, Cognito rejects the exchange and the failure surfaces
 only against a live user pool.
 
-Grep anchor: DDPSRUN-CLI-LOGIN-TESTS
+Grep anchor: HYPERUN-CLI-LOGIN-TESTS
 """
 
 from __future__ import annotations

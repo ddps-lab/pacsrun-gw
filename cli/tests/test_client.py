@@ -67,7 +67,7 @@ def test_shell_sends_the_command_and_waits_longer_than_the_server():
     assert call["url"] == "https://run.example/v1/jobs/baseline-c/exec"
     assert call["json"] == {"command": "nvidia-smi -L", "slot": 1, "timeout_seconds": 20,
                             "session": False, "seq": 0}, (
-        "PACSRUN-SHELL-SESSION 이후에도 기본은 한 줄짜리 stateless 형태다")
+        "HYPERUN-SHELL-SESSION 이후에도 기본은 한 줄짜리 stateless 형태다")
     # The server may hold the request for its whole window, so the client's
     # read timeout must outlive it.
     assert call["timeout"] > 20

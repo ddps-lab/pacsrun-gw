@@ -25,7 +25,7 @@ to a namespace lives in the token file (`docs/16-login.md` 16.2), because a
 namespace has to have been created by terraform first and Cognito has no way to
 know whether it was.
 
-Grep anchor: DDPSRUN-COGNITO-VERIFY
+Grep anchor: HYPERUN-COGNITO-VERIFY
 """
 
 from __future__ import annotations

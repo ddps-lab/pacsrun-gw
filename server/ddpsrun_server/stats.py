@@ -12,7 +12,7 @@ END-TO-END FLOW of one `/v1/stats`:
 WHY THIS IS POSSIBLE ONLY SINCE 2026-09-01. A PacsJob's status carried no
 timestamps, so a finished job's own record said when it was accepted and nothing
 about when it ran. PACSrun now writes status.startedAt and status.finishedAt
-(PACSRUN-JOB-CLOCK), and those two are what make a duration, and a duration
+(HYPERUN-JOB-CLOCK), and those two are what make a duration, and a duration
 times the offering's hourly price is what makes a cost.
 
 WHY startedAt AND NOT creationTimestamp. Between the two sits waiting for a
@@ -25,7 +25,7 @@ caller asking for their team's figures is not thereby entitled to read another
 member's job names or results — that stays namespace-scoped, which is where the
 isolation actually lives.
 
-Grep anchor: DDPSRUN-STATS
+Grep anchor: HYPERUN-STATS
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ class VendorTotals:
     hours must land somewhere rather than disappear.
 
     A NAMED VENDOR KEEPS ITS ROW EVEN WITH NO CLOCK. Jobs that finished before
-    PACSRUN-JOB-CLOCK (2026-09-01) carry a vendor and no startedAt -- one gcp
+    HYPERUN-JOB-CLOCK (2026-09-01) carry a vendor and no startedAt -- one gcp
     and eleven runpod on this cluster. A row saying 0.0 hours is a true and
     useful answer; deleting `gcp` from the table because we cannot time it is
     not. See the loop in `summarise` for the two-fact rule.
@@ -165,7 +165,7 @@ def job_cost(job: dict[str, Any], hours: float) -> float | None:
     """
     status = job.get("status") or {}
 
-    # PACSRUN-GROUP-PRICE, the vendor-neutral first choice. Since 2026-09-07
+    # HYPERUN-GROUP-PRICE, the vendor-neutral first choice. Since 2026-09-07
     # PACSrun stamps every offering group with the price the winning answer
     # stated (usdPerHour — machine count already inside, so nothing here
     # multiplies). When EVERY group carries one, the job's hourly rate is
@@ -300,7 +300,7 @@ def summarise(
             #
             # A NAMED VENDOR ALWAYS GETS ITS ROW, clock or no clock. On this
             # cluster one gcp job and eleven runpod jobs finished before
-            # PACSRUN-JOB-CLOCK existed (2026-09-01), so they carry a vendor and
+            # HYPERUN-JOB-CLOCK existed (2026-09-01), so they carry a vendor and
             # no duration. Dropping them for want of a clock deleted `gcp` from
             # the Per vendor table entirely, which is a worse answer than a row
             # reading 0.0 hours: we know perfectly well who sold those.

@@ -151,7 +151,7 @@ variable "tags" {
   }
 }
 
-// DDPSRUN-COGNITO-WIRING. Outputs of `terraform/cognito`. Kept as variables
+// HYPERUN-COGNITO-WIRING. Outputs of `terraform/cognito`. Kept as variables
 // rather than a data source or a remote state read so that the two stacks stay
 // independent: the lambda can be applied when no user pool exists at all, which
 // is what every deployment before 2026-09-01 did and what a fresh clone does.
@@ -179,7 +179,7 @@ variable "cognito_login_domain" {
 }
 
 
-// DDPSRUN-REGISTER. Where "somebody signed in and has no namespace" mail goes.
+// HYPERUN-REGISTER. Where "somebody signed in and has no namespace" mail goes.
 //
 // EMPTY IS A SUPPORTED STATE, not a half-configured one. The server then reports
 // `registration_requests: false` on /v1/login-config, the screen draws no button

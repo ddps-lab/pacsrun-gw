@@ -11,7 +11,7 @@ claims the table is USED for, each of which was false before it existed:
   3. an ask AWS cannot fill is named before submitting. The old check tested
      `count == 1` only, and 76 of the 82 unfillable asks passed it.
 
-Grep anchor: DDPSRUN-AWS-PRICES
+Grep anchor: HYPERUN-AWS-PRICES
 """
 from __future__ import annotations
 
@@ -149,7 +149,7 @@ def test_runpod_multiplies_by_the_card_count_because_that_is_measured():
     """★ 2026-09-09 에 답이 $6.36 에서 $6.388 로 바뀌었다. 곱셈이 틀린 것이 아니다.
 
     이 테스트가 지키는 사실은 "카드 수를 곱한다" 이고 그것은 그대로다. 다만 4장
-    A100 은 실제 청구서를 들고 있는 유일한 모양이라(DDPSRUN-BILLED-RATE) 그 값이
+    A100 은 실제 청구서를 들고 있는 유일한 모양이라(HYPERUN-BILLED-RATE) 그 값이
     답이 된다. 곱셈이 여전히 옳다는 것은 두 값이 0.4% 안에서 같다는 것으로 확인하고,
     곱셈 자체는 청구서가 없는 모양(8장)에서 시험한다.
     """
@@ -291,7 +291,7 @@ def test_the_never_rented_warning_no_longer_calls_the_price_a_guess():
 
 
 # --------------------------------------------------------------------------
-# DDPSRUN-PRICES / DDPSRUN-REGIONS. Every region, not one -- and being able to
+# HYPERUN-PRICES / HYPERUN-REGIONS. Every region, not one -- and being able to
 # ASK for the others, which is what makes looking at them worth anything.
 # --------------------------------------------------------------------------
 
@@ -316,7 +316,7 @@ def test_the_table_covers_every_region_the_catalogue_prices():
 
 def test_an_ask_that_names_no_region_gets_the_operators_one_default():
     """★ EMPTY IS NOT "ANYWHERE". PACSrun gives an unqualified AWS ask exactly one
-    region -- the operator's own default (placement.go:376, PACSRUN-AWS-ONE-REGION)
+    region -- the operator's own default (placement.go:376, HYPERUN-AWS-ONE-REGION)
     -- so pricing it at the globally cheapest region would be a wrong number
     dressed as a helpful one."""
     default_only = m.aws_machines_for("L40S")
@@ -410,7 +410,7 @@ def test_rows_whose_spot_beats_their_own_on_demand_are_flagged_not_dropped():
 
 
 def test_the_billed_rate_beats_the_multiplication_when_we_have_the_invoice():
-    """DDPSRUN-BILLED-RATE. 청구서를 들고 있으면 그것을 인용한다.
+    """HYPERUN-BILLED-RATE. 청구서를 들고 있으면 그것을 인용한다.
 
     곱셈(4 x $1.59 = $6.36)도 옳다 — RunPod 은 카드당 과금이고 그것은 실측이다.
     다만 **유도한 값과 청구서는 표준이 다르다.** baseline-c 의 네 장은
@@ -471,7 +471,7 @@ def test_a_measured_job_is_labelled_measured_and_ignores_expected_hours():
 
 
 # --------------------------------------------------------------------------
-# DDPSRUN-RUNPOD-PRICES, added 2026-09-09.
+# HYPERUN-RUNPOD-PRICES, added 2026-09-09.
 #
 # WHAT WAS WRONG BEFORE. The table above is AWS and GCP only, and the only
 # RunPod prices in the service were the two cards in `measurements.GPUS` -- the
@@ -627,7 +627,7 @@ def test_spot_is_answered_before_the_card_is_looked_up():
 
 
 def test_a_runpod_only_ask_that_cannot_be_filled_is_an_error_not_a_hint():
-    """DDPSRUN-RUNPOD-CAPACITY. RunPod alone and RunPod cannot answer means the
+    """HYPERUN-RUNPOD-CAPACITY. RunPod alone and RunPod cannot answer means the
     job sits in Pending and retries -- so it is an ERROR. With AWS still in the
     list the solve has somewhere else to land, so the same fact is INFO."""
     from ddpsrun_server import validate as v

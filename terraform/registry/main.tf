@@ -27,7 +27,7 @@
 // would put the server in front of users (docs/08-plan.md open item 12) — that is separate and
 // an ALB is about $22 a month.
 //
-// Grep anchor: DDPSRUN-REGISTRY
+// Grep anchor: HYPERUN-REGISTRY
 
 data "aws_caller_identity" "current" {}
 

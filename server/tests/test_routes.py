@@ -33,13 +33,13 @@ class FakeCluster:
         # HYPERUN-JOB-STOP. (namespace, name, stopped) for every pause or resume.
         self.stop_calls: list[tuple[str, str, bool]] = []
         self.exec_answer: tuple[str, int | None] = ("", 0)
-        # DDPSRUN-USER-SECRET. namespace -> {name: value}. The VALUES are kept
+        # HYPERUN-USER-SECRET. namespace -> {name: value}. The VALUES are kept
         # here only so a test can assert the server passed the right one down;
         # no route may ever return one, and `test_a_registered_value_never_
         # comes_back` is what holds that.
         self.secrets: dict[str, dict[str, str]] = {}
         self.secrets_forbidden: set[str] = set()
-        # DDPSRUN-SECRET-EXPIRY. (namespace, name) -> ISO-8601 string.
+        # HYPERUN-SECRET-EXPIRY. (namespace, name) -> ISO-8601 string.
         self.expiries: dict[tuple[str, str], str] = {}
 
     def user_secrets(self, namespace):
@@ -120,7 +120,7 @@ class FakeCluster:
         except KeyError:
             raise k8s.NotFound(name) from None
 
-    # `stdin` is part of the signature since PACSRUN-SHELL-SESSION and the double has to take
+    # `stdin` is part of the signature since HYPERUN-SHELL-SESSION and the double has to take
     # it -- a double that cannot be called the way the route calls it is the third time this
     # week a missing kwarg on a fake hid a real defect (the `json` import below).
     def exec_in_driver(self, namespace, job_name, slot, argv, timeout_seconds, stdin=None):
@@ -167,7 +167,7 @@ def client(tmp_path, monkeypatch, cluster):
                     {"sha256": auth.hash_token("solo-token"), "user": "solo",
                      "namespace": "solo-ns"},
                     # The operator account: the one kind of caller whose
-                    # ?namespace= is honoured (DDPSRUN-ADMIN-NAMESPACE).
+                    # ?namespace= is honoured (HYPERUN-ADMIN-NAMESPACE).
                     {"sha256": auth.hash_token("root-token"), "user": "root",
                      "namespace": "default", "team": "ddps", "admin": True},
                 ]
@@ -248,14 +248,14 @@ def test_an_admin_reads_the_namespace_they_asked_for(client, cluster):
 
 
 def test_the_secret_names_come_back_without_any_value(client):
-    # DDPSRUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` opens the vault; the
+    # HYPERUN-SECRET-NAMES. `secrets: ["GITHUB_PAT"]` opens the vault; the
     # accepted words used to be learnable only from a refusal.
     answer = as_alice(client, "GET", "/v1/secrets")
     assert answer.status_code == 200
     body = answer.json()
     assert body["names"] == ["GITHUB_PAT"]
     # The Kubernetes Secret behind it is an internal name and must not appear:
-    # the same rule DDPSRUN-SPEC-REDACT enforces on /v1/jobs/{id}/spec.
+    # the same rule HYPERUN-SPEC-REDACT enforces on /v1/jobs/{id}/spec.
     assert "slm-rca-clone" not in answer.text
 
 
@@ -289,7 +289,7 @@ class FakeS3:
 
 
 def test_the_image_list_offers_what_this_lab_has_built(client, monkeypatch):
-    """DDPSRUN-IMAGES-ROUTE. Addresses ready to paste into the Image box.
+    """HYPERUN-IMAGES-ROUTE. Addresses ready to paste into the Image box.
 
     The module's own behaviour is pinned in test_registry.py; what this asserts is the ROUTE's
     contract -- that the addresses are built server-side, so one place decides the shape rather
@@ -324,7 +324,7 @@ def test_a_registry_that_refuses_is_200_with_a_note_and_not_502(client, monkeypa
     So a caller who cannot see the list is inconvenienced and not blocked, and 502 would be a
     harder answer than the situation deserves. What the note MUST do is name the refusal: an
     empty list on its own reads as "this lab has built nothing", which would send an operator
-    hunting in the wrong place when what is missing is the IAM policy (DDPSRUN-IMAGES-READ in
+    hunting in the wrong place when what is missing is the IAM policy (HYPERUN-IMAGES-READ in
     terraform/lambda).
     """
     from ddpsrun_server import registry
@@ -482,7 +482,7 @@ def test_exec_relays_one_command_and_the_exit_code(client, cluster):
         "기다리는 container runtime 이 있고, 이 형태는 EOF 를 보낼 방법이 없다")
 
 
-# ------------------------------------------------------------- PACSRUN-SHELL-SESSION
+# ------------------------------------------------------------- HYPERUN-SHELL-SESSION
 
 
 def test_a_session_command_is_typed_into_a_shell_that_is_already_running(client, cluster):
@@ -689,7 +689,7 @@ def test_a_string_that_is_no_kind_of_name_never_reaches_the_cluster(
     # Only strings that are neither a ddpsrun id nor a legal Kubernetes object
     # name are refused before any lookup. A legal name that happens not to
     # exist ("job-zzzz") now DOES reach the cluster — that is the by-name
-    # lookup working (DDPSRUN-JOB-BY-NAME) — and 404s from the lookup itself,
+    # lookup working (HYPERUN-JOB-BY-NAME) — and 404s from the lookup itself,
     # which test_a_kubectl_job_opens_by_its_object_name exercises.
     def explode(namespace, name):
         raise AssertionError(f"the cluster was asked for {name!r}")
@@ -1330,7 +1330,7 @@ def test_the_job_list_needs_a_token(client):
 
 
 # ---------------------------------------------------------------------------
-# DDPSRUN-SCREENS: the four additions `docs/15-screens.md` found missing when
+# HYPERUN-SCREENS: the four additions `docs/15-screens.md` found missing when
 # the five screens were designed. Each test names the screen that needs it.
 # ---------------------------------------------------------------------------
 
@@ -1368,7 +1368,7 @@ def test_the_job_list_reports_who_submitted_each_job(client, cluster):
 
 
 def test_a_job_carries_the_two_clock_stamps(client, cluster):
-    """The elapsed column needs run time, not age (PACSRUN-JOB-CLOCK)."""
+    """The elapsed column needs run time, not age (HYPERUN-JOB-CLOCK)."""
     cluster.objects[("lab-alice", "ddpsrun-0000000000a2")] = _job(
         "ddpsrun-0000000000a2", phase="Succeeded",
         startedAt="2026-09-01T00:01:00Z", finishedAt="2026-09-01T02:30:00Z")
@@ -1440,7 +1440,7 @@ def test_the_spec_route_returns_the_submission(client, cluster):
 
 
 def test_the_spec_route_removes_the_secret_source_but_keeps_the_name(client, cluster):
-    """DDPSRUN-SPEC-REDACT: the Kubernetes Secret's name and key never leave."""
+    """HYPERUN-SPEC-REDACT: the Kubernetes Secret's name and key never leave."""
     job_id = as_alice(
         client, "POST", "/v1/jobs", json=submit_body(secrets=["GITHUB_PAT"])
     ).json()["job_id"]
@@ -1487,7 +1487,7 @@ def test_compared_counts_as_finished_not_as_still_running(client, cluster):
 
 
 # ---------------------------------------------------------------------------
-# DDPSRUN-CANCEL. Added 2026-09-02 after a job sat in Pending with no way out:
+# HYPERUN-CANCEL. Added 2026-09-02 after a job sat in Pending with no way out:
 # it asked for an L40S on spot, which RunPod refuses before reading the
 # catalogue and which no AWS row matched, so the controller retried the same
 # failure forever. `kubectl` was the only way to stop it, and needing kubectl is
@@ -1539,7 +1539,7 @@ def test_cancelling_an_unknown_id_is_404(client):
 def test_cancelling_needs_a_token(client):
     assert client.delete("/v1/jobs/job-0000000000a1").status_code == 401
 
-# ---------------------------------------------------------------- DDPSRUN-SCRIPTS
+# ---------------------------------------------------------------- HYPERUN-SCRIPTS
 
 
 def seed_job_with_args(cluster, namespace, name, args, job_id="", display="", created="",
@@ -1568,7 +1568,7 @@ def seed_job_with_args(cluster, namespace, name, args, job_id="", display="", cr
 
 
 def test_a_script_is_read_back_out_of_the_job_that_ran_it(client, cluster):
-    """DDPSRUN-SCRIPTS. Nothing is stored; the text is on the PacsJob already.
+    """HYPERUN-SCRIPTS. Nothing is stored; the text is on the PacsJob already.
 
     The Script box sends the same text twice -- as `args` (what runs) and as `script` (what
     validate reads) -- and the server throws `script` away, exactly as its field description
@@ -1646,7 +1646,7 @@ def test_scripts_are_the_callers_own_and_nobody_elses(client, cluster):
     assert client.get("/v1/scripts").status_code == 401
 
 
-# ------------------------------------------------- DDPSRUN-PRICES: /v1/prices
+# ------------------------------------------------- HYPERUN-PRICES: /v1/prices
 #
 # WHY THESE EXIST AT ALL, and it is a lesson rather than a formality. /v1/prices
 # shipped with 24 unit tests behind its DATA and not one behind the ROUTE, and
@@ -1749,7 +1749,7 @@ def test_regions_reach_the_estimate_through_the_route(client):
     assert "us-west-2" in home["basis"] and "ap-northeast-1" in seoul["basis"]
 
 
-# ------------------------------------- DDPSRUN-SCRIPTS: who ran what, per person
+# ------------------------------------- HYPERUN-SCRIPTS: who ran what, per person
 
 
 def test_two_people_running_the_same_script_are_two_entries(client, cluster):
@@ -1827,7 +1827,7 @@ def test_the_namespace_is_reported_as_a_namespace_and_not_as_a_person(client, cl
     assert answer["owners"] == ["alice", "bob"]    # two people in it
 
 
-# ---------------------------------------------- DDPSRUN-OWNER-GATE: two people,
+# ---------------------------------------------- HYPERUN-OWNER-GATE: two people,
 #                                                one namespace
 #
 # ★ WHAT THESE MEASURE, AND WHY NONE OF THE 390 TESTS ABOVE CAUGHT IT. Every
@@ -1985,7 +1985,7 @@ def test_the_answer_is_404_and_not_403(shared_ns_client, cluster):
     assert missing.status_code == 404 and missing.json()["detail"] == answer.json()["detail"]
 
 
-# ------------------------------------------------- DDPSRUN-USER-SECRET
+# ------------------------------------------------- HYPERUN-USER-SECRET
 # 자기 namespace 에 값을 등재하는 route 셋. 2026-09-08 에 더했다. 그 전까지
 # credential 을 쓰려면 운영자가 tfvars 를 고치고 terraform apply 를 돌려야 했다.
 
@@ -2125,7 +2125,7 @@ def test_validate_accepts_a_name_this_namespace_registered(client, cluster):
     assert "secret-name-unknown" in {f["code"] for f in unknown["findings"]}
 
 
-# ------------------------------------------------- DDPSRUN-CONTINUE-FROM
+# ------------------------------------------------- HYPERUN-CONTINUE-FROM
 # 2026-09-09 결정 1번. 회차를 이어 가려면 앞 job 의 result path 를 물려받아야 한다 —
 # wrapper 의 되받기는 자기 `PACSRUN_RESULT_PATH` 안만 읽고 container 자격증명도 그
 # prefix 에만 붙으므로, 제출마다 path 가 바뀌면 iteration 2 가 1 의 checkpoint 를 못 본다.
@@ -2234,7 +2234,7 @@ def test_validate_answers_every_shape_the_screen_and_the_cli_can_send(client, cl
         assert "findings" in answer.json(), extra
 
 
-# ------------------------------------------- DDPSRUN-SECRET-EXPIRY
+# ------------------------------------------- HYPERUN-SECRET-EXPIRY
 # 2026-09-09. 09-08 에 judge 자격증명이 14:27Z 에 만료됐고 그것을 알 방법이
 # "job 을 내고 한 시간 뒤 Bedrock 호출이 거부되는 것을 보는 것" 뿐이었다.
 
