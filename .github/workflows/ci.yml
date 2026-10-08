@@ -180,6 +180,11 @@ jobs:
       # 모델을 안 부른다**(판정은 산수라서 공짜, 문장은 호출당 약 $0.0002).
       - name: Learning 패널이 그리는 것과 안 쓰는 돈
         run: node ui/learning_panel_test.js
+      # job 화면의 기계와 GPU. 서버의 `gpu` 칸은 vendor 가 붙인 이름 하나라서, CPU job 이
+      # "GPU  t3.xlarge" 로 보였다(2026-10-07). Instance 와 GPU 를 나눠 그리고, GPU 를
+      # 요청하지 않은 job 에는 GPU 줄이 없어야 한다(HYPERUN-INSTANCE-AND-GPU).
+      - name: job 화면의 Instance 와 GPU
+        run: node ui/job_machine_test.js
 
   references-current:
     name: agent reference 가 코드와 맞는지

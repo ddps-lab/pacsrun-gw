@@ -290,7 +290,10 @@ What `GET /v1/jobs/{id}` returns.
 | `created_at` |  |  |
 | `failed_offerings` |  | How many machine offerings were tried and skipped, from the length of status.excludedOfferings. Only the count crosses the API; which zones is this account's business, the same rule that keeps zone and region out of this view. |
 | `finished_at` |  | When the job reached Succeeded or Failed, from status.finishedAt. Absent while it is still running. |
-| `gpu` |  | What it is actually running on, once it is running. |
+| `gpu` |  | Older name for what it runs on: the vendor's own name for the rented unit, whatever that is (an EC2 instance type such as `t3.xlarge` on AWS, a GPU type on RunPod). Kept with this value because CLI 0.2.7 and older print it. Read `instance`, `gpu_model` and `gpu_count` instead. |
+| `gpu_count` |  | GPUs per pod, as the job asked (spec.resources.gpus.count). Null for a job that asked for no GPU. |
+| `gpu_model` |  | The GPU model the job got, e.g. `L4`, `A100-SXM4-80GB`. Null for a job that asked for no GPU, and before a machine exists. |
+| `instance` |  | The machine it runs on, in the vendor's own words: an EC2 instance type on AWS (`g6.2xlarge`), a machine type on GCP (`g2-standard-4`), Shadeform's instance name (`massedcompute_L40S`). Null on RunPod, which rents a pod by GPU type and has no instance type, and null before a machine exists. |
 | `job_id` | yes |  |
 | `message` |  | Detail, mostly on failure. |
 | `name` | yes |  |
