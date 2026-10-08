@@ -272,6 +272,46 @@ def test_status_calls_a_restart_what_it_is(fake, capsys):
     assert "the machine was lost and the job was restarted" in printed
 
 
+def _status_lines(fake, capsys, **view):
+    fake.status_result = {"job_id": "job-a8acdef80a07", "name": "x", "phase": "Running",
+                          **view}
+    run(["status", "job-a8acdef80a07"])
+    return capsys.readouterr().out.splitlines()
+
+
+def test_status_names_the_machine_and_gives_a_cpu_job_no_gpu_line(fake, capsys):
+    # HYPERUN-INSTANCE-AND-GPU. A server from 2026-10-08 on splits what a job runs
+    # on into the machine and the GPU. A CPU job on AWS has a machine and no GPU.
+    lines = _status_lines(fake, capsys, vendor="aws", gpu="t3.xlarge",
+                          instance="t3.xlarge", gpu_model=None, gpu_count=None)
+    assert "  running on t3.xlarge (aws)" in lines
+    assert not [line for line in lines if line.startswith("  gpu ")]
+
+
+def test_status_prints_the_gpu_on_its_own_line(fake, capsys):
+    lines = _status_lines(fake, capsys, vendor="aws", gpu="g6.2xlarge",
+                          instance="g6.2xlarge", gpu_model="L4", gpu_count=1)
+    assert "  running on g6.2xlarge (aws)" in lines
+    assert "  gpu        L4 x 1 per pod" in lines
+
+
+def test_status_says_runpod_rents_a_pod_not_an_instance(fake, capsys):
+    # RunPod has no instance type: the old `gpu` value is the GPU type, and
+    # printing it after "running on" read as if a GPU were the machine.
+    lines = _status_lines(fake, capsys, vendor="runpod", gpu="NVIDIA A100-SXM4-80GB",
+                          instance=None, gpu_model="A100-SXM4-80GB", gpu_count=4)
+    assert "  running on a RunPod pod (runpod)" in lines
+    assert "  gpu        A100-SXM4-80GB x 4 per pod" in lines
+
+
+def test_status_against_an_older_server_keeps_the_old_line(fake, capsys):
+    # A gateway older than 2026-10-08 sends `gpu` and nothing else; that one
+    # vendor name is still the best machine name there is.
+    lines = _status_lines(fake, capsys, vendor="aws", gpu="t3.xlarge")
+    assert "  running on t3.xlarge (aws)" in lines
+    assert not [line for line in lines if line.startswith("  gpu ")]
+
+
 def test_status_says_offerings_failed_and_where_the_job_was_asked_to_go(fake, capsys):
     # job-a9ea30b8ba7a: three g6.xlarge zones failed to START, and the CLI called
     # it "the machine was reclaimed". The server's note is printed as it is, so the

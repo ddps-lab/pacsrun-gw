@@ -1051,6 +1051,37 @@ def cmd_secret_rm(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _machine_text(view: dict[str, Any]) -> str | None:
+    """The machine a job runs on, for the `running on` line.
+
+    HYPERUN-INSTANCE-AND-GPU. A server from 2026-10-08 on sends `instance`, the
+    machine in the vendor's own words. An older server sends only `gpu`, the
+    vendor's one name for whatever was rented, and that is then the only machine
+    name there is. RunPod has no instance type: it rents a pod by GPU type, and
+    the `gpu` line says which type.
+    """
+    if view.get("instance"):
+        return view["instance"]
+    if "instance" not in view:
+        return view.get("gpu") or None
+    if view.get("vendor") == "runpod":
+        return "a RunPod pod"
+    return None
+
+
+def _gpu_text(view: dict[str, Any]) -> str | None:
+    """`<model> x <count> per pod`, or None for a job that asked for no GPU.
+
+    The count is the job's own ask per pod, not the GPUs on the machine: a machine
+    can carry several pods. ASCII "x" rather than a multiplication sign, because
+    this goes to whatever terminal the user has.
+    """
+    count, model = view.get("gpu_count"), view.get("gpu_model")
+    if not count or not model:
+        return None
+    return f"{model} x {count} per pod"
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     """Print one job's state."""
     view = client_from_config().status(args.job_id)
@@ -1062,9 +1093,13 @@ def cmd_status(args: argparse.Namespace) -> int:
     # "accepted" is truer than printing a blank.
     print(f"{view['job_id']}  {view.get('name', '')}")
     print(f"  phase      {view.get('phase') or 'accepted, not yet started'}")
-    if view.get("gpu"):
+    machine = _machine_text(view)
+    if machine:
         vendor = f" ({view['vendor']})" if view.get("vendor") else ""
-        print(f"  running on {view['gpu']}{vendor}")
+        print(f"  running on {machine}{vendor}")
+    gpus = _gpu_text(view)
+    if gpus:
+        print(f"  gpu        {gpus}")
     # HYPERUN-PLACEMENT-NOTE. Where the job was asked to go, next to where it went,
     # so a person -- or an agent relaying to one -- sees a vendor that differs from
     # the one they chose. An older server sends no note, and nothing is printed.
