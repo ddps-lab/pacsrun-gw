@@ -362,7 +362,7 @@ function drawHome() {
 
     $("home-running-note").textContent = running.length ? `${running.length} running` : "";
     $("home-running").innerHTML = running.length
-      ? jobsTable(running.slice(0, 5), ["name", "status", "elapsed", "gpu"])
+      ? jobsTable(running.slice(0, 5), ["name", "status", "elapsed", "instance"])
       : empty("Nothing is running right now.", "New job", "submit");
     wireRows($("home-running"));
   });
@@ -426,7 +426,7 @@ async function drawJobs() {
       : `${result.total} ${result.total === 1 ? "job" : "jobs"}`;
 
     $("jobs-body").innerHTML = jobs.length
-      ? jobsTable(jobs, ["name", "id", "user", "status", "created", "elapsed", "gpu", "vendor", "cost", "recovery", "result"])
+      ? jobsTable(jobs, ["name", "id", "user", "status", "created", "elapsed", "instance", "gpu", "vendor", "cost", "recovery", "result"])
       : empty(
           jobsTab === "active" ? "Nothing is running right now."
           : jobsTab === "finished" ? "No job has finished yet."
@@ -446,12 +446,37 @@ $("jobs-ns").onchange = () => {
   drawJobs();
 };
 
+/* HYPERUN-INSTANCE-AND-GPU. What a job runs on, as two values.
+
+   The server used to hand out ONE name for it, `gpu`, and this screen printed it under
+   "GPU" — so a CPU job read "GPU  t3.xlarge", a machine and not a GPU. The server now
+   splits that vendor name (the server's machine.py) into `instance`, the machine,
+   and `gpu_model`, and `gpu_count` is the job's own ask per pod. A job that asked for no
+   GPU has no gpu_count, and then there is no GPU line to draw at all.
+
+   instanceText returns null when there is nothing to name yet; the caller decides what
+   null reads as. A gateway older than this file sends no `instance` field, and then the
+   old `gpu` value is the only machine name there is. */
+function instanceText(job) {
+  if (job.instance) return job.instance;
+  if (job.instance === undefined && job.gpu) return job.gpu;
+  // RunPod rents a pod by GPU type and has no instance type to name.
+  if (job.vendor === "runpod") return "RunPod pod";
+  return null;
+}
+
+function gpuText(job, perPod) {
+  if (!job.gpu_count || !job.gpu_model) return null;
+  return `${job.gpu_model} × ${job.gpu_count}${perPod ? " per pod" : ""}`;
+}
+
 /* Build one table. The caller picks the columns: Home uses 4, the jobs screen
-   uses 11 (the 9 in docs/15-screens.md 15.5, plus Cost and Result). */
+   uses 12 (the 9 in docs/15-screens.md 15.5 with GPU split into Instance and GPU,
+   plus Cost and Result). */
 function jobsTable(jobs, columns) {
   const HEAD = {
     name: "Name", id: "ID", user: "Submitted by", status: "Status", created: "Created",
-    elapsed: "Elapsed", gpu: "GPU", vendor: "Vendor", cost: "Cost",
+    elapsed: "Elapsed", instance: "Instance", gpu: "GPU", vendor: "Vendor", cost: "Cost",
     recovery: "Restarts", result: "Result",
   };
   const CELL = {
@@ -475,7 +500,9 @@ function jobsTable(jobs, columns) {
     status: (j) => badge(j.phase),
     created: (j) => `<span class="num dim">${esc(when(j.created_at))}</span>`,
     elapsed: elapsedCell,
-    gpu: (j) => `<span class="num">${esc(j.gpu || "-")}</span>`,
+    instance: (j) => `<span class="num">${esc(instanceText(j) || "-")}</span>`,
+    // A CPU job's cell is "-": the column stays, the row has no GPU.
+    gpu: (j) => `<span class="num">${esc(gpuText(j, false) || "-")}</span>`,
     vendor: (j) => esc(j.vendor || "-"),
     recovery: (j) => j.recovery_count
       ? `<span class="num warn-ink">${j.recovery_count}</span>`
@@ -636,7 +663,13 @@ async function drawDetail(jobId, ns = "") {
       fact("Created", when(job.created_at)),
       fact("Queued", waitText),
       fact("Ran for", span(job.started_at, job.finished_at) || (done ? "not recorded" : "-")),
-      fact("GPU", job.gpu || "not yet known"),
+      // HYPERUN-INSTANCE-AND-GPU: the machine always, the GPU only for a job that
+      // asked for one. A finished job that never rented anything (compare mode)
+      // has no machine to name, so it reads "-" rather than "not yet known".
+      fact("Instance", instanceText(job) || (done ? "-" : "not yet known")),
+      ...(job.gpu_count
+        ? [fact("GPU", gpuText(job, true) || (done ? "-" : "not yet known"))]
+        : []),
       fact("Vendor", job.vendor || "not yet known"),
       fact("Restarts", job.recovery_count || "none"),
       // Same fallback as the list: no owner label means it was applied with

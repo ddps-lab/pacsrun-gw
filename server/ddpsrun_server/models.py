@@ -32,7 +32,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from . import naming
+from . import machine, naming
 from .auth import Principal
 from .config import PACSJOB_GROUP, PACSJOB_VERSION, USER_SECRET_NAME, Settings
 from .stats import job_cost, job_hours
@@ -871,7 +871,29 @@ class JobView(BaseModel):
         "status.finishedAt. Absent while it is still running.",
     )
     gpu: str | None = Field(
-        default=None, description="What it is actually running on, once it is running."
+        default=None,
+        description="Older name for what it runs on: the vendor's own name for the "
+        "rented unit, whatever that is (an EC2 instance type such as `t3.xlarge` on "
+        "AWS, a GPU type on RunPod). Kept with this value because CLI 0.2.7 and older "
+        "print it. Read `instance`, `gpu_model` and `gpu_count` instead.",
+    )
+    instance: str | None = Field(
+        default=None,
+        description="The machine it runs on, in the vendor's own words: an EC2 "
+        "instance type on AWS (`g6.2xlarge`), a machine type on GCP "
+        "(`g2-standard-4`), Shadeform's instance name (`massedcompute_L40S`). Null on "
+        "RunPod, which rents a pod by GPU type and has no instance type, and null "
+        "before a machine exists.",
+    )
+    gpu_model: str | None = Field(
+        default=None,
+        description="The GPU model the job got, e.g. `L4`, `A100-SXM4-80GB`. Null for "
+        "a job that asked for no GPU, and before a machine exists.",
+    )
+    gpu_count: int | None = Field(
+        default=None,
+        description="GPUs per pod, as the job asked (spec.resources.gpus.count). Null "
+        "for a job that asked for no GPU.",
     )
     vendor: str | None = Field(
         default=None, description="Who it was rented from, e.g. runpod, aws."
@@ -978,6 +1000,10 @@ class JobView(BaseModel):
         offering = status.get("currentOffering") or {}
         gpu = offering.get("instanceType") or None
         vendor = offering.get("vendor") or None
+        # HYPERUN-INSTANCE-AND-GPU: that one vendor name, split into the machine
+        # and the GPU per vendor, plus the GPUs per pod the job asked for. `gpu`
+        # above keeps its old value for the CLIs already installed.
+        rented = machine.machine_and_gpu(offering, spec)
 
         # Price the job with the same two functions the team total uses
         # (HYPERUN-STATS), so a job's own row and its share of /v1/stats can
@@ -1018,6 +1044,9 @@ class JobView(BaseModel):
             started_at=status.get("startedAt"),
             finished_at=status.get("finishedAt"),
             gpu=gpu,
+            instance=rented.instance,
+            gpu_model=rented.gpu_model,
+            gpu_count=rented.gpu_count,
             vendor=vendor,
             recovery_count=int(status.get("recoveryCount", 0) or 0),
             asked_vendors=asked,

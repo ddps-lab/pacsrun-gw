@@ -64,7 +64,10 @@ set -euo pipefail
 # login keys ddpsrun.server, ddpsrun.token and ddpsrun.pkce, which live in users' browsers; the
 # live token secret both gateways read; comments that record what an old name did on a date;
 # and terraform/ (it manages live shared resources).
-BASELINE=237
+# 2026-10-08: 237 -> 239. Both are the package directory, the first item on the list above:
+# the new tests/test_machine.py has to import it, and tools/gen_aws_gpus.py names the path it
+# writes aws_gpus.csv to (HYPERUN-INSTANCE-AND-GPU).
+BASELINE=239
 
 # ★ `git ls-files` AND NOT `grep -r .`, and the difference is the whole check.
 # A recursive grep counts what is on the DISK: a virtualenv, a build directory,
